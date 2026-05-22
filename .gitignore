@@ -4,3 +4,7 @@ data
 logs
 *.sqlite
 *.db
+*.pid
+.funtalk_lock*
+database.json
+package-lock.json.bak
