@@ -1,7 +1,7 @@
 require("dotenv").config();
 
 const { Telegraf, Markup } = require("telegraf");
-const phrases = require("../data/phrases");
+const phrases = require("./data/phrases");
 const { registerModeration } = require("./moderation");
 const { registerSecurity } = require("./security");
 const { registerAdvancedSecurity } = require("./advancedSecurity");
