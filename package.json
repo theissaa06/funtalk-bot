@@ -1,28 +1,33 @@
-{
-  "name": "funtalk-bot",
-  "version": "3.0.0",
-  "description": "FunTalk Bot — групповой Telegram-бот с модерацией, уровнями и экономикой",
-  "main": "src/index.js",
-  "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
-  },
-  "dependencies": {
-    "telegraf": "^4.15.3",
-    "dotenv": "^16.3.1",
-    "better-sqlite3": "^9.4.3"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.2"
-  },
-  "nodemonConfig": {
-    "watch": ["src/"],
-    "ext": "js,json",
-    "ignore": ["*.sqlite", "data/"]
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "author": "",
-  "license": "MIT"
+﻿{
+    "name":  "funtalk-bot",
+    "version":  "3.0.0",
+    "description":  "FunTalk Bot вЂ” РіСЂСѓРїРїРѕРІРѕР№ Telegram-Р±РѕС‚ СЃ РјРѕРґРµСЂР°С†РёРµР№, СѓСЂРѕРІРЅСЏРјРё Рё СЌРєРѕРЅРѕРјРёРєРѕР№",
+    "main":  "src/index.js",
+    "scripts":  {
+                    "start":  "node src/index.js",
+                    "dev":  "nodemon src/index.js"
+                },
+    "dependencies":  {
+                         "telegraf":  "^4.15.3",
+                         "dotenv":  "^16.3.1",
+                         "better-sqlite3":  "^9.4.3"
+                     },
+    "devDependencies":  {
+                            "nodemon":  "^3.0.2"
+                        },
+    "nodemonConfig":  {
+                          "watch":  [
+                                        "src/"
+                                    ],
+                          "ext":  "js,json",
+                          "ignore":  [
+                                         "*.sqlite",
+                                         "data/"
+                                     ]
+                      },
+    "author":  "",
+    "license":  "MIT",
+    "engines":  {
+                    "node":  "20.x"
+                }
 }
