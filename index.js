@@ -40,12 +40,16 @@ const bot = new TelegramBot(BOT_TOKEN, {
 
 const SOURCE_NAME = "Клуб случайных людей";
 
-const warns = new Map();
+const RELATIONSHIPS_FILE = path.join(__dirname, "relationships.json");
+const SOCIAL_FILE = path.join(__dirname, "social.json");
 
-const DATA_FILE = path.join(__dirname, "relationships.json");
+const warns = new Map();
 
 const couples = new Map();
 const pendingCouples = new Map();
+
+const socialUsers = new Map();
+const pendingFriends = new Map();
 
 const relationshipLevels = [
   { level: 1, name: "Симпатия", xp: 0 },
@@ -67,10 +71,6 @@ function isGroupChat(msg) {
   return msg.chat.type === "group" || msg.chat.type === "supergroup";
 }
 
-function getWarnKey(chatId, userId) {
-  return `${chatId}:${userId}`;
-}
-
 function escapeHtml(text = "") {
   return String(text)
     .replaceAll("&", "&amp;")
@@ -78,21 +78,24 @@ function escapeHtml(text = "") {
     .replaceAll(">", "&gt;");
 }
 
-function formatUser(user) {
-  const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ");
-  const username = user.username ? `@${user.username}` : "без username";
+function getUserName(user) {
+  return (
+    [user.first_name, user.last_name].filter(Boolean).join(" ") ||
+    user.username ||
+    "Пользователь"
+  );
+}
 
-  return `${escapeHtml(fullName || "Пользователь")} (${escapeHtml(
-    username
-  )}, ID: <code>${user.id}</code>)`;
+function formatUser(user) {
+  const fullName = getUserName(user);
+  const username = user.username ? `@${user.username}` : "без username";
+  return `${escapeHtml(fullName)} (${escapeHtml(username)}, ID: <code>${user.id}</code>)`;
 }
 
 function getReason(msg, fallback = "Причина не указана") {
   const parts = String(msg.text || "").trim().split(/\s+/);
   parts.shift();
-
   const reason = parts.join(" ").trim();
-
   return escapeHtml(reason || fallback);
 }
 
@@ -101,8 +104,7 @@ function getMuteData(msg) {
   parts.shift();
 
   const minutesRaw = Number(parts[0]);
-  const minutes =
-    Number.isFinite(minutesRaw) && minutesRaw > 0 ? minutesRaw : 10;
+  const minutes = Number.isFinite(minutesRaw) && minutesRaw > 0 ? minutesRaw : 10;
 
   let reasonParts = parts.slice(1);
 
@@ -118,54 +120,77 @@ function getMuteData(msg) {
   };
 }
 
-function loadRelationships() {
+function readJsonFile(filePath, fallback) {
   try {
-    if (!fs.existsSync(DATA_FILE)) return;
+    if (!fs.existsSync(filePath)) return fallback;
 
-    const raw = fs.readFileSync(DATA_FILE, "utf8");
+    const raw = fs.readFileSync(filePath, "utf8");
 
-    if (!raw.trim()) return;
+    if (!raw.trim()) return fallback;
 
-    const data = JSON.parse(raw);
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error(`❌ Ошибка чтения ${path.basename(filePath)}:`, err.message);
+    return fallback;
+  }
+}
 
-    if (Array.isArray(data.couples)) {
-      couples.clear();
+function writeJsonFile(filePath, data) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error(`❌ Ошибка сохранения ${path.basename(filePath)}:`, err.message);
+  }
+}
 
-      for (const item of data.couples) {
-        if (item.key && item.couple) {
-          couples.set(item.key, item.couple);
-        }
+function loadRelationships() {
+  const data = readJsonFile(RELATIONSHIPS_FILE, { couples: [] });
+
+  if (Array.isArray(data.couples)) {
+    couples.clear();
+
+    for (const item of data.couples) {
+      if (item.key && item.couple) {
+        couples.set(item.key, item.couple);
       }
     }
-
-    console.log("✅ Система отношений загружена.");
-  } catch (err) {
-    console.error("❌ Ошибка загрузки relationships.json:", err.message);
   }
+
+  console.log("✅ Система отношений загружена.");
 }
 
 function saveRelationships() {
-  try {
-    const data = {
-      updatedAt: new Date().toISOString(),
-      couples: [...couples.entries()].map(([key, couple]) => ({
-        key,
-        couple,
-      })),
-    };
-
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf8");
-  } catch (err) {
-    console.error("❌ Ошибка сохранения relationships.json:", err.message);
-  }
+  writeJsonFile(RELATIONSHIPS_FILE, {
+    updatedAt: new Date().toISOString(),
+    couples: [...couples.entries()].map(([key, couple]) => ({ key, couple })),
+  });
 }
 
-function getUserName(user) {
-  return (
-    [user.first_name, user.last_name].filter(Boolean).join(" ") ||
-    user.username ||
-    "Пользователь"
-  );
+function loadSocialData() {
+  const data = readJsonFile(SOCIAL_FILE, { users: [] });
+
+  if (Array.isArray(data.users)) {
+    socialUsers.clear();
+
+    for (const item of data.users) {
+      if (item.key && item.user) {
+        socialUsers.set(item.key, item.user);
+      }
+    }
+  }
+
+  console.log("✅ Социальная система загружена.");
+}
+
+function saveSocialData() {
+  writeJsonFile(SOCIAL_FILE, {
+    updatedAt: new Date().toISOString(),
+    users: [...socialUsers.entries()].map(([key, user]) => ({ key, user })),
+  });
+}
+
+function getWarnKey(chatId, userId) {
+  return `${chatId}:${userId}`;
 }
 
 function getCoupleKey(chatId, userId1, userId2) {
@@ -194,10 +219,7 @@ function getRelationshipLevel(xp) {
 
   const next = relationshipLevels.find((item) => item.xp > xp);
 
-  return {
-    current,
-    next,
-  };
+  return { current, next };
 }
 
 function getProgressBar(current, max) {
@@ -221,6 +243,90 @@ function daysBetween(date) {
   if (!Number.isFinite(started)) return 1;
 
   return Math.max(1, Math.floor((now - started) / 86400000));
+}
+
+function getSocialKey(chatId, userId) {
+  return `${chatId}:${userId}`;
+}
+
+function getSocialLevel(messages) {
+  if (messages >= 10000) return 20;
+  if (messages >= 7000) return 18;
+  if (messages >= 5000) return 16;
+  if (messages >= 3000) return 14;
+  if (messages >= 2000) return 12;
+  if (messages >= 1000) return 10;
+  if (messages >= 700) return 8;
+  if (messages >= 400) return 6;
+  if (messages >= 200) return 4;
+  if (messages >= 50) return 2;
+  return 1;
+}
+
+function getActivityPercent(messages) {
+  if (messages >= 1000) return 100;
+  return Math.min(100, Math.round((messages / 1000) * 100));
+}
+
+function getSocialUser(chatId, telegramUser) {
+  const key = getSocialKey(chatId, telegramUser.id);
+  let user = socialUsers.get(key);
+
+  if (!user) {
+    user = {
+      chatId,
+      userId: telegramUser.id,
+      name: getUserName(telegramUser),
+      username: telegramUser.username || "",
+      messages: 0,
+      level: 1,
+      xp: 0,
+      coins: 0,
+      reputation: 0,
+      friends: [],
+      createdAt: new Date().toISOString(),
+      lastMessageAt: null,
+    };
+
+    socialUsers.set(key, user);
+  } else {
+    user.name = getUserName(telegramUser);
+    user.username = telegramUser.username || "";
+
+    if (!Array.isArray(user.friends)) user.friends = [];
+    if (typeof user.messages !== "number") user.messages = 0;
+    if (typeof user.xp !== "number") user.xp = 0;
+    if (typeof user.coins !== "number") user.coins = 0;
+    if (typeof user.reputation !== "number") user.reputation = 0;
+    if (typeof user.level !== "number") user.level = getSocialLevel(user.messages);
+  }
+
+  return user;
+}
+
+function addMessageStats(msg) {
+  if (!msg.text) return;
+  if (msg.text.startsWith("/")) return;
+  if (!isGroupChat(msg)) return;
+  if (!msg.from || msg.from.is_bot) return;
+
+  const user = getSocialUser(msg.chat.id, msg.from);
+
+  user.messages += 1;
+  user.xp += 5;
+  user.coins += 1;
+  user.level = getSocialLevel(user.messages);
+  user.lastMessageAt = new Date().toISOString();
+
+  saveSocialData();
+}
+
+function getFriendKey(chatId, fromId, targetId) {
+  return `${chatId}:${fromId}:${targetId}`;
+}
+
+function areFriends(userA, userB) {
+  return userA.friends.includes(userB.userId) && userB.friends.includes(userA.userId);
 }
 
 function getLoveMenuKeyboard() {
@@ -315,6 +421,8 @@ async function getTargetFromReply(msg) {
         "⚠️ Используй команду ответом на сообщение пользователя.",
         "",
         "Примеры:",
+        "<code>/profile</code>",
+        "<code>/friend</code>",
         "<code>/couple</code>",
         "<code>/ban спам</code>",
         "<code>/kick нарушение</code>",
@@ -334,7 +442,7 @@ async function protectTarget(msg, target) {
   const chatId = msg.chat.id;
 
   if (target.is_bot) {
-    await safeSend(chatId, "⚠️ Нельзя применять действие к боту.", {
+    await safeSend(chatId, "⚠️ Нельзя применять это действие к боту.", {
       reply_to_message_id: msg.message_id,
     });
     return false;
@@ -351,8 +459,7 @@ async function protectTarget(msg, target) {
 
   if (
     targetMember &&
-    (targetMember.status === "creator" ||
-      targetMember.status === "administrator")
+    (targetMember.status === "creator" || targetMember.status === "administrator")
   ) {
     await safeSend(chatId, "⛔ Нельзя применить действие к администратору.", {
       reply_to_message_id: msg.message_id,
@@ -406,6 +513,16 @@ async function handleHelp(msg) {
 /help — список команд
 /commands — список команд
 
+<b>Профиль и активность:</b>
+/profile — мой профиль
+/profile ответом — профиль пользователя
+/top — топ по сообщениям
+/reptop — топ репутации
+/rep — дать репутацию ответом
+/friend — предложить дружбу ответом
+/friends — список друзей
+/unfriend — удалить друга ответом
+
 <b>Отношения:</b>
 /love — открыть систему отношений
 /couple — создать пару ответом на сообщение
@@ -423,7 +540,7 @@ async function handleHelp(msg) {
 /clearwarns — очистить предупреждения
 
 <b>Как использовать:</b>
-Команды /couple, /ban, /kick, /mute, /unmute, /warn, /warns, /clearwarns лучше писать ответом на сообщение пользователя.
+Команды /profile, /friend, /couple, /ban, /kick, /mute, /unmute, /warn, /clearwarns лучше писать ответом на сообщение пользователя.
 
 <b>Источник:</b> ${SOURCE_NAME}
 `.trim();
@@ -431,6 +548,489 @@ async function handleHelp(msg) {
   await safeSend(msg.chat.id, text, {
     reply_to_message_id: msg.message_id,
   });
+}
+
+async function handleProfile(msg) {
+  const target = msg.reply_to_message?.from || msg.from;
+
+  if (target.is_bot) {
+    await safeSend(msg.chat.id, "⚠️ У ботов нет профиля.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  const user = getSocialUser(msg.chat.id, target);
+  const coupleFound = findUserCouple(msg.chat.id, target.id);
+  const activity = getActivityPercent(user.messages);
+
+  const text = `
+👤 <b>Профиль участника</b>
+
+👥 <b>Имя:</b> ${escapeHtml(user.name)}
+${user.username ? `🔗 <b>Username:</b> @${escapeHtml(user.username)}` : "🔗 <b>Username:</b> нет"}
+🆔 <b>ID:</b> <code>${user.userId}</code>
+
+💬 <b>Сообщений:</b> ${user.messages}
+⭐ <b>Уровень:</b> ${user.level}
+✨ <b>XP:</b> ${user.xp}
+🔥 <b>Активность:</b> ${activity}%
+💰 <b>Монеты:</b> ${user.coins}
+🏆 <b>Репутация:</b> ${user.reputation}
+👥 <b>Друзей:</b> ${user.friends.length}
+💞 <b>Пара:</b> ${coupleFound ? "есть" : "нет"}
+
+📅 <b>В клубе с:</b> ${new Date(user.createdAt).toLocaleDateString("ru-RU")}
+  `.trim();
+
+  await safeSend(msg.chat.id, text, {
+    reply_to_message_id: msg.message_id,
+  });
+
+  saveSocialData();
+}
+
+async function handleTop(msg) {
+  const list = [...socialUsers.values()]
+    .filter((user) => user.chatId === msg.chat.id)
+    .sort((a, b) => b.messages - a.messages)
+    .slice(0, 10);
+
+  if (!list.length) {
+    await safeSend(msg.chat.id, "📊 Топ пока пустой. Напишите сообщения в группе.");
+    return;
+  }
+
+  const text = list
+    .map((user, index) => {
+      return `${index + 1}. ${escapeHtml(user.name)} — 💬 ${user.messages} сообщений · ⭐ ${user.level} ур.`;
+    })
+    .join("\n");
+
+  await safeSend(
+    msg.chat.id,
+    `
+🏆 <b>Топ по сообщениям</b>
+
+${text}
+    `.trim()
+  );
+}
+
+async function handleRepTop(msg) {
+  const list = [...socialUsers.values()]
+    .filter((user) => user.chatId === msg.chat.id)
+    .sort((a, b) => b.reputation - a.reputation)
+    .slice(0, 10);
+
+  if (!list.length) {
+    await safeSend(msg.chat.id, "🏆 Топ репутации пока пустой.");
+    return;
+  }
+
+  const text = list
+    .map((user, index) => {
+      return `${index + 1}. ${escapeHtml(user.name)} — 🏆 ${user.reputation} репутации`;
+    })
+    .join("\n");
+
+  await safeSend(
+    msg.chat.id,
+    `
+🏆 <b>Топ репутации</b>
+
+${text}
+    `.trim()
+  );
+}
+
+async function handleRep(msg) {
+  if (!isGroupChat(msg)) {
+    await safeSend(msg.chat.id, "⚠️ Репутацию можно выдавать только в группе.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  const target = msg.reply_to_message?.from;
+
+  if (!target) {
+    await safeSend(msg.chat.id, "🏆 Ответь на сообщение пользователя командой:\n\n<code>/rep</code>", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  if (target.is_bot || target.id === msg.from.id) {
+    await safeSend(msg.chat.id, "⚠️ Нельзя выдать репутацию себе или боту.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  const targetUser = getSocialUser(msg.chat.id, target);
+
+  targetUser.reputation += 1;
+  targetUser.xp += 25;
+
+  saveSocialData();
+
+  await safeSend(
+    msg.chat.id,
+    `
+🏆 <b>Репутация повышена</b>
+
+👤 ${formatUser(target)}
+✨ +1 репутация
+⭐ +25 XP
+    `.trim(),
+    { reply_to_message_id: msg.message_id }
+  );
+}
+
+async function handleFriend(msg) {
+  if (!isGroupChat(msg)) {
+    await safeSend(msg.chat.id, "⚠️ Дружбу можно предложить только в группе.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  const target = msg.reply_to_message?.from;
+
+  if (!target) {
+    await safeSend(msg.chat.id, "👥 Ответь на сообщение пользователя командой:\n\n<code>/friend</code>", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  if (target.is_bot) {
+    await safeSend(msg.chat.id, "⚠️ Нельзя дружить с ботом.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  if (target.id === msg.from.id) {
+    await safeSend(msg.chat.id, "😅 Нельзя предложить дружбу самому себе.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  const fromUser = getSocialUser(msg.chat.id, msg.from);
+  const targetUser = getSocialUser(msg.chat.id, target);
+
+  if (areFriends(fromUser, targetUser)) {
+    await safeSend(msg.chat.id, "👥 Вы уже друзья.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  const requestKey = getFriendKey(msg.chat.id, msg.from.id, target.id);
+
+  pendingFriends.set(requestKey, {
+    chatId: msg.chat.id,
+    from: msg.from,
+    target,
+    createdAt: Date.now(),
+  });
+
+  await safeSend(
+    msg.chat.id,
+    `
+👥 <b>Предложение дружбы</b>
+
+👤 ${formatUser(msg.from)}
+хочет добавить в друзья
+👤 ${formatUser(target)}
+
+${escapeHtml(getUserName(target))}, принять дружбу?
+    `.trim(),
+    {
+      reply_to_message_id: msg.message_id,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "✅ Принять", callback_data: `friend:accept:${msg.from.id}:${target.id}` },
+            { text: "❌ Отклонить", callback_data: `friend:decline:${msg.from.id}:${target.id}` },
+          ],
+        ],
+      },
+    }
+  );
+}
+
+async function handleFriends(msg) {
+  const user = getSocialUser(msg.chat.id, msg.from);
+
+  if (!user.friends.length) {
+    await safeSend(msg.chat.id, "👥 У тебя пока нет друзей. Добавь друга командой /friend ответом на сообщение.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  const friends = user.friends
+    .map((friendId, index) => {
+      const friend = socialUsers.get(getSocialKey(msg.chat.id, friendId));
+      return `${index + 1}. ${friend ? escapeHtml(friend.name) : `ID ${friendId}`}`;
+    })
+    .join("\n");
+
+  await safeSend(
+    msg.chat.id,
+    `
+👥 <b>Твои друзья</b>
+
+${friends}
+    `.trim(),
+    { reply_to_message_id: msg.message_id }
+  );
+}
+
+async function handleUnfriend(msg) {
+  const target = msg.reply_to_message?.from;
+
+  if (!target) {
+    await safeSend(msg.chat.id, "👥 Ответь на сообщение друга командой:\n\n<code>/unfriend</code>", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  const user = getSocialUser(msg.chat.id, msg.from);
+  const targetUser = getSocialUser(msg.chat.id, target);
+
+  if (!areFriends(user, targetUser)) {
+    await safeSend(msg.chat.id, "⚠️ Вы не друзья.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  user.friends = user.friends.filter((id) => id !== target.id);
+  targetUser.friends = targetUser.friends.filter((id) => id !== msg.from.id);
+
+  saveSocialData();
+
+  await safeSend(
+    msg.chat.id,
+    `
+💔 <b>Дружба удалена</b>
+
+${escapeHtml(user.name)} и ${escapeHtml(targetUser.name)} больше не друзья.
+    `.trim(),
+    { reply_to_message_id: msg.message_id }
+  );
+}
+
+async function handleLove(msg) {
+  await showLoveProfile(msg.chat.id, msg.from.id);
+}
+
+async function showLoveProfile(chatId, userId, messageId = null) {
+  const found = findUserCouple(chatId, userId);
+
+  if (!found) {
+    const text = `
+💞 <b>Система отношений</b>
+
+У тебя пока нет пары.
+
+Чтобы создать пару, ответь на сообщение пользователя командой:
+
+<code>/couple</code>
+
+После этого пользователь должен принять приглашение кнопкой.
+    `.trim();
+
+    return safeSend(chatId, text);
+  }
+
+  const { couple } = found;
+  const levelData = getRelationshipLevel(couple.xp);
+  const currentLevel = levelData.current;
+  const nextLevel = levelData.next;
+  const days = daysBetween(couple.startedAt);
+
+  const progressNow = nextLevel ? couple.xp - currentLevel.xp : couple.xp;
+  const progressMax = nextLevel ? nextLevel.xp - currentLevel.xp : couple.xp;
+  const bar = getProgressBar(progressNow, progressMax);
+
+  const text = `
+💞 <b>Система отношений</b>
+
+👤 <b>${escapeHtml(couple.user1.name)}</b>
+💗
+👤 <b>${escapeHtml(couple.user2.name)}</b>
+
+❤️ <b>Статус:</b> В отношениях
+🔥 <b>Дней вместе:</b> ${days}
+💎 <b>Уровень:</b> ${escapeHtml(currentLevel.name)} · ${currentLevel.level} LVL
+✨ <b>Очки любви:</b> ${couple.xp}
+🪙 <b>Монеты любви:</b> ${couple.coins}
+
+📈 <b>Прогресс:</b>
+${bar}
+${nextLevel ? `${progressNow} / ${progressMax} XP до уровня «${escapeHtml(nextLevel.name)}»` : "Максимальный уровень"}
+
+📅 <b>Вместе с:</b> ${new Date(couple.startedAt).toLocaleDateString("ru-RU")}
+
+💌 <b>Что хотите сделать?</b>
+  `.trim();
+
+  if (messageId) {
+    try {
+      await bot.editMessageText(text, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: "HTML",
+        reply_markup: getLoveMenuKeyboard(),
+      });
+      return;
+    } catch {
+      return safeSend(chatId, text, {
+        reply_markup: getLoveMenuKeyboard(),
+      });
+    }
+  }
+
+  return safeSend(chatId, text, {
+    reply_markup: getLoveMenuKeyboard(),
+  });
+}
+
+async function handleCouple(msg) {
+  if (!isGroupChat(msg)) {
+    await safeSend(msg.chat.id, "⚠️ Создать пару можно только в группе.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  const target = msg.reply_to_message?.from;
+
+  if (!target) {
+    await safeSend(
+      msg.chat.id,
+      "💞 Чтобы создать пару, ответь на сообщение человека командой:\n\n<code>/couple</code>",
+      { reply_to_message_id: msg.message_id }
+    );
+    return;
+  }
+
+  if (target.is_bot) {
+    await safeSend(msg.chat.id, "⚠️ Нельзя создать отношения с ботом.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  if (target.id === msg.from.id) {
+    await safeSend(msg.chat.id, "😅 Нельзя создать пару с самим собой.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  const existing1 = findUserCouple(msg.chat.id, msg.from.id);
+  const existing2 = findUserCouple(msg.chat.id, target.id);
+
+  if (existing1 || existing2) {
+    await safeSend(msg.chat.id, "⚠️ Один из пользователей уже состоит в отношениях.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  const requestKey = `${msg.chat.id}:${msg.from.id}:${target.id}`;
+
+  pendingCouples.set(requestKey, {
+    chatId: msg.chat.id,
+    from: msg.from,
+    target,
+    createdAt: Date.now(),
+  });
+
+  await safeSend(
+    msg.chat.id,
+    `
+💌 <b>Предложение отношений</b>
+
+👤 ${formatUser(msg.from)}
+хочет создать пару с
+👤 ${formatUser(target)}
+
+${escapeHtml(getUserName(target))}, принять предложение?
+    `.trim(),
+    {
+      reply_to_message_id: msg.message_id,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "💗 Принять", callback_data: `couple:accept:${msg.from.id}:${target.id}` },
+            { text: "💔 Отказаться", callback_data: `couple:decline:${msg.from.id}:${target.id}` },
+          ],
+        ],
+      },
+    }
+  );
+}
+
+async function handleBreakup(msg) {
+  const found = findUserCouple(msg.chat.id, msg.from.id);
+
+  if (!found) {
+    await safeSend(msg.chat.id, "⚠️ У тебя сейчас нет пары.", {
+      reply_to_message_id: msg.message_id,
+    });
+    return;
+  }
+
+  couples.delete(found.key);
+  saveRelationships();
+
+  await safeSend(
+    msg.chat.id,
+    `
+💔 <b>Отношения завершены</b>
+
+Пара была расформирована.
+История любви закончилась, но воспоминания остались...
+    `.trim(),
+    { reply_to_message_id: msg.message_id }
+  );
+}
+
+async function handleLoveTop(msg) {
+  const list = [...couples.values()]
+    .filter((couple) => couple.chatId === msg.chat.id)
+    .sort((a, b) => b.xp - a.xp)
+    .slice(0, 10);
+
+  if (!list.length) {
+    await safeSend(msg.chat.id, "🏆 Рейтинга пока нет. Создайте первую пару через /couple.");
+    return;
+  }
+
+  const text = list
+    .map((couple, index) => {
+      const level = getRelationshipLevel(couple.xp).current;
+      return `${index + 1}. 💞 ${escapeHtml(couple.user1.name)} + ${escapeHtml(couple.user2.name)} — ${couple.xp} XP · ${escapeHtml(level.name)}`;
+    })
+    .join("\n");
+
+  await safeSend(
+    msg.chat.id,
+    `
+🏆 <b>Рейтинг пар</b>
+
+${text}
+    `.trim()
+  );
 }
 
 async function handleBan(msg) {
@@ -463,11 +1063,10 @@ async function handleBan(msg) {
       `
 ❌ Не удалось забанить пользователя.
 
-Возможные причины:
-1. Бот не администратор
-2. У бота нет права блокировать пользователей
-3. Пользователь выше бота по правам
-4. Это администратор или владелец группы
+Проверь:
+1. Бот админ
+2. У бота есть право блокировать пользователей
+3. Цель не является администратором
 
 Ошибка: <code>${escapeHtml(err.message)}</code>
       `.trim(),
@@ -488,9 +1087,7 @@ async function handleKick(msg) {
 
   try {
     await bot.banChatMember(msg.chat.id, target.id);
-    await bot.unbanChatMember(msg.chat.id, target.id, {
-      only_if_banned: true,
-    });
+    await bot.unbanChatMember(msg.chat.id, target.id, { only_if_banned: true });
 
     await safeSend(
       msg.chat.id,
@@ -508,11 +1105,6 @@ async function handleKick(msg) {
       msg.chat.id,
       `
 ❌ Не удалось кикнуть пользователя.
-
-Проверь:
-1. Бот админ
-2. Есть право блокировать пользователей
-3. Пользователь не админ
 
 Ошибка: <code>${escapeHtml(err.message)}</code>
       `.trim(),
@@ -537,9 +1129,7 @@ async function handleUnban(msg) {
   }
 
   try {
-    await bot.unbanChatMember(msg.chat.id, userId, {
-      only_if_banned: true,
-    });
+    await bot.unbanChatMember(msg.chat.id, userId, { only_if_banned: true });
 
     await safeSend(
       msg.chat.id,
@@ -739,239 +1329,11 @@ async function handleClearWarns(msg) {
   );
 }
 
-async function showLoveProfile(chatId, userId, messageId = null) {
-  const found = findUserCouple(chatId, userId);
-
-  if (!found) {
-    const text = `
-💞 <b>Система отношений</b>
-
-У тебя пока нет пары.
-
-Чтобы создать пару, ответь на сообщение пользователя командой:
-
-<code>/couple</code>
-
-После этого пользователь должен принять приглашение кнопкой.
-    `.trim();
-
-    return safeSend(chatId, text);
-  }
-
-  const { couple } = found;
-  const levelData = getRelationshipLevel(couple.xp);
-  const currentLevel = levelData.current;
-  const nextLevel = levelData.next;
-
-  const days = daysBetween(couple.startedAt);
-
-  const progressNow = nextLevel ? couple.xp - currentLevel.xp : couple.xp;
-  const progressMax = nextLevel ? nextLevel.xp - currentLevel.xp : couple.xp;
-  const bar = getProgressBar(progressNow, progressMax);
-
-  const text = `
-💞 <b>Система отношений</b>
-
-👤 <b>${escapeHtml(couple.user1.name)}</b>
-💗
-👤 <b>${escapeHtml(couple.user2.name)}</b>
-
-❤️ <b>Статус:</b> В отношениях
-🔥 <b>Дней вместе:</b> ${days}
-💎 <b>Уровень:</b> ${escapeHtml(currentLevel.name)} · ${currentLevel.level} LVL
-✨ <b>Очки любви:</b> ${couple.xp}
-🪙 <b>Монеты любви:</b> ${couple.coins}
-
-📈 <b>Прогресс:</b>
-${bar}
-${
-  nextLevel
-    ? `${progressNow} / ${progressMax} XP до уровня «${escapeHtml(
-        nextLevel.name
-      )}»`
-    : "Максимальный уровень"
-}
-
-📅 <b>Вместе с:</b> ${new Date(couple.startedAt).toLocaleDateString("ru-RU")}
-
-💌 <b>Что хотите сделать?</b>
-  `.trim();
-
-  if (messageId) {
-    try {
-      await bot.editMessageText(text, {
-        chat_id: chatId,
-        message_id: messageId,
-        parse_mode: "HTML",
-        reply_markup: getLoveMenuKeyboard(),
-      });
-      return;
-    } catch {
-      return safeSend(chatId, text, {
-        reply_markup: getLoveMenuKeyboard(),
-      });
-    }
-  }
-
-  return safeSend(chatId, text, {
-    reply_markup: getLoveMenuKeyboard(),
-  });
-}
-
-async function handleLove(msg) {
-  await showLoveProfile(msg.chat.id, msg.from.id);
-}
-
-async function handleCouple(msg) {
-  if (!isGroupChat(msg)) {
-    await safeSend(msg.chat.id, "⚠️ Создать пару можно только в группе.", {
-      reply_to_message_id: msg.message_id,
-    });
-    return;
-  }
-
-  const target = msg.reply_to_message?.from;
-
-  if (!target) {
-    await safeSend(
-      msg.chat.id,
-      "💞 Чтобы создать пару, ответь на сообщение человека командой:\n\n<code>/couple</code>",
-      { reply_to_message_id: msg.message_id }
-    );
-    return;
-  }
-
-  if (target.is_bot) {
-    await safeSend(msg.chat.id, "⚠️ Нельзя создать отношения с ботом.", {
-      reply_to_message_id: msg.message_id,
-    });
-    return;
-  }
-
-  if (target.id === msg.from.id) {
-    await safeSend(msg.chat.id, "😅 Нельзя создать пару с самим собой.", {
-      reply_to_message_id: msg.message_id,
-    });
-    return;
-  }
-
-  const existing1 = findUserCouple(msg.chat.id, msg.from.id);
-  const existing2 = findUserCouple(msg.chat.id, target.id);
-
-  if (existing1 || existing2) {
-    await safeSend(
-      msg.chat.id,
-      "⚠️ Один из пользователей уже состоит в отношениях.",
-      {
-        reply_to_message_id: msg.message_id,
-      }
-    );
-    return;
-  }
-
-  const requestKey = `${msg.chat.id}:${msg.from.id}:${target.id}`;
-
-  pendingCouples.set(requestKey, {
-    chatId: msg.chat.id,
-    from: msg.from,
-    target,
-    createdAt: Date.now(),
-  });
-
-  await safeSend(
-    msg.chat.id,
-    `
-💌 <b>Предложение отношений</b>
-
-👤 ${formatUser(msg.from)}
-хочет создать пару с
-👤 ${formatUser(target)}
-
-${escapeHtml(getUserName(target))}, принять предложение?
-    `.trim(),
-    {
-      reply_to_message_id: msg.message_id,
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: "💗 Принять",
-              callback_data: `couple:accept:${msg.from.id}:${target.id}`,
-            },
-            {
-              text: "💔 Отказаться",
-              callback_data: `couple:decline:${msg.from.id}:${target.id}`,
-            },
-          ],
-        ],
-      },
-    }
-  );
-}
-
-async function handleBreakup(msg) {
-  const found = findUserCouple(msg.chat.id, msg.from.id);
-
-  if (!found) {
-    await safeSend(msg.chat.id, "⚠️ У тебя сейчас нет пары.", {
-      reply_to_message_id: msg.message_id,
-    });
-    return;
-  }
-
-  couples.delete(found.key);
-  saveRelationships();
-
-  await safeSend(
-    msg.chat.id,
-    `
-💔 <b>Отношения завершены</b>
-
-Пара была расформирована.
-История любви закончилась, но воспоминания остались...
-    `.trim(),
-    { reply_to_message_id: msg.message_id }
-  );
-}
-
-async function handleLoveTop(msg) {
-  const list = [...couples.values()]
-    .filter((couple) => couple.chatId === msg.chat.id)
-    .sort((a, b) => b.xp - a.xp)
-    .slice(0, 10);
-
-  if (!list.length) {
-    await safeSend(
-      msg.chat.id,
-      "🏆 Рейтинга пока нет. Создайте первую пару через /couple."
-    );
-    return;
-  }
-
-  const text = list
-    .map((couple, index) => {
-      const level = getRelationshipLevel(couple.xp).current;
-      return `${index + 1}. 💞 ${escapeHtml(
-        couple.user1.name
-      )} + ${escapeHtml(couple.user2.name)} — ${couple.xp} XP · ${escapeHtml(
-        level.name
-      )}`;
-    })
-    .join("\n");
-
-  await safeSend(
-    msg.chat.id,
-    `
-🏆 <b>Рейтинг пар</b>
-
-${text}
-    `.trim()
-  );
-}
-
 bot.on("message", async (msg) => {
   try {
     if (!msg.text) return;
+
+    addMessageStats(msg);
 
     const command = getCommand(msg.text);
 
@@ -983,6 +1345,14 @@ bot.on("message", async (msg) => {
       "/id": handleId,
       "/help": handleHelp,
       "/commands": handleHelp,
+
+      "/profile": handleProfile,
+      "/top": handleTop,
+      "/reptop": handleRepTop,
+      "/rep": handleRep,
+      "/friend": handleFriend,
+      "/friends": handleFriends,
+      "/unfriend": handleUnfriend,
 
       "/love": handleLove,
       "/couple": handleCouple,
@@ -1029,6 +1399,87 @@ bot.on("callback_query", async (query) => {
 
     const chatId = msg.chat.id;
     const userId = query.from.id;
+
+    if (data.startsWith("friend:accept:")) {
+      const parts = data.split(":");
+      const fromId = Number(parts[2]);
+      const targetId = Number(parts[3]);
+
+      if (userId !== targetId) {
+        await bot.answerCallbackQuery(query.id, {
+          text: "Это предложение дружбы не для тебя.",
+          show_alert: true,
+        });
+        return;
+      }
+
+      const requestKey = getFriendKey(chatId, fromId, targetId);
+      const request = pendingFriends.get(requestKey);
+
+      if (!request) {
+        await bot.answerCallbackQuery(query.id, {
+          text: "Предложение уже недействительно.",
+          show_alert: true,
+        });
+        return;
+      }
+
+      const fromUser = getSocialUser(chatId, request.from);
+      const targetUser = getSocialUser(chatId, request.target);
+
+      if (!fromUser.friends.includes(targetId)) fromUser.friends.push(targetId);
+      if (!targetUser.friends.includes(fromId)) targetUser.friends.push(fromId);
+
+      fromUser.xp += 100;
+      targetUser.xp += 100;
+      fromUser.coins += 25;
+      targetUser.coins += 25;
+
+      pendingFriends.delete(requestKey);
+      saveSocialData();
+
+      await bot.answerCallbackQuery(query.id, {
+        text: "Вы теперь друзья 👥",
+      });
+
+      await safeSend(
+        chatId,
+        `
+👥 <b>Новая дружба!</b>
+
+${escapeHtml(fromUser.name)} и ${escapeHtml(targetUser.name)} теперь друзья.
+
+✨ +100 XP каждому
+💰 +25 монет каждому
+        `.trim()
+      );
+
+      return;
+    }
+
+    if (data.startsWith("friend:decline:")) {
+      const parts = data.split(":");
+      const fromId = Number(parts[2]);
+      const targetId = Number(parts[3]);
+
+      if (userId !== targetId) {
+        await bot.answerCallbackQuery(query.id, {
+          text: "Это предложение дружбы не для тебя.",
+          show_alert: true,
+        });
+        return;
+      }
+
+      const requestKey = getFriendKey(chatId, fromId, targetId);
+      pendingFriends.delete(requestKey);
+
+      await bot.answerCallbackQuery(query.id, {
+        text: "Предложение дружбы отклонено.",
+      });
+
+      await safeSend(chatId, "👥 Предложение дружбы было отклонено.");
+      return;
+    }
 
     if (data.startsWith("couple:accept:")) {
       const parts = data.split(":");
@@ -1155,36 +1606,11 @@ bot.on("callback_query", async (query) => {
       const action = data.split(":")[1];
 
       const actions = {
-        gift: {
-          title: "🎁 Подарок",
-          text: "подарил(а) подарок своей паре",
-          xp: 150,
-          coins: -10,
-        },
-        date: {
-          title: "🍽 Свидание",
-          text: "устроил(а) романтическое свидание",
-          xp: 300,
-          coins: -25,
-        },
-        hug: {
-          title: "🤗 Объятие",
-          text: "обнял(а) свою пару",
-          xp: 80,
-          coins: 0,
-        },
-        kiss: {
-          title: "💋 Поцелуй",
-          text: "подарил(а) нежный поцелуй",
-          xp: 120,
-          coins: 0,
-        },
-        proposal: {
-          title: "💍 Предложение",
-          text: "сделал(а) важный шаг в отношениях",
-          xp: 500,
-          coins: -50,
-        },
+        gift: { title: "🎁 Подарок", text: "подарил(а) подарок своей паре", xp: 150, coins: -10 },
+        date: { title: "🍽 Свидание", text: "устроил(а) романтическое свидание", xp: 300, coins: -25 },
+        hug: { title: "🤗 Объятие", text: "обнял(а) свою пару", xp: 80, coins: 0 },
+        kiss: { title: "💋 Поцелуй", text: "подарил(а) нежный поцелуй", xp: 120, coins: 0 },
+        proposal: { title: "💍 Предложение", text: "сделал(а) важный шаг в отношениях", xp: 500, coins: -50 },
       };
 
       if (action === "profile") {
@@ -1209,9 +1635,7 @@ bot.on("callback_query", async (query) => {
           .reverse()
           .map((item, index) => {
             const date = new Date(item.date).toLocaleDateString("ru-RU");
-            return `${index + 1}. ${escapeHtml(item.title)} — +${
-              item.xp
-            } XP\n📅 ${date}`;
+            return `${index + 1}. ${escapeHtml(item.title)} — +${item.xp} XP\n📅 ${date}`;
           })
           .join("\n\n");
 
@@ -1304,5 +1728,6 @@ process.on("uncaughtException", (err) => {
 });
 
 loadRelationships();
+loadSocialData();
 
 console.log(`✅ Бот запущен. Источник: ${SOURCE_NAME}`);
