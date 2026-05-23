@@ -2,10 +2,22 @@
 
 const fs = require("fs");
 const path = require("path");
-const TelegramBot = require("node-telegram-bot-api");
 const http = require("http");
+const TelegramBot = require("node-telegram-bot-api");
 
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const OWNER_ID = Number(process.env.OWNER_ID || 0);
 const PORT = process.env.PORT || 3000;
+
+if (!BOT_TOKEN) {
+  console.error("❌ BOT_TOKEN не найден. Проверь .env или Variables на хостинге.");
+  process.exit(1);
+}
+
+if (!OWNER_ID) {
+  console.error("❌ OWNER_ID не найден. Проверь .env или Variables на хостинге.");
+  process.exit(1);
+}
 
 http
   .createServer((req, res) => {
@@ -15,19 +27,6 @@ http
   .listen(PORT, () => {
     console.log(`🌐 Health server started on port ${PORT}`);
   });
-
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const OWNER_ID = Number(process.env.OWNER_ID || 0);
-
-if (!BOT_TOKEN) {
-  console.error("❌ BOT_TOKEN не найден. Проверь файл .env или Environment Variables на Render.");
-  process.exit(1);
-}
-
-if (!OWNER_ID) {
-  console.error("❌ OWNER_ID не найден. Проверь файл .env или Environment Variables на Render.");
-  process.exit(1);
-}
 
 const bot = new TelegramBot(BOT_TOKEN, {
   polling: {
@@ -83,7 +82,9 @@ function formatUser(user) {
   const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ");
   const username = user.username ? `@${user.username}` : "без username";
 
-  return `${escapeHtml(fullName || "Пользователь")} (${escapeHtml(username)}, ID: <code>${user.id}</code>)`;
+  return `${escapeHtml(fullName || "Пользователь")} (${escapeHtml(
+    username
+  )}, ID: <code>${user.id}</code>)`;
 }
 
 function getReason(msg, fallback = "Причина не указана") {
@@ -100,7 +101,8 @@ function getMuteData(msg) {
   parts.shift();
 
   const minutesRaw = Number(parts[0]);
-  const minutes = Number.isFinite(minutesRaw) && minutesRaw > 0 ? minutesRaw : 10;
+  const minutes =
+    Number.isFinite(minutesRaw) && minutesRaw > 0 ? minutesRaw : 10;
 
   let reasonParts = parts.slice(1);
 
@@ -349,7 +351,8 @@ async function protectTarget(msg, target) {
 
   if (
     targetMember &&
-    (targetMember.status === "creator" || targetMember.status === "administrator")
+    (targetMember.status === "creator" ||
+      targetMember.status === "administrator")
   ) {
     await safeSend(chatId, "⛔ Нельзя применить действие к администратору.", {
       reply_to_message_id: msg.message_id,
@@ -401,6 +404,7 @@ async function handleHelp(msg) {
 /ping — проверить, отвечает ли бот
 /id — узнать свой ID и ID чата
 /help — список команд
+/commands — список команд
 
 <b>Отношения:</b>
 /love — открыть систему отношений
@@ -780,7 +784,13 @@ async function showLoveProfile(chatId, userId, messageId = null) {
 
 📈 <b>Прогресс:</b>
 ${bar}
-${nextLevel ? `${progressNow} / ${progressMax} XP до уровня «${escapeHtml(nextLevel.name)}»` : "Максимальный уровень"}
+${
+  nextLevel
+    ? `${progressNow} / ${progressMax} XP до уровня «${escapeHtml(
+        nextLevel.name
+      )}»`
+    : "Максимальный уровень"
+}
 
 📅 <b>Вместе с:</b> ${new Date(couple.startedAt).toLocaleDateString("ru-RU")}
 
@@ -849,9 +859,13 @@ async function handleCouple(msg) {
   const existing2 = findUserCouple(msg.chat.id, target.id);
 
   if (existing1 || existing2) {
-    await safeSend(msg.chat.id, "⚠️ Один из пользователей уже состоит в отношениях.", {
-      reply_to_message_id: msg.message_id,
-    });
+    await safeSend(
+      msg.chat.id,
+      "⚠️ Один из пользователей уже состоит в отношениях.",
+      {
+        reply_to_message_id: msg.message_id,
+      }
+    );
     return;
   }
 
@@ -880,8 +894,14 @@ ${escapeHtml(getUserName(target))}, принять предложение?
       reply_markup: {
         inline_keyboard: [
           [
-            { text: "💗 Принять", callback_data: `couple:accept:${msg.from.id}:${target.id}` },
-            { text: "💔 Отказаться", callback_data: `couple:decline:${msg.from.id}:${target.id}` },
+            {
+              text: "💗 Принять",
+              callback_data: `couple:accept:${msg.from.id}:${target.id}`,
+            },
+            {
+              text: "💔 Отказаться",
+              callback_data: `couple:decline:${msg.from.id}:${target.id}`,
+            },
           ],
         ],
       },
@@ -921,14 +941,21 @@ async function handleLoveTop(msg) {
     .slice(0, 10);
 
   if (!list.length) {
-    await safeSend(msg.chat.id, "🏆 Рейтинга пока нет. Создайте первую пару через /couple.");
+    await safeSend(
+      msg.chat.id,
+      "🏆 Рейтинга пока нет. Создайте первую пару через /couple."
+    );
     return;
   }
 
   const text = list
     .map((couple, index) => {
       const level = getRelationshipLevel(couple.xp).current;
-      return `${index + 1}. 💞 ${escapeHtml(couple.user1.name)} + ${escapeHtml(couple.user2.name)} — ${couple.xp} XP · ${escapeHtml(level.name)}`;
+      return `${index + 1}. 💞 ${escapeHtml(
+        couple.user1.name
+      )} + ${escapeHtml(couple.user2.name)} — ${couple.xp} XP · ${escapeHtml(
+        level.name
+      )}`;
     })
     .join("\n");
 
@@ -955,6 +982,7 @@ bot.on("message", async (msg) => {
       "/ping": handlePing,
       "/id": handleId,
       "/help": handleHelp,
+      "/commands": handleHelp,
 
       "/love": handleLove,
       "/couple": handleCouple,
@@ -1181,7 +1209,9 @@ bot.on("callback_query", async (query) => {
           .reverse()
           .map((item, index) => {
             const date = new Date(item.date).toLocaleDateString("ru-RU");
-            return `${index + 1}. ${escapeHtml(item.title)} — +${item.xp} XP\n📅 ${date}`;
+            return `${index + 1}. ${escapeHtml(item.title)} — +${
+              item.xp
+            } XP\n📅 ${date}`;
           })
           .join("\n\n");
 
@@ -1258,6 +1288,11 @@ ${selected.coins < 0 ? `🪙 ${selected.coins} монет` : ""}
 
 bot.on("polling_error", (err) => {
   console.error("❌ Polling error:", err.message);
+
+  if (String(err.message).includes("401")) {
+    console.error("❌ BOT_TOKEN неправильный или отозван. Останавливаю процесс.");
+    process.exit(1);
+  }
 });
 
 process.on("unhandledRejection", (reason) => {
