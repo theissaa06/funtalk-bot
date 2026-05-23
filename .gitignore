@@ -1,10 +1,6 @@
-﻿node_modules
+node_modules/
 .env
-data
-logs
+data/*.sqlite
 *.sqlite
-*.db
-*.pid
-.funtalk_lock*
-database.json
-package-lock.json.bak
+*.log
+.DS_Store

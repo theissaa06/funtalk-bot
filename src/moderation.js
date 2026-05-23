@@ -1,795 +1,423 @@
-const fs = require("fs");
-const path = require("path");
-const Database = require("better-sqlite3");
+// ============================================================
+// src/moderation.js
+// Модерация: мут, бан, кик, предупреждения, антифлуд.
+// ВАЖНО: перед любым наказанием идёт проверка isUserAdmin.
+// ============================================================
 
-const dbPath = process.env.DATABASE_PATH || "./data/bot.sqlite";
-const dbDir = path.dirname(dbPath);
+const db = require('./db');
+const { isUserAdmin, isBotAdmin, formatName, formatNameLink, formatDuration, deleteAfter } = require('./utils');
 
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+// ── Антифлуд: хранит timestamp последних сообщений ───────────
+// Map<chatId_userId, number[]>
+const floodMap = new Map();
+const FLOOD_LIMIT   = 5;   // сообщений
+const FLOOD_WINDOW  = 5;   // секунд
+const FLOOD_MUTE    = 60;  // секунд мута за флуд
+
+// ── Лимит предупреждений ──────────────────────────────────────
+const MAX_WARNINGS = 3;
+
+// ─────────────────────────────────────────────────────────────
+// Вспомогательные функции DB
+// ─────────────────────────────────────────────────────────────
+
+function getUser(userId, chatId) {
+  return db.prepare(
+    'SELECT * FROM users WHERE id = ? AND chat_id = ?'
+  ).get(userId, chatId);
 }
 
-const db = new Database(dbPath);
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  chat_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  username TEXT,
-  first_name TEXT,
-  last_name TEXT,
-  total_messages INTEGER DEFAULT 0,
-  today_messages INTEGER DEFAULT 0,
-  today_date TEXT,
-  warns INTEGER DEFAULT 0,
-  joined_at INTEGER,
-  last_active_at INTEGER,
-  muted_until INTEGER DEFAULT 0,
-  PRIMARY KEY (chat_id, user_id)
-);
-
-CREATE TABLE IF NOT EXISTS chat_settings (
-  chat_id TEXT PRIMARY KEY,
-  autokick_enabled INTEGER DEFAULT 0,
-  autokick_days INTEGER DEFAULT 2
-);
-
-CREATE TABLE IF NOT EXISTS mod_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  chat_id TEXT NOT NULL,
-  moderator_id TEXT,
-  target_id TEXT,
-  action TEXT NOT NULL,
-  reason TEXT,
-  created_at INTEGER NOT NULL
-);
-`);
-
-function todayKey() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function now() {
-  return Date.now();
-}
-
-function normalizeUsername(username) {
-  return String(username || "").replace("@", "").toLowerCase();
-}
-
-function formatDate(ts) {
-  if (!ts) return "нет данных";
-  return new Date(Number(ts)).toLocaleString("ru-RU");
-}
-
-function getDisplayName(user) {
-  if (!user) return "Неизвестно";
-  if (user.username) return `@${user.username}`;
-  return [user.first_name, user.last_name].filter(Boolean).join(" ") || `ID ${user.user_id || user.id}`;
-}
-
-function ensureSettings(chatId) {
+function upsertUser(user, chatId) {
   db.prepare(`
-    INSERT OR IGNORE INTO chat_settings (chat_id, autokick_enabled, autokick_days)
-    VALUES (?, 0, 2)
-  `).run(String(chatId));
+    INSERT INTO users (id, username, first_name, chat_id)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      username   = excluded.username,
+      first_name = excluded.first_name,
+      last_active = CURRENT_TIMESTAMP
+  `).run(user.id, user.username || null, user.first_name || null, chatId);
 }
 
-function saveModLog(chatId, moderatorId, targetId, action, reason = "") {
-  db.prepare(`
-    INSERT INTO mod_logs (chat_id, moderator_id, target_id, action, reason, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(String(chatId), String(moderatorId || ""), String(targetId || ""), action, reason, now());
+function addWarning(userId, chatId, reason, issuedBy) {
+  db.prepare(
+    'INSERT INTO warnings (user_id, chat_id, reason, issued_by) VALUES (?, ?, ?, ?)'
+  ).run(userId, chatId, reason || 'нарушение правил', issuedBy);
+
+  db.prepare(
+    'UPDATE users SET warnings = warnings + 1 WHERE id = ? AND chat_id = ?'
+  ).run(userId, chatId);
+
+  const row = db.prepare(
+    'SELECT warnings FROM users WHERE id = ? AND chat_id = ?'
+  ).get(userId, chatId);
+
+  return row ? row.warnings : 1;
 }
 
-function upsertUser(chatId, user, countMessage = true) {
-  if (!chatId || !user || user.is_bot) return;
+function getWarnings(userId, chatId) {
+  const row = db.prepare(
+    'SELECT warnings FROM users WHERE id = ? AND chat_id = ?'
+  ).get(userId, chatId);
+  return row ? row.warnings : 0;
+}
 
-  const chat = String(chatId);
-  const id = String(user.id);
-  const date = todayKey();
-  const current = db.prepare(`
-    SELECT * FROM users WHERE chat_id = ? AND user_id = ?
-  `).get(chat, id);
+function resetWarnings(userId, chatId) {
+  db.prepare(
+    'UPDATE users SET warnings = 0 WHERE id = ? AND chat_id = ?'
+  ).run(userId, chatId);
+  db.prepare(
+    'DELETE FROM warnings WHERE user_id = ? AND chat_id = ?'
+  ).run(userId, chatId);
+}
 
-  if (!current) {
-    db.prepare(`
-      INSERT INTO users (
-        chat_id, user_id, username, first_name, last_name,
-        total_messages, today_messages, today_date, warns, joined_at, last_active_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-    `).run(
-      chat,
-      id,
-      normalizeUsername(user.username),
-      user.first_name || "",
-      user.last_name || "",
-      countMessage ? 1 : 0,
-      countMessage ? 1 : 0,
-      date,
-      now(),
-      now()
-    );
-    return;
+function logAction(chatId, userId, action, reason, byUserId) {
+  db.prepare(
+    'INSERT INTO mod_log (chat_id, user_id, action, reason, by_user_id) VALUES (?, ?, ?, ?, ?)'
+  ).run(chatId, userId, action, reason || null, byUserId || null);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Получить цель команды (реплай или @username/ID в аргументе)
+// ─────────────────────────────────────────────────────────────
+async function resolveTarget(ctx) {
+  // 1. Реплай на сообщение
+  if (ctx.message.reply_to_message) {
+    return ctx.message.reply_to_message.from;
   }
 
-  let todayMessages = current.today_messages || 0;
-
-  if (current.today_date !== date) {
-    todayMessages = 0;
-  }
-
-  db.prepare(`
-    UPDATE users
-    SET username = ?,
-        first_name = ?,
-        last_name = ?,
-        total_messages = total_messages + ?,
-        today_messages = ?,
-        today_date = ?,
-        last_active_at = ?
-    WHERE chat_id = ? AND user_id = ?
-  `).run(
-    normalizeUsername(user.username),
-    user.first_name || "",
-    user.last_name || "",
-    countMessage ? 1 : 0,
-    countMessage + todayMessages,
-    date,
-    now(),
-    chat,
-    id
-  );
-}
-
-function getUser(chatId, userId) {
-  return db.prepare(`
-    SELECT * FROM users WHERE chat_id = ? AND user_id = ?
-  `).get(String(chatId), String(userId));
-}
-
-function findUserByUsername(chatId, username) {
-  return db.prepare(`
-    SELECT * FROM users
-    WHERE chat_id = ? AND lower(username) = ?
-  `).get(String(chatId), normalizeUsername(username));
-}
-
-function parseArgs(ctx) {
-  const text = ctx.message?.text || "";
-  return text.split(/\s+/).slice(1);
-}
-
-function getReason(args, startIndex = 1) {
-  return args.slice(startIndex).join(" ").trim() || "без причины";
-}
-
-function parseDuration(value) {
-  const raw = String(value || "").toLowerCase().trim();
-  const match = raw.match(/^(\d+)(m|h|d)$/);
-
-  if (!match) return null;
-
-  const amount = Number(match[1]);
-  const unit = match[2];
-
-  if (unit === "m") return amount * 60;
-  if (unit === "h") return amount * 60 * 60;
-  if (unit === "d") return amount * 60 * 60 * 24;
-
-  return null;
-}
-
-async function isAdmin(ctx, userId) {
-  try {
-    const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
-    return member.status === "creator" || member.status === "administrator";
-  } catch {
-    return false;
-  }
-}
-
-async function requireGroup(ctx, safeReply) {
-  const type = ctx.chat?.type;
-  if (type !== "group" && type !== "supergroup") {
-    await safeReply(ctx, "Эта команда работает только в группе.");
-    return false;
-  }
-  return true;
-}
-
-async function requireAdmin(ctx, safeReply) {
-  const ok = await isAdmin(ctx, ctx.from.id);
-
-  if (!ok) {
-    await safeReply(ctx, "⛔ Эту команду может использовать только админ.");
-    return false;
-  }
-
-  return true;
-}
-
-async function resolveTarget(ctx, args, safeReply) {
-  const replyUser = ctx.message?.reply_to_message?.from;
-
-  if (replyUser && !replyUser.is_bot) {
-    upsertUser(ctx.chat.id, replyUser, false);
-
-    return {
-      id: replyUser.id,
-      username: replyUser.username || "",
-      first_name: replyUser.first_name || "",
-      last_name: replyUser.last_name || "",
-    };
-  }
-
-  const raw = args[0];
-
-  if (!raw) {
-    await safeReply(ctx, "Укажи пользователя: ответом на сообщение, @username или ID.");
-    return null;
-  }
-
-  if (raw.startsWith("@")) {
-    const found = findUserByUsername(ctx.chat.id, raw);
-
-    if (!found) {
-      await safeReply(
-        ctx,
-        "Я пока не знаю этого пользователя. Пусть он напишет хотя бы одно сообщение в группе, либо используй команду ответом на его сообщение."
-      );
+  // 2. Аргумент: @username или числовой ID
+  const args = ctx.message.text.split(' ').slice(1);
+  if (args.length > 0) {
+    const arg = args[0];
+    try {
+      const member = arg.startsWith('@')
+        ? await ctx.telegram.getChatMember(ctx.chat.id, arg)
+        : await ctx.telegram.getChatMember(ctx.chat.id, parseInt(arg));
+      return member.user;
+    } catch {
       return null;
     }
-
-    return {
-      id: Number(found.user_id),
-      username: found.username,
-      first_name: found.first_name,
-      last_name: found.last_name,
-    };
   }
 
-  if (/^\d+$/.test(raw)) {
-    const found = getUser(ctx.chat.id, raw);
-
-    return {
-      id: Number(raw),
-      username: found?.username || "",
-      first_name: found?.first_name || "",
-      last_name: found?.last_name || "",
-    };
-  }
-
-  await safeReply(ctx, "Не понял пользователя. Используй ответ на сообщение, @username или ID.");
   return null;
 }
 
-function profileText(user) {
-  return (
-    "👤 Профиль пользователя\n\n" +
-    `Имя: ${getDisplayName(user)}\n` +
-    `ID: ${user.user_id || user.id}\n` +
-    `Сообщений всего: ${user.total_messages || 0}\n` +
-    `Сообщений сегодня: ${user.today_messages || 0}\n` +
-    `Варнов: ${user.warns || 0}\n` +
-    `В чате с: ${formatDate(user.joined_at)}\n` +
-    `Последняя активность: ${formatDate(user.last_active_at)}`
-  );
+// ─────────────────────────────────────────────────────────────
+// Парсить длительность из строки: "10m", "1h", "2d"
+// ─────────────────────────────────────────────────────────────
+function parseDuration(str) {
+  if (!str) return null;
+  const match = str.match(/^(\d+)([smhd]?)$/i);
+  if (!match) return null;
+  const val = parseInt(match[1]);
+  const unit = (match[2] || 'm').toLowerCase();
+  const multipliers = { s: 1, m: 60, h: 3600, d: 86400 };
+  return val * (multipliers[unit] || 60);
 }
 
-function moderationHelpText() {
-  return (
-    "🛡 Команды модерации:\n\n" +
-    "/profile — мой профиль\n" +
-    "/profile @user — профиль пользователя\n" +
-    "/stats — статистика группы\n" +
-    "/top — топ активных\n" +
-    "/today — топ за сегодня\n" +
-    "/inactive — неактивные пользователи\n\n" +
-    "/warn @user причина — выдать варн\n" +
-    "/warns @user — показать варны\n" +
-    "/clearwarns @user — очистить варны\n" +
-    "/kick @user причина — кикнуть\n" +
-    "/ban @user причина — забанить\n" +
-    "/unban ID — разбанить по ID\n" +
-    "/mute @user 30m причина — замутить\n" +
-    "/unmute @user — размутить\n" +
-    "/modlog — последние действия\n\n" +
-    "/autokick_on — включить авто-кик неактивных\n" +
-    "/autokick_off — выключить авто-кик\n" +
-    "/autokick_days 2 — кикать после 2 дней неактива\n" +
-    "/settings — настройки группы\n\n" +
-    "Важно: лучше использовать команды ответом на сообщение пользователя."
-  );
-}
+// ─────────────────────────────────────────────────────────────
+// Регистрация всех команд модерации
+// ─────────────────────────────────────────────────────────────
+function register(bot) {
 
-function registerModeration(bot, helpers) {
-  const { safeReply, isPrivateChat } = helpers;
+  // ── /mute [@user|reply] [duration] [reason] ──────────────────
+  bot.command(['mute', 'мут'], async (ctx) => {
+    if (ctx.chat.type === 'private') return;
 
-  bot.use(async (ctx, next) => {
-    try {
-      const type = ctx.chat?.type;
-      const user = ctx.from;
-
-      if ((type === "group" || type === "supergroup") && user && !user.is_bot) {
-        ensureSettings(ctx.chat.id);
-        upsertUser(ctx.chat.id, user, true);
-      }
-    } catch (error) {
-      console.error("Ошибка записи активности:", error.message);
+    // Проверяем права вызывающего
+    if (!await isUserAdmin(ctx, ctx.from.id)) {
+      return ctx.reply('⛔ Только администраторы могут мутить участников.');
     }
 
-    return next();
-  });
-
-  bot.command("modhelp", async (ctx) => {
-    return safeReply(ctx, moderationHelpText());
-  });
-
-  bot.command("profile", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-
-    const args = parseArgs(ctx);
-    let target = null;
-
-    if (args.length > 0 || ctx.message?.reply_to_message) {
-      target = await resolveTarget(ctx, args, safeReply);
-      if (!target) return;
-    } else {
-      target = ctx.from;
+    const target = await resolveTarget(ctx);
+    if (!target) {
+      return ctx.reply('⚠️ Укажи пользователя — ответь на его сообщение или напиши @username.');
     }
 
-    upsertUser(ctx.chat.id, target, false);
-
-    const user = getUser(ctx.chat.id, target.id);
-
-    return safeReply(ctx, profileText(user || {
-      user_id: target.id,
-      username: target.username,
-      first_name: target.first_name,
-      last_name: target.last_name,
-    }));
-  });
-
-  bot.command("stats", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-
-    const chatId = String(ctx.chat.id);
-    const users = db.prepare(`SELECT COUNT(*) as count FROM users WHERE chat_id = ?`).get(chatId);
-    const total = db.prepare(`SELECT SUM(total_messages) as total FROM users WHERE chat_id = ?`).get(chatId);
-    const today = db.prepare(`SELECT SUM(today_messages) as total FROM users WHERE chat_id = ? AND today_date = ?`).get(chatId, todayKey());
-    const activeToday = db.prepare(`SELECT COUNT(*) as count FROM users WHERE chat_id = ? AND today_messages > 0 AND today_date = ?`).get(chatId, todayKey());
-
-    return safeReply(
-      ctx,
-      "📊 Статистика группы\n\n" +
-        `Пользователей в базе: ${users.count || 0}\n` +
-        `Сообщений всего: ${total.total || 0}\n` +
-        `Сообщений сегодня: ${today.total || 0}\n` +
-        `Активных сегодня: ${activeToday.count || 0}`
-    );
-  });
-
-  bot.command("top", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-
-    const rows = db.prepare(`
-      SELECT * FROM users
-      WHERE chat_id = ?
-      ORDER BY total_messages DESC
-      LIMIT 10
-    `).all(String(ctx.chat.id));
-
-    if (!rows.length) return safeReply(ctx, "Пока нет статистики.");
-
-    const text = rows
-      .map((u, i) => `${i + 1}. ${getDisplayName(u)} — ${u.total_messages || 0} сообщений`)
-      .join("\n");
-
-    return safeReply(ctx, "🏆 Топ активных пользователей:\n\n" + text);
-  });
-
-  bot.command("today", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-
-    const rows = db.prepare(`
-      SELECT * FROM users
-      WHERE chat_id = ? AND today_date = ?
-      ORDER BY today_messages DESC
-      LIMIT 10
-    `).all(String(ctx.chat.id), todayKey());
-
-    if (!rows.length) return safeReply(ctx, "Сегодня пока нет активности.");
-
-    const text = rows
-      .map((u, i) => `${i + 1}. ${getDisplayName(u)} — ${u.today_messages || 0} сообщений`)
-      .join("\n");
-
-    return safeReply(ctx, "🔥 Топ за сегодня:\n\n" + text);
-  });
-
-  bot.command("inactive", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-
-    const settings = db.prepare(`SELECT * FROM chat_settings WHERE chat_id = ?`).get(String(ctx.chat.id));
-    const days = settings?.autokick_days || 2;
-    const limit = now() - days * 24 * 60 * 60 * 1000;
-
-    const rows = db.prepare(`
-      SELECT * FROM users
-      WHERE chat_id = ? AND last_active_at < ?
-      ORDER BY last_active_at ASC
-      LIMIT 20
-    `).all(String(ctx.chat.id), limit);
-
-    if (!rows.length) return safeReply(ctx, `Неактивных больше ${days} дней нет.`);
-
-    const text = rows
-      .map((u, i) => `${i + 1}. ${getDisplayName(u)} — последняя активность: ${formatDate(u.last_active_at)}`)
-      .join("\n");
-
-    return safeReply(ctx, `😴 Неактивные больше ${days} дней:\n\n${text}`);
-  });
-
-  bot.command("warn", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
-
-    const args = parseArgs(ctx);
-    const target = await resolveTarget(ctx, args, safeReply);
-    if (!target) return;
-
-    if (await isAdmin(ctx, target.id)) {
-      return safeReply(ctx, "Нельзя выдавать варн администратору.");
+    // *** ЗАЩИТА АДМИНИСТРАТОРОВ ***
+    if (await isUserAdmin(ctx, target.id)) {
+      return ctx.reply('🛡 Нельзя замутить администратора или владельца чата.');
     }
 
-    const reason = getReason(args);
-    upsertUser(ctx.chat.id, target, false);
-
-    db.prepare(`
-      UPDATE users SET warns = warns + 1
-      WHERE chat_id = ? AND user_id = ?
-    `).run(String(ctx.chat.id), String(target.id));
-
-    const user = getUser(ctx.chat.id, target.id);
-    saveModLog(ctx.chat.id, ctx.from.id, target.id, "WARN", reason);
-
-    if ((user?.warns || 0) >= 3) {
-      const until = Math.floor(Date.now() / 1000) + 24 * 60 * 60;
-
-      try {
-        await ctx.telegram.restrictChatMember(ctx.chat.id, target.id, {
-          until_date: until,
-          permissions: { can_send_messages: false },
-        });
-
-        saveModLog(ctx.chat.id, ctx.from.id, target.id, "AUTO_MUTE", "3 варна");
-      } catch (e) {
-        console.error("Ошибка авто-мута:", e.message);
-      }
-
-      return safeReply(
-        ctx,
-        `⚠️ ${getDisplayName(target)} получил варн.\nПричина: ${reason}\n\nВарнов: ${user.warns}/3\nПользователь автоматически замучен на 24 часа.`
-      );
-    }
-
-    return safeReply(
-      ctx,
-      `⚠️ ${getDisplayName(target)} получил варн.\nПричина: ${reason}\nВарнов: ${user?.warns || 1}/3`
-    );
-  });
-
-  bot.command("warns", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-
-    const args = parseArgs(ctx);
-    const target = await resolveTarget(ctx, args, safeReply);
-    if (!target) return;
-
-    const user = getUser(ctx.chat.id, target.id);
-
-    return safeReply(ctx, `⚠️ Варны ${getDisplayName(target)}: ${user?.warns || 0}/3`);
-  });
-
-  bot.command("clearwarns", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
-
-    const args = parseArgs(ctx);
-    const target = await resolveTarget(ctx, args, safeReply);
-    if (!target) return;
-
-    upsertUser(ctx.chat.id, target, false);
-
-    db.prepare(`
-      UPDATE users SET warns = 0
-      WHERE chat_id = ? AND user_id = ?
-    `).run(String(ctx.chat.id), String(target.id));
-
-    saveModLog(ctx.chat.id, ctx.from.id, target.id, "CLEAR_WARNS", "");
-
-    return safeReply(ctx, `✅ Варны пользователя ${getDisplayName(target)} очищены.`);
-  });
-
-  bot.command("kick", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
-
-    const args = parseArgs(ctx);
-    const target = await resolveTarget(ctx, args, safeReply);
-    if (!target) return;
-
-    if (await isAdmin(ctx, target.id)) {
-      return safeReply(ctx, "Нельзя кикнуть администратора.");
-    }
-
-    const reason = getReason(args);
-
-    try {
-      await ctx.telegram.banChatMember(ctx.chat.id, target.id);
-      await ctx.telegram.unbanChatMember(ctx.chat.id, target.id);
-
-      saveModLog(ctx.chat.id, ctx.from.id, target.id, "KICK", reason);
-
-      return safeReply(ctx, `👢 ${getDisplayName(target)} кикнут.\nПричина: ${reason}`);
-    } catch (e) {
-      return safeReply(ctx, "Не удалось кикнуть. Проверь, что бот админ и имеет право банить.");
-    }
-  });
-
-  bot.command("ban", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
-
-    const args = parseArgs(ctx);
-    const target = await resolveTarget(ctx, args, safeReply);
-    if (!target) return;
-
-    if (await isAdmin(ctx, target.id)) {
-      return safeReply(ctx, "Нельзя забанить администратора.");
-    }
-
-    const reason = getReason(args);
-
-    try {
-      await ctx.telegram.banChatMember(ctx.chat.id, target.id);
-
-      saveModLog(ctx.chat.id, ctx.from.id, target.id, "BAN", reason);
-
-      return safeReply(ctx, `⛔ ${getDisplayName(target)} забанен.\nПричина: ${reason}`);
-    } catch {
-      return safeReply(ctx, "Не удалось забанить. Проверь права бота.");
-    }
-  });
-
-  bot.command("unban", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
-
-    const args = parseArgs(ctx);
-    const userId = args[0];
-
-    if (!userId || !/^\d+$/.test(userId)) {
-      return safeReply(ctx, "Укажи ID пользователя: /unban 123456789");
-    }
-
-    try {
-      await ctx.telegram.unbanChatMember(ctx.chat.id, Number(userId));
-
-      saveModLog(ctx.chat.id, ctx.from.id, userId, "UNBAN", "");
-
-      return safeReply(ctx, `✅ Пользователь ${userId} разбанен.`);
-    } catch {
-      return safeReply(ctx, "Не удалось разбанить пользователя.");
-    }
-  });
-
-  bot.command("mute", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
-
-    const args = parseArgs(ctx);
-    const target = await resolveTarget(ctx, args, safeReply);
-    if (!target) return;
-
-    if (await isAdmin(ctx, target.id)) {
-      return safeReply(ctx, "Нельзя замутить администратора.");
-    }
-
-    const durationRaw = ctx.message?.reply_to_message ? args[0] : args[1];
-    const seconds = parseDuration(durationRaw);
-
-    if (!seconds) {
-      return safeReply(ctx, "Укажи время: /mute @user 30m причина\nФорматы: 10m, 2h, 1d");
-    }
-
-    const reason = ctx.message?.reply_to_message ? getReason(args, 1) : getReason(args, 2);
-    const until = Math.floor(Date.now() / 1000) + seconds;
+    // Парсим аргументы: /mute [@user] [10m] [причина]
+    const args = ctx.message.text.split(' ').slice(1);
+    const durStr   = args.find(a => /^\d+[smhd]?$/i.test(a)) || '10m';
+    const duration = parseDuration(durStr) || 600;
+    const until    = Math.floor(Date.now() / 1000) + duration;
 
     try {
       await ctx.telegram.restrictChatMember(ctx.chat.id, target.id, {
-        until_date: until,
         permissions: { can_send_messages: false },
+        until_date: until,
       });
 
-      db.prepare(`
-        UPDATE users SET muted_until = ?
-        WHERE chat_id = ? AND user_id = ?
-      `).run(until * 1000, String(ctx.chat.id), String(target.id));
+      upsertUser(target, ctx.chat.id);
+      logAction(ctx.chat.id, target.id, 'mute', `${formatDuration(duration)}`, ctx.from.id);
 
-      saveModLog(ctx.chat.id, ctx.from.id, target.id, "MUTE", `${durationRaw}; ${reason}`);
-
-      return safeReply(ctx, `🔇 ${getDisplayName(target)} замучен на ${durationRaw}.\nПричина: ${reason}`);
-    } catch {
-      return safeReply(ctx, "Не удалось замутить. Проверь права бота.");
+      await ctx.reply(
+        `🔇 <b>${formatName(target)}</b> замучен на <b>${formatDuration(duration)}</b>.`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('[mute]', err.message);
+      await ctx.reply('❌ Не удалось замутить. Убедись, что у бота есть права администратора.');
     }
   });
 
-  bot.command("unmute", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
+  // ── /unmute [@user|reply] ─────────────────────────────────────
+  bot.command(['unmute', 'размут'], async (ctx) => {
+    if (ctx.chat.type === 'private') return;
+    if (!await isUserAdmin(ctx, ctx.from.id)) {
+      return ctx.reply('⛔ Только администраторы могут снимать мут.');
+    }
 
-    const args = parseArgs(ctx);
-    const target = await resolveTarget(ctx, args, safeReply);
-    if (!target) return;
+    const target = await resolveTarget(ctx);
+    if (!target) return ctx.reply('⚠️ Укажи пользователя.');
 
     try {
       await ctx.telegram.restrictChatMember(ctx.chat.id, target.id, {
         permissions: {
           can_send_messages: true,
-          can_send_audios: true,
-          can_send_documents: true,
-          can_send_photos: true,
-          can_send_videos: true,
-          can_send_video_notes: true,
-          can_send_voice_notes: true,
+          can_send_media_messages: true,
           can_send_polls: true,
           can_send_other_messages: true,
           can_add_web_page_previews: true,
-          can_change_info: false,
-          can_invite_users: true,
-          can_pin_messages: false,
-          can_manage_topics: false,
         },
       });
 
-      db.prepare(`
-        UPDATE users SET muted_until = 0
-        WHERE chat_id = ? AND user_id = ?
-      `).run(String(ctx.chat.id), String(target.id));
-
-      saveModLog(ctx.chat.id, ctx.from.id, target.id, "UNMUTE", "");
-
-      return safeReply(ctx, `🔊 ${getDisplayName(target)} размучен.`);
-    } catch {
-      return safeReply(ctx, "Не удалось снять мут.");
+      logAction(ctx.chat.id, target.id, 'unmute', null, ctx.from.id);
+      await ctx.reply(`🔊 Мут снят с <b>${formatName(target)}</b>.`, { parse_mode: 'HTML' });
+    } catch (err) {
+      console.error('[unmute]', err.message);
+      await ctx.reply('❌ Не удалось снять мут.');
     }
   });
 
-  bot.command("modlog", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
-
-    const rows = db.prepare(`
-      SELECT * FROM mod_logs
-      WHERE chat_id = ?
-      ORDER BY id DESC
-      LIMIT 10
-    `).all(String(ctx.chat.id));
-
-    if (!rows.length) return safeReply(ctx, "Лог модерации пока пуст.");
-
-    const text = rows
-      .map(
-        (log) =>
-          `#${log.id} ${log.action}\nМодер: ${log.moderator_id}\nЦель: ${log.target_id}\nПричина: ${log.reason || "нет"}\n${formatDate(log.created_at)}`
-      )
-      .join("\n\n");
-
-    return safeReply(ctx, "📜 Последние действия модерации:\n\n" + text);
-  });
-
-  bot.command("autokick_on", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
-
-    ensureSettings(ctx.chat.id);
-
-    db.prepare(`
-      UPDATE chat_settings SET autokick_enabled = 1
-      WHERE chat_id = ?
-    `).run(String(ctx.chat.id));
-
-    return safeReply(ctx, "✅ Авто-кик неактивных включён.");
-  });
-
-  bot.command("autokick_off", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
-
-    ensureSettings(ctx.chat.id);
-
-    db.prepare(`
-      UPDATE chat_settings SET autokick_enabled = 0
-      WHERE chat_id = ?
-    `).run(String(ctx.chat.id));
-
-    return safeReply(ctx, "✅ Авто-кик неактивных выключен.");
-  });
-
-  bot.command("autokick_days", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
-
-    const days = Number(parseArgs(ctx)[0]);
-
-    if (!Number.isInteger(days) || days < 1 || days > 30) {
-      return safeReply(ctx, "Укажи число от 1 до 30. Например: /autokick_days 2");
+  // ── /ban [@user|reply] [reason] ──────────────────────────────
+  bot.command(['ban', 'бан'], async (ctx) => {
+    if (ctx.chat.type === 'private') return;
+    if (!await isUserAdmin(ctx, ctx.from.id)) {
+      return ctx.reply('⛔ Только администраторы могут банить.');
     }
 
-    ensureSettings(ctx.chat.id);
+    const target = await resolveTarget(ctx);
+    if (!target) return ctx.reply('⚠️ Укажи пользователя.');
 
-    db.prepare(`
-      UPDATE chat_settings SET autokick_days = ?
-      WHERE chat_id = ?
-    `).run(days, String(ctx.chat.id));
+    // *** ЗАЩИТА АДМИНИСТРАТОРОВ ***
+    if (await isUserAdmin(ctx, target.id)) {
+      return ctx.reply('🛡 Нельзя забанить администратора или владельца чата.');
+    }
 
-    return safeReply(ctx, `✅ Теперь авто-кик срабатывает после ${days} дней неактива.`);
+    try {
+      await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+      upsertUser(target, ctx.chat.id);
+      logAction(ctx.chat.id, target.id, 'ban', null, ctx.from.id);
+      await ctx.reply(`🔨 <b>${formatName(target)}</b> забанен.`, { parse_mode: 'HTML' });
+    } catch (err) {
+      console.error('[ban]', err.message);
+      await ctx.reply('❌ Не удалось забанить. Проверь права бота.');
+    }
   });
 
-  bot.command("settings", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
+  // ── /unban [@user|reply] ──────────────────────────────────────
+  bot.command(['unban', 'разбан'], async (ctx) => {
+    if (ctx.chat.type === 'private') return;
+    if (!await isUserAdmin(ctx, ctx.from.id)) {
+      return ctx.reply('⛔ Только администраторы могут разбанивать.');
+    }
 
-    ensureSettings(ctx.chat.id);
+    const target = await resolveTarget(ctx);
+    if (!target) return ctx.reply('⚠️ Укажи пользователя.');
 
-    const settings = db.prepare(`
-      SELECT * FROM chat_settings WHERE chat_id = ?
-    `).get(String(ctx.chat.id));
+    try {
+      await ctx.telegram.unbanChatMember(ctx.chat.id, target.id);
+      logAction(ctx.chat.id, target.id, 'unban', null, ctx.from.id);
+      await ctx.reply(`✅ <b>${formatName(target)}</b> разбанен.`, { parse_mode: 'HTML' });
+    } catch (err) {
+      console.error('[unban]', err.message);
+      await ctx.reply('❌ Не удалось разбанить.');
+    }
+  });
 
-    return safeReply(
-      ctx,
-      "⚙️ Настройки группы\n\n" +
-        `Авто-кик: ${settings.autokick_enabled ? "включён" : "выключен"}\n` +
-        `Дней неактива: ${settings.autokick_days}`
+  // ── /kick [@user|reply] ───────────────────────────────────────
+  bot.command(['kick', 'кик'], async (ctx) => {
+    if (ctx.chat.type === 'private') return;
+    if (!await isUserAdmin(ctx, ctx.from.id)) {
+      return ctx.reply('⛔ Только администраторы могут кикать.');
+    }
+
+    const target = await resolveTarget(ctx);
+    if (!target) return ctx.reply('⚠️ Укажи пользователя.');
+
+    // *** ЗАЩИТА АДМИНИСТРАТОРОВ ***
+    if (await isUserAdmin(ctx, target.id)) {
+      return ctx.reply('🛡 Нельзя кикнуть администратора или владельца чата.');
+    }
+
+    try {
+      // Кик = бан + немедленный разбан
+      await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+      await ctx.telegram.unbanChatMember(ctx.chat.id, target.id);
+      logAction(ctx.chat.id, target.id, 'kick', null, ctx.from.id);
+      await ctx.reply(`👢 <b>${formatName(target)}</b> выгнан из чата.`, { parse_mode: 'HTML' });
+    } catch (err) {
+      console.error('[kick]', err.message);
+      await ctx.reply('❌ Не удалось кикнуть. Проверь права бота.');
+    }
+  });
+
+  // ── /warn [@user|reply] [reason] ─────────────────────────────
+  bot.command(['warn', 'варн', 'предупреждение'], async (ctx) => {
+    if (ctx.chat.type === 'private') return;
+    if (!await isUserAdmin(ctx, ctx.from.id)) {
+      return ctx.reply('⛔ Только администраторы могут выдавать предупреждения.');
+    }
+
+    const target = await resolveTarget(ctx);
+    if (!target) return ctx.reply('⚠️ Укажи пользователя.');
+
+    // *** ЗАЩИТА АДМИНИСТРАТОРОВ ***
+    if (await isUserAdmin(ctx, target.id)) {
+      return ctx.reply('🛡 Нельзя выдать предупреждение администратору.');
+    }
+
+    const args   = ctx.message.text.split(' ').slice(1);
+    const reason = args.filter(a => !a.startsWith('@')).join(' ') || 'нарушение правил';
+
+    upsertUser(target, ctx.chat.id);
+    const count = addWarning(target.id, ctx.chat.id, reason, ctx.from.id);
+
+    if (count >= MAX_WARNINGS) {
+      // Автобан при достижении лимита
+      try {
+        await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+        resetWarnings(target.id, ctx.chat.id);
+        logAction(ctx.chat.id, target.id, 'autoban', `${MAX_WARNINGS} предупреждений`, ctx.from.id);
+        return ctx.reply(
+          `🔨 <b>${formatName(target)}</b> получил ${count}/${MAX_WARNINGS} предупреждений и автоматически забанен.\n📌 Причина: ${reason}`,
+          { parse_mode: 'HTML' }
+        );
+      } catch { /* если не смогли забанить — сообщаем */ }
+    }
+
+    logAction(ctx.chat.id, target.id, 'warn', reason, ctx.from.id);
+    await ctx.reply(
+      `⚠️ <b>${formatName(target)}</b> получает предупреждение ${count}/${MAX_WARNINGS}.\n📌 Причина: ${reason}`,
+      { parse_mode: 'HTML' }
     );
   });
 
-  setInterval(async () => {
-    const chats = db.prepare(`
-      SELECT * FROM chat_settings WHERE autokick_enabled = 1
-    `).all();
+  // ── /warnings [@user|reply] ───────────────────────────────────
+  bot.command(['warnings', 'варны'], async (ctx) => {
+    if (ctx.chat.type === 'private') return;
 
-    for (const chat of chats) {
-      const limit = now() - chat.autokick_days * 24 * 60 * 60 * 1000;
+    const target = await resolveTarget(ctx) || ctx.from;
+    upsertUser(target, ctx.chat.id);
+    const count = getWarnings(target.id, ctx.chat.id);
 
-      const inactiveUsers = db.prepare(`
-        SELECT * FROM users
-        WHERE chat_id = ? AND last_active_at < ?
-        LIMIT 20
-      `).all(chat.chat_id, limit);
+    await ctx.reply(
+      `📋 <b>${formatName(target)}</b> — предупреждений: <b>${count}/${MAX_WARNINGS}</b>`,
+      { parse_mode: 'HTML' }
+    );
+  });
 
-      for (const user of inactiveUsers) {
-        try {
-          const member = await bot.telegram.getChatMember(chat.chat_id, Number(user.user_id));
-
-          if (member.status === "creator" || member.status === "administrator") {
-            continue;
-          }
-
-          await bot.telegram.banChatMember(chat.chat_id, Number(user.user_id));
-          await bot.telegram.unbanChatMember(chat.chat_id, Number(user.user_id));
-
-          saveModLog(chat.chat_id, "AUTO", user.user_id, "AUTO_KICK", `${chat.autokick_days} дней неактива`);
-        } catch (error) {
-          console.error("Ошибка авто-кика:", error.message);
-        }
-      }
+  // ── /clearwarns [@user|reply] ─────────────────────────────────
+  bot.command(['clearwarns', 'сброс'], async (ctx) => {
+    if (ctx.chat.type === 'private') return;
+    if (!await isUserAdmin(ctx, ctx.from.id)) {
+      return ctx.reply('⛔ Только администраторы могут сбрасывать предупреждения.');
     }
-  }, 60 * 60 * 1000);
+
+    const target = await resolveTarget(ctx);
+    if (!target) return ctx.reply('⚠️ Укажи пользователя.');
+
+    resetWarnings(target.id, ctx.chat.id);
+    logAction(ctx.chat.id, target.id, 'clearwarns', null, ctx.from.id);
+    await ctx.reply(`✅ Предупреждения <b>${formatName(target)}</b> сброшены.`, { parse_mode: 'HTML' });
+  });
+
+  // ── /del — удалить сообщение (реплай) ────────────────────────
+  bot.command('del', async (ctx) => {
+    if (ctx.chat.type === 'private') return;
+    if (!await isUserAdmin(ctx, ctx.from.id)) return;
+
+    // Удаляем команду
+    try { await ctx.deleteMessage(); } catch {}
+
+    if (!ctx.message.reply_to_message) return;
+
+    try {
+      await ctx.telegram.deleteMessage(ctx.chat.id, ctx.message.reply_to_message.message_id);
+    } catch (err) {
+      console.error('[del]', err.message);
+    }
+  });
+
+  // ── /modlog — последние действия ─────────────────────────────
+  bot.command('modlog', async (ctx) => {
+    if (ctx.chat.type === 'private') return;
+    if (!await isUserAdmin(ctx, ctx.from.id)) return;
+
+    const rows = db.prepare(
+      'SELECT * FROM mod_log WHERE chat_id = ? ORDER BY created_at DESC LIMIT 10'
+    ).all(ctx.chat.id);
+
+    if (!rows.length) return ctx.reply('📋 Лог действий пуст.');
+
+    const lines = rows.map(r =>
+      `• <b>${r.action}</b> — user ${r.user_id}${r.reason ? ` (${r.reason})` : ''} — ${r.created_at.slice(0, 16)}`
+    );
+
+    await ctx.reply(`📋 <b>Последние действия:</b>\n\n${lines.join('\n')}`, { parse_mode: 'HTML' });
+  });
+
+  // ── Антифлуд middleware ───────────────────────────────────────
+  bot.on('message', async (ctx, next) => {
+    // Только группы
+    if (ctx.chat.type === 'private') return next();
+
+    const userId = ctx.from?.id;
+    const chatId = ctx.chat?.id;
+    if (!userId || !chatId) return next();
+
+    // Не трогаем администраторов
+    if (await isUserAdmin(ctx, userId)) return next();
+
+    const key = `${chatId}_${userId}`;
+    const now = Date.now();
+    const window = FLOOD_WINDOW * 1000;
+
+    const timestamps = (floodMap.get(key) || []).filter(t => now - t < window);
+    timestamps.push(now);
+    floodMap.set(key, timestamps);
+
+    if (timestamps.length > FLOOD_LIMIT) {
+      // Флуд — мутим
+      try {
+        await ctx.telegram.restrictChatMember(chatId, userId, {
+          permissions: { can_send_messages: false },
+          until_date: Math.floor(Date.now() / 1000) + FLOOD_MUTE,
+        });
+
+        floodMap.delete(key);
+        logAction(chatId, userId, 'mute_flood', `Антифлуд ${FLOOD_MUTE}с`, null);
+
+        const msg = await ctx.reply(
+          `⚠️ ${formatNameLink(ctx.from)} замучен на ${formatDuration(FLOOD_MUTE)} за флуд.`,
+          { parse_mode: 'HTML' }
+        );
+        // Удалить уведомление через 15 секунд
+        deleteAfter(ctx, msg.message_id, 15000);
+      } catch (err) {
+        console.error('[antiflood]', err.message);
+      }
+      return; // не передаём дальше
+    }
+
+    return next();
+  });
+
+  console.log('✅ Модуль moderation подключён');
 }
 
-module.exports = {
-  registerModeration,
-};
+module.exports = { register };

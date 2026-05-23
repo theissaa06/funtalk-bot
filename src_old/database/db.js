@@ -1,0 +1,259 @@
+// ============================================================
+// src/database/db.js
+// Простое JSON-хранилище без native-зависимостей.
+// Так проект легче запускается на Windows без ошибок better-sqlite3/node-gyp.
+// ============================================================
+
+const fs = require('fs');
+const path = require('path');
+require('dotenv').config();
+
+const dbPath = path.resolve(process.env.DATABASE_URL || './database.json');
+
+const defaultData = {
+  counters: {
+    users: 0,
+    profiles: 0,
+    settings: 0,
+    reports: 0,
+    ai_messages: 0,
+  },
+  users: [],
+  profiles: [],
+  settings: [],
+  reports: [],
+  ai_messages: [],
+};
+
+function ensureDbFile() {
+  const dir = path.dirname(dbPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(dbPath)) {
+    fs.writeFileSync(dbPath, JSON.stringify(defaultData, null, 2), 'utf8');
+  }
+}
+
+function loadDb() {
+  ensureDbFile();
+  try {
+    const raw = fs.readFileSync(dbPath, 'utf8');
+    const data = JSON.parse(raw || '{}');
+    return {
+      ...defaultData,
+      ...data,
+      counters: { ...defaultData.counters, ...(data.counters || {}) },
+      users: Array.isArray(data.users) ? data.users : [],
+      profiles: Array.isArray(data.profiles) ? data.profiles : [],
+      settings: Array.isArray(data.settings) ? data.settings : [],
+      reports: Array.isArray(data.reports) ? data.reports : [],
+      ai_messages: Array.isArray(data.ai_messages) ? data.ai_messages : [],
+    };
+  } catch (error) {
+    console.error('[DB] Файл базы повреждён. Создаю новый database.json:', error.message);
+    fs.writeFileSync(dbPath, JSON.stringify(defaultData, null, 2), 'utf8');
+    return JSON.parse(JSON.stringify(defaultData));
+  }
+}
+
+function saveDb(data) {
+  fs.writeFileSync(dbPath, JSON.stringify(data, null, 2), 'utf8');
+}
+
+function now() {
+  return new Date().toISOString();
+}
+
+function nextId(data, table) {
+  data.counters[table] = (data.counters[table] || 0) + 1;
+  return data.counters[table];
+}
+
+function clone(value) {
+  return value ? JSON.parse(JSON.stringify(value)) : value;
+}
+
+function upsertUser(telegramId, username, firstName) {
+  const data = loadDb();
+  let user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
+
+  if (user) {
+    user.username = username || null;
+    user.first_name = firstName || null;
+    user.updated_at = now();
+  } else {
+    user = {
+      id: nextId(data, 'users'),
+      telegram_id: telegramId,
+      username: username || null,
+      first_name: firstName || null,
+      created_at: now(),
+      updated_at: now(),
+    };
+    data.users.push(user);
+  }
+
+  saveDb(data);
+  return clone(user);
+}
+
+function upsertSettings(userId) {
+  const data = loadDb();
+  let settings = data.settings.find((s) => s.user_id === userId);
+
+  if (!settings) {
+    settings = {
+      id: nextId(data, 'settings'),
+      user_id: userId,
+      language: 'ru',
+      style: 'friendly',
+      meme_topic: 'all',
+      notifications_enabled: 1,
+      ai_mode: 'general',
+      created_at: now(),
+      updated_at: now(),
+    };
+    data.settings.push(settings);
+    saveDb(data);
+  }
+
+  return clone(settings);
+}
+
+const allowedSettingFields = new Set([
+  'language',
+  'style',
+  'meme_topic',
+  'notifications_enabled',
+  'ai_mode',
+]);
+
+function updateSetting(userId, field, value) {
+  if (!allowedSettingFields.has(field)) {
+    throw new Error(`Недопустимое поле настроек: ${field}`);
+  }
+
+  const data = loadDb();
+  let settings = data.settings.find((s) => s.user_id === userId);
+  if (!settings) {
+    settings = upsertSettings(userId);
+    const freshData = loadDb();
+    settings = freshData.settings.find((s) => s.user_id === userId);
+    settings[field] = value;
+    settings.updated_at = now();
+    saveDb(freshData);
+    return;
+  }
+
+  settings[field] = value;
+  settings.updated_at = now();
+  saveDb(data);
+}
+
+function getProfile(userId) {
+  const data = loadDb();
+  return clone(data.profiles.find((p) => p.user_id === userId));
+}
+
+function upsertProfile(userId, profileData) {
+  const data = loadDb();
+  let profile = data.profiles.find((p) => p.user_id === userId);
+
+  if (profile) {
+    Object.assign(profile, {
+      name: profileData.name,
+      age: profileData.age,
+      city: profileData.city,
+      interests: profileData.interests,
+      goal: profileData.goal,
+      description: profileData.description,
+      is_visible: profileData.is_visible ?? 1,
+      updated_at: now(),
+    });
+  } else {
+    profile = {
+      id: nextId(data, 'profiles'),
+      user_id: userId,
+      name: profileData.name,
+      age: profileData.age,
+      city: profileData.city,
+      interests: profileData.interests,
+      goal: profileData.goal,
+      description: profileData.description,
+      is_visible: profileData.is_visible ?? 1,
+      created_at: now(),
+      updated_at: now(),
+    };
+    data.profiles.push(profile);
+  }
+
+  saveDb(data);
+  return clone(profile);
+}
+
+function deleteProfile(userId) {
+  const data = loadDb();
+  data.profiles = data.profiles.filter((p) => p.user_id !== userId);
+  saveDb(data);
+}
+
+function saveReport(fromUserId, reason) {
+  const data = loadDb();
+  data.reports.push({
+    id: nextId(data, 'reports'),
+    from_user_id: fromUserId,
+    reason: String(reason || '').slice(0, 1000),
+    created_at: now(),
+  });
+  saveDb(data);
+}
+
+function saveAiMessage(userId, role, message) {
+  const data = loadDb();
+  data.ai_messages.push({
+    id: nextId(data, 'ai_messages'),
+    user_id: userId,
+    role,
+    message: String(message || '').slice(0, 4000),
+    created_at: now(),
+  });
+
+  const userMessages = data.ai_messages
+    .filter((m) => m.user_id === userId)
+    .sort((a, b) => b.id - a.id)
+    .slice(0, 10)
+    .map((m) => m.id);
+
+  data.ai_messages = data.ai_messages.filter(
+    (m) => m.user_id !== userId || userMessages.includes(m.id)
+  );
+
+  saveDb(data);
+}
+
+function getAiHistory(userId) {
+  const data = loadDb();
+  return data.ai_messages
+    .filter((m) => m.user_id === userId)
+    .sort((a, b) => a.id - b.id)
+    .map((m) => ({ role: m.role, message: m.message }));
+}
+
+function clearAiHistory(userId) {
+  const data = loadDb();
+  data.ai_messages = data.ai_messages.filter((m) => m.user_id !== userId);
+  saveDb(data);
+}
+
+module.exports = {
+  dbPath,
+  upsertUser,
+  upsertSettings,
+  updateSetting,
+  getProfile,
+  upsertProfile,
+  deleteProfile,
+  saveReport,
+  saveAiMessage,
+  getAiHistory,
+  clearAiHistory,
+};

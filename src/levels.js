@@ -1,710 +1,161 @@
-const fs = require("fs");
-const path = require("path");
-const Database = require("better-sqlite3");
+// ============================================================
+// src/levels.js
+// Система уровней, XP и рангов.
+// ============================================================
 
-const dbPath = process.env.DATABASE_PATH || "./data/bot.sqlite";
-const dbDir = path.dirname(dbPath);
+const db = require('./db');
+const { formatName } = require('./utils');
 
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+// XP за сообщение (диапазон)
+const XP_MIN = 1;
+const XP_MAX = 5;
+// Cooldown между начислением XP (секунды)
+const XP_COOLDOWN = 30;
+
+// Кулдаун: Map<chatId_userId, timestamp>
+const xpCooldown = new Map();
+
+/** XP для достижения уровня N */
+function xpForLevel(level) {
+  return Math.floor(100 * Math.pow(level, 1.5));
 }
 
-const db = new Database(dbPath);
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS user_levels (
-  chat_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  username TEXT,
-  first_name TEXT,
-  last_name TEXT,
-  xp INTEGER DEFAULT 0,
-  level INTEGER DEFAULT 1,
-  reputation INTEGER DEFAULT 0,
-  coins INTEGER DEFAULT 0,
-  messages INTEGER DEFAULT 0,
-  last_xp_at INTEGER DEFAULT 0,
-  updated_at INTEGER,
-  PRIMARY KEY (chat_id, user_id)
-);
-
-CREATE TABLE IF NOT EXISTS daily_rewards (
-  chat_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  date_key TEXT NOT NULL,
-  claimed_at INTEGER NOT NULL,
-  PRIMARY KEY (chat_id, user_id, date_key)
-);
-
-CREATE TABLE IF NOT EXISTS rep_cooldowns (
-  chat_id TEXT NOT NULL,
-  from_user_id TEXT NOT NULL,
-  to_user_id TEXT NOT NULL,
-  last_rep_at INTEGER NOT NULL,
-  PRIMARY KEY (chat_id, from_user_id, to_user_id)
-);
-
-CREATE TABLE IF NOT EXISTS level_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  chat_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  action TEXT NOT NULL,
-  amount INTEGER DEFAULT 0,
-  reason TEXT,
-  created_at INTEGER NOT NULL
-);
-`);
-
-function now() {
-  return Date.now();
+/** Рассчитать уровень по XP */
+function calcLevel(xp) {
+  let level = 1;
+  while (xp >= xpForLevel(level + 1)) level++;
+  return level;
 }
 
-function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+/** Ранг по уровню */
+function getRank(level) {
+  if (level >= 50) return '👑 Легенда';
+  if (level >= 30) return '💎 Эксперт';
+  if (level >= 20) return '🥇 Про';
+  if (level >= 10) return '🥈 Опытный';
+  if (level >= 5)  return '🥉 Участник';
+  return '🌱 Новичок';
 }
 
-function isGroup(ctx) {
-  const type = ctx.chat?.type;
-  return type === "group" || type === "supergroup";
+function getUser(userId, chatId) {
+  return db.prepare(
+    'SELECT * FROM users WHERE id = ? AND chat_id = ?'
+  ).get(userId, chatId);
 }
 
-function normalizeUsername(username) {
-  return String(username || "").replace("@", "").toLowerCase();
-}
-
-function getDisplayName(user) {
-  if (!user) return "Неизвестно";
-  if (user.username) return `@${String(user.username).replace("@", "")}`;
-  return (
-    [user.first_name, user.last_name].filter(Boolean).join(" ") ||
-    `ID ${user.user_id || user.id}`
-  );
-}
-
-function getLevelByXp(xp) {
-  // Мягкая формула: чем выше уровень, тем больше нужно опыта
-  return Math.max(1, Math.floor(Math.sqrt(Number(xp || 0) / 55)) + 1);
-}
-
-function getXpForNextLevel(level) {
-  return Math.pow(level, 2) * 55;
-}
-
-function getRankTitle(level) {
-  if (level >= 50) return "👑 Легенда чата";
-  if (level >= 35) return "💎 Элита";
-  if (level >= 25) return "🔥 Мастер общения";
-  if (level >= 15) return "⚡ Активист";
-  if (level >= 8) return "🌟 Постоянный участник";
-  if (level >= 4) return "💬 Общительный";
-  return "🌱 Новичок";
-}
-
-function randomXp() {
-  return Math.floor(Math.random() * 8) + 5; // 5–12 XP
-}
-
-function randomDailyCoins() {
-  return Math.floor(Math.random() * 51) + 30; // 30–80 монет
-}
-
-function saveLog(chatId, userId, action, amount = 0, reason = "") {
+function upsertUser(user, chatId) {
   db.prepare(`
-    INSERT INTO level_logs (chat_id, user_id, action, amount, reason, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(
-    String(chatId),
-    String(userId),
-    action,
-    Number(amount || 0),
-    reason,
-    now()
-  );
-}
-
-function upsertUser(chatId, user, options = {}) {
-  if (!chatId || !user || user.is_bot) return null;
-
-  const chat = String(chatId);
-  const id = String(user.id);
-  const currentTime = now();
-
-  const current = db.prepare(`
-    SELECT * FROM user_levels WHERE chat_id = ? AND user_id = ?
-  `).get(chat, id);
-
-  if (!current) {
-    db.prepare(`
-      INSERT INTO user_levels (
-        chat_id,
-        user_id,
-        username,
-        first_name,
-        last_name,
-        xp,
-        level,
-        reputation,
-        coins,
-        messages,
-        last_xp_at,
-        updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, 0, 1, 0, 0, 0, 0, ?)
-    `).run(
-      chat,
-      id,
-      normalizeUsername(user.username),
-      user.first_name || "",
-      user.last_name || "",
-      currentTime
-    );
-
-    return db.prepare(`
-      SELECT * FROM user_levels WHERE chat_id = ? AND user_id = ?
-    `).get(chat, id);
-  }
-
-  db.prepare(`
-    UPDATE user_levels
-    SET username = ?,
-        first_name = ?,
-        last_name = ?,
-        updated_at = ?
-    WHERE chat_id = ? AND user_id = ?
-  `).run(
-    normalizeUsername(user.username),
-    user.first_name || "",
-    user.last_name || "",
-    currentTime,
-    chat,
-    id
-  );
-
-  return getUser(chatId, user.id);
-}
-
-function getUser(chatId, userId) {
-  return db.prepare(`
-    SELECT * FROM user_levels WHERE chat_id = ? AND user_id = ?
-  `).get(String(chatId), String(userId));
-}
-
-function findUserByUsername(chatId, username) {
-  return db.prepare(`
-    SELECT * FROM user_levels
-    WHERE chat_id = ? AND lower(username) = ?
-  `).get(String(chatId), normalizeUsername(username));
-}
-
-function addXp(chatId, user, amount, reason = "activity") {
-  const saved = upsertUser(chatId, user);
-  if (!saved) return null;
-
-  const oldLevel = saved.level || 1;
-  const newXp = (saved.xp || 0) + amount;
-  const newLevel = getLevelByXp(newXp);
-  const coinsBonus = newLevel > oldLevel ? (newLevel - oldLevel) * 25 : 0;
-
-  db.prepare(`
-    UPDATE user_levels
-    SET xp = ?,
-        level = ?,
-        coins = coins + ?,
-        messages = messages + 1,
-        last_xp_at = ?,
-        updated_at = ?
-    WHERE chat_id = ? AND user_id = ?
-  `).run(
-    newXp,
-    newLevel,
-    coinsBonus,
-    now(),
-    now(),
-    String(chatId),
-    String(user.id)
-  );
-
-  saveLog(chatId, user.id, "XP_ADD", amount, reason);
-
-  return {
-    oldLevel,
-    newLevel,
-    newXp,
-    coinsBonus,
-    leveledUp: newLevel > oldLevel,
-  };
-}
-
-function parseArgs(ctx) {
-  const text = ctx.message?.text || "";
-  return text.split(/\s+/).slice(1);
-}
-
-async function requireGroup(ctx, safeReply) {
-  if (!isGroup(ctx)) {
-    await safeReply(ctx, "Эта команда работает только в группе.");
-    return false;
-  }
-
-  return true;
-}
-
-async function isAdmin(ctx, userId) {
-  try {
-    const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
-    return member.status === "creator" || member.status === "administrator";
-  } catch {
-    return false;
-  }
-}
-
-async function requireAdmin(ctx, safeReply) {
-  const ok = await isAdmin(ctx, ctx.from.id);
-
-  if (!ok) {
-    await safeReply(ctx, "⛔ Эту команду может использовать только админ.");
-    return false;
-  }
-
-  return true;
-}
-
-async function resolveTarget(ctx, args, safeReply) {
-  const replyUser = ctx.message?.reply_to_message?.from;
-
-  if (replyUser && !replyUser.is_bot) {
-    upsertUser(ctx.chat.id, replyUser);
-
-    return {
-      id: replyUser.id,
-      username: replyUser.username || "",
-      first_name: replyUser.first_name || "",
-      last_name: replyUser.last_name || "",
-    };
-  }
-
-  const raw = args[0];
-
-  if (!raw) {
-    return ctx.from;
-  }
-
-  if (raw.startsWith("@")) {
-    const found = findUserByUsername(ctx.chat.id, raw);
-
-    if (!found) {
-      await safeReply(
-        ctx,
-        "Я пока не знаю этого пользователя. Пусть он напишет сообщение в группе, либо используй команду ответом на сообщение."
-      );
-      return null;
-    }
-
-    return {
-      id: Number(found.user_id),
-      username: found.username,
-      first_name: found.first_name,
-      last_name: found.last_name,
-    };
-  }
-
-  if (/^\d+$/.test(raw)) {
-    const found = getUser(ctx.chat.id, raw);
-
-    return {
-      id: Number(raw),
-      username: found?.username || "",
-      first_name: found?.first_name || "",
-      last_name: found?.last_name || "",
-    };
-  }
-
-  await safeReply(ctx, "Не понял пользователя. Используй @username, ID или ответ на сообщение.");
-  return null;
-}
-
-function rankText(user) {
-  const xp = user.xp || 0;
-  const level = user.level || 1;
-  const nextXp = getXpForNextLevel(level);
-  const currentLevelXp = getXpForNextLevel(level - 1);
-  const progressTotal = Math.max(1, nextXp - currentLevelXp);
-  const progressCurrent = Math.max(0, xp - currentLevelXp);
-  const percent = Math.min(100, Math.round((progressCurrent / progressTotal) * 100));
-
-  return (
-    "🏅 Ранг пользователя\n\n" +
-    `Пользователь: ${getDisplayName(user)}\n` +
-    `Звание: ${getRankTitle(level)}\n` +
-    `Уровень: ${level}\n` +
-    `Опыт: ${xp} XP\n` +
-    `До следующего уровня: ${Math.max(0, nextXp - xp)} XP\n` +
-    `Прогресс: ${percent}%\n` +
-    `Репутация: ${user.reputation || 0}\n` +
-    `Монеты: ${user.coins || 0}\n` +
-    `Сообщений учтено: ${user.messages || 0}`
-  );
-}
-
-function levelsInfoText() {
-  return (
-    "🏆 Система уровней FunTalk\n\n" +
-    "Как работает:\n" +
-    "• За активность в группе начисляется XP.\n" +
-    "• XP выдаётся не за каждое сообщение, а с задержкой, чтобы не было накрутки.\n" +
-    "• За новые уровни выдаются монеты.\n" +
-    "• Репутацию можно давать ответом на сообщение: +реп или -реп.\n\n" +
-    "Команды:\n" +
-    "/rank — мой ранг\n" +
-    "/rank @user — ранг пользователя\n" +
-    "/topxp — топ по опыту\n" +
-    "/toprep — топ по репутации\n" +
-    "/balance — баланс монет\n" +
-    "/daily — ежедневный бонус\n" +
-    "+реп — дать репутацию ответом на сообщение\n" +
-    "-реп — снять репутацию ответом на сообщение"
-  );
-}
-
-function canGiveRep(chatId, fromUserId, toUserId) {
-  const row = db.prepare(`
-    SELECT * FROM rep_cooldowns
-    WHERE chat_id = ? AND from_user_id = ? AND to_user_id = ?
-  `).get(String(chatId), String(fromUserId), String(toUserId));
-
-  if (!row) return true;
-
-  const cooldown = 6 * 60 * 60 * 1000; // 6 часов
-  return now() - Number(row.last_rep_at) >= cooldown;
-}
-
-function touchRepCooldown(chatId, fromUserId, toUserId) {
-  db.prepare(`
-    INSERT INTO rep_cooldowns (chat_id, from_user_id, to_user_id, last_rep_at)
+    INSERT INTO users (id, username, first_name, chat_id)
     VALUES (?, ?, ?, ?)
-    ON CONFLICT(chat_id, from_user_id, to_user_id)
-    DO UPDATE SET last_rep_at = excluded.last_rep_at
-  `).run(String(chatId), String(fromUserId), String(toUserId), now());
+    ON CONFLICT(id) DO UPDATE SET
+      username   = excluded.username,
+      first_name = excluded.first_name,
+      last_active = CURRENT_TIMESTAMP
+  `).run(user.id, user.username || null, user.first_name || null, chatId);
 }
 
-function registerLevels(bot, helpers) {
-  const { safeReply } = helpers;
+function addXP(userId, chatId, amount) {
+  db.prepare(
+    'UPDATE users SET xp = xp + ? WHERE id = ? AND chat_id = ?'
+  ).run(amount, userId, chatId);
+  return db.prepare(
+    'SELECT xp, level FROM users WHERE id = ? AND chat_id = ?'
+  ).get(userId, chatId);
+}
 
-  bot.use(async (ctx, next) => {
-    try {
-      if (!isGroup(ctx)) return next();
+function setLevel(userId, chatId, level) {
+  db.prepare(
+    'UPDATE users SET level = ? WHERE id = ? AND chat_id = ?'
+  ).run(level, userId, chatId);
+}
 
-      const user = ctx.from;
-      const msg = ctx.message;
+function register(bot) {
 
-      if (!user || user.is_bot || !msg) return next();
+  // ── Начисление XP за каждое сообщение ────────────────────────
+  bot.on('message', async (ctx, next) => {
+    if (ctx.chat.type === 'private') return next();
+    if (!ctx.from || ctx.from.is_bot) return next();
 
-      const text = msg.text || msg.caption || "";
+    const userId = ctx.from.id;
+    const chatId = ctx.chat.id;
+    const key    = `${chatId}_${userId}`;
+    const now    = Date.now();
 
-      // Команды не качают XP
-      if (text.startsWith("/")) return next();
+    // Кулдаун XP
+    const last = xpCooldown.get(key) || 0;
+    if (now - last < XP_COOLDOWN * 1000) return next();
+    xpCooldown.set(key, now);
 
-      upsertUser(ctx.chat.id, user);
+    // Сохраняем пользователя
+    upsertUser(ctx.from, chatId);
 
-      const saved = getUser(ctx.chat.id, user.id);
-      const cooldown = 30 * 1000;
+    // Случайный XP
+    const xpGain = Math.floor(Math.random() * (XP_MAX - XP_MIN + 1)) + XP_MIN;
+    const updated = addXP(userId, chatId, xpGain);
 
-      if (now() - Number(saved.last_xp_at || 0) >= cooldown) {
-        const xp = randomXp();
-        const result = addXp(ctx.chat.id, user, xp, "message");
+    if (!updated) return next();
 
-        if (result?.leveledUp) {
-          await ctx.reply(
-            `🎉 ${getDisplayName(user)} получил новый уровень!\n\n` +
-              `🏅 Уровень: ${result.newLevel}\n` +
-              `Звание: ${getRankTitle(result.newLevel)}\n` +
-              `Бонус: +${result.coinsBonus} монет`
-          ).catch(() => {});
-        }
-      }
-    } catch (error) {
-      console.error("Ошибка levels middleware:", error.message);
+    // Проверяем повышение уровня
+    const newLevel = calcLevel(updated.xp);
+    if (newLevel > updated.level) {
+      setLevel(userId, chatId, newLevel);
+      await ctx.reply(
+        `🎉 <b>${formatName(ctx.from)}</b> достиг <b>${newLevel} уровня</b>!\nРанг: ${getRank(newLevel)}`,
+        { parse_mode: 'HTML' }
+      );
     }
 
     return next();
   });
 
-  bot.command("levels", async (ctx) => {
-    return safeReply(ctx, levelsInfoText());
-  });
+  // ── /rank ─────────────────────────────────────────────────────
+  bot.command(['rank', 'уровень', 'level'], async (ctx) => {
+    const userId = ctx.from.id;
+    const chatId = ctx.chat.type === 'private' ? userId : ctx.chat.id;
 
-  bot.command("rank", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
+    upsertUser(ctx.from, chatId);
+    const user = getUser(userId, chatId);
+    if (!user) return ctx.reply('📊 Пока нет данных. Напиши что-нибудь в чате!');
 
-    const args = parseArgs(ctx);
-    const target = await resolveTarget(ctx, args, safeReply);
-    if (!target) return;
+    const level   = calcLevel(user.xp);
+    const nextXP  = xpForLevel(level + 1);
+    const prog    = Math.round((user.xp / nextXP) * 100);
+    const bar     = '█'.repeat(Math.floor(prog / 10)) + '░'.repeat(10 - Math.floor(prog / 10));
 
-    upsertUser(ctx.chat.id, target);
-
-    const user = getUser(ctx.chat.id, target.id);
-
-    return safeReply(ctx, rankText(user));
-  });
-
-  bot.command("level", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-
-    const args = parseArgs(ctx);
-    const target = await resolveTarget(ctx, args, safeReply);
-    if (!target) return;
-
-    upsertUser(ctx.chat.id, target);
-
-    const user = getUser(ctx.chat.id, target.id);
-
-    return safeReply(ctx, rankText(user));
-  });
-
-  bot.command("balance", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-
-    upsertUser(ctx.chat.id, ctx.from);
-    const user = getUser(ctx.chat.id, ctx.from.id);
-
-    return safeReply(
-      ctx,
-      "💰 Баланс\n\n" +
-        `Пользователь: ${getDisplayName(user)}\n` +
-        `Монеты: ${user.coins || 0}\n` +
-        `Уровень: ${user.level || 1}\n` +
-        `XP: ${user.xp || 0}`
+    await ctx.reply(
+      `📊 <b>${formatName(ctx.from)}</b>\n\n` +
+      `🏅 Уровень: <b>${level}</b> (${getRank(level)})\n` +
+      `⭐ XP: <b>${user.xp}</b> / ${nextXP}\n` +
+      `[${bar}] ${prog}%\n` +
+      `💰 Монеты: <b>${user.coins || 0}</b>`,
+      { parse_mode: 'HTML' }
     );
   });
 
-  bot.command("daily", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
+  // ── /top ──────────────────────────────────────────────────────
+  bot.command(['top', 'топ', 'leaderboard'], async (ctx) => {
+    const chatId = ctx.chat.type === 'private'
+      ? ctx.from.id
+      : ctx.chat.id;
 
-    upsertUser(ctx.chat.id, ctx.from);
+    const rows = db.prepare(
+      'SELECT * FROM users WHERE chat_id = ? ORDER BY xp DESC LIMIT 10'
+    ).all(chatId);
 
-    const chatId = String(ctx.chat.id);
-    const userId = String(ctx.from.id);
-    const date = todayKey();
+    if (!rows.length) return ctx.reply('📋 Таблица лидеров пуста.');
 
-    const already = db.prepare(`
-      SELECT * FROM daily_rewards
-      WHERE chat_id = ? AND user_id = ? AND date_key = ?
-    `).get(chatId, userId, date);
+    const medals = ['🥇', '🥈', '🥉'];
+    const lines = rows.map((u, i) => {
+      const medal = medals[i] || `${i + 1}.`;
+      const name  = u.username ? `@${u.username}` : (u.first_name || `User${u.id}`);
+      const level = calcLevel(u.xp);
+      return `${medal} ${name} — ур. ${level} (${u.xp} XP)`;
+    });
 
-    if (already) {
-      return safeReply(ctx, "⏳ Ты уже забирал ежедневный бонус сегодня. Приходи завтра.");
-    }
-
-    const coins = randomDailyCoins();
-    const xp = Math.floor(coins / 2);
-
-    db.prepare(`
-      INSERT INTO daily_rewards (chat_id, user_id, date_key, claimed_at)
-      VALUES (?, ?, ?, ?)
-    `).run(chatId, userId, date, now());
-
-    db.prepare(`
-      UPDATE user_levels
-      SET coins = coins + ?,
-          xp = xp + ?,
-          level = ?,
-          updated_at = ?
-      WHERE chat_id = ? AND user_id = ?
-    `).run(
-      coins,
-      xp,
-      getLevelByXp((getUser(ctx.chat.id, ctx.from.id)?.xp || 0) + xp),
-      now(),
-      chatId,
-      userId
-    );
-
-    saveLog(ctx.chat.id, ctx.from.id, "DAILY", coins, "daily reward");
-
-    return safeReply(
-      ctx,
-      `🎁 Ежедневный бонус получен!\n\n+${coins} монет\n+${xp} XP`
-    );
+    await ctx.reply(`🏆 <b>Топ чата:</b>\n\n${lines.join('\n')}`, { parse_mode: 'HTML' });
   });
 
-  bot.command("topxp", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-
-    const rows = db.prepare(`
-      SELECT * FROM user_levels
-      WHERE chat_id = ?
-      ORDER BY xp DESC
-      LIMIT 10
-    `).all(String(ctx.chat.id));
-
-    if (!rows.length) {
-      return safeReply(ctx, "Пока нет рейтинга по XP.");
-    }
-
-    const text = rows
-      .map((u, i) => {
-        return `${i + 1}. ${getDisplayName(u)} — ${u.xp || 0} XP, уровень ${u.level || 1}`;
-      })
-      .join("\n");
-
-    return safeReply(ctx, "🏆 Топ по опыту:\n\n" + text);
-  });
-
-  bot.command("toprep", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-
-    const rows = db.prepare(`
-      SELECT * FROM user_levels
-      WHERE chat_id = ?
-      ORDER BY reputation DESC
-      LIMIT 10
-    `).all(String(ctx.chat.id));
-
-    if (!rows.length) {
-      return safeReply(ctx, "Пока нет рейтинга по репутации.");
-    }
-
-    const text = rows
-      .map((u, i) => {
-        return `${i + 1}. ${getDisplayName(u)} — репутация ${u.reputation || 0}`;
-      })
-      .join("\n");
-
-    return safeReply(ctx, "🌟 Топ по репутации:\n\n" + text);
-  });
-
-  bot.command("addxp", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
-
-    const args = parseArgs(ctx);
-    const target = await resolveTarget(ctx, args, safeReply);
-    if (!target) return;
-
-    const amountRaw = ctx.message?.reply_to_message ? args[0] : args[1];
-    const amount = Number(amountRaw);
-
-    if (!Number.isInteger(amount) || amount <= 0 || amount > 100000) {
-      return safeReply(ctx, "Используй: /addxp @user 100 или ответом: /addxp 100");
-    }
-
-    const result = addXp(ctx.chat.id, target, amount, "admin addxp");
-
-    return safeReply(
-      ctx,
-      `✅ ${getDisplayName(target)} получил +${amount} XP.\n` +
-        `Теперь уровень: ${result.newLevel}`
-    );
-  });
-
-  bot.command("setcoins", async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-    if (!(await requireAdmin(ctx, safeReply))) return;
-
-    const args = parseArgs(ctx);
-    const target = await resolveTarget(ctx, args, safeReply);
-    if (!target) return;
-
-    const amountRaw = ctx.message?.reply_to_message ? args[0] : args[1];
-    const amount = Number(amountRaw);
-
-    if (!Number.isInteger(amount) || amount < 0 || amount > 10000000) {
-      return safeReply(ctx, "Используй: /setcoins @user 1000 или ответом: /setcoins 1000");
-    }
-
-    upsertUser(ctx.chat.id, target);
-
-    db.prepare(`
-      UPDATE user_levels
-      SET coins = ?, updated_at = ?
-      WHERE chat_id = ? AND user_id = ?
-    `).run(amount, now(), String(ctx.chat.id), String(target.id));
-
-    saveLog(ctx.chat.id, target.id, "SET_COINS", amount, `admin ${ctx.from.id}`);
-
-    return safeReply(ctx, `✅ Баланс ${getDisplayName(target)} установлен: ${amount} монет.`);
-  });
-
-  bot.hears(/^\+реп$/i, async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-
-    const target = ctx.message?.reply_to_message?.from;
-
-    if (!target || target.is_bot) {
-      return safeReply(ctx, "Ответь на сообщение человека и напиши +реп.");
-    }
-
-    if (target.id === ctx.from.id) {
-      return safeReply(ctx, "Самому себе репутацию давать нельзя 😅");
-    }
-
-    upsertUser(ctx.chat.id, ctx.from);
-    upsertUser(ctx.chat.id, target);
-
-    if (!canGiveRep(ctx.chat.id, ctx.from.id, target.id)) {
-      return safeReply(ctx, "⏳ Ты уже недавно менял репутацию этому человеку. Подожди 6 часов.");
-    }
-
-    db.prepare(`
-      UPDATE user_levels
-      SET reputation = reputation + 1,
-          coins = coins + 5,
-          updated_at = ?
-      WHERE chat_id = ? AND user_id = ?
-    `).run(now(), String(ctx.chat.id), String(target.id));
-
-    touchRepCooldown(ctx.chat.id, ctx.from.id, target.id);
-    saveLog(ctx.chat.id, target.id, "REP_PLUS", 1, `from ${ctx.from.id}`);
-
-    const user = getUser(ctx.chat.id, target.id);
-
-    return safeReply(
-      ctx,
-      `🌟 ${getDisplayName(target)} получил +1 репутации.\n` +
-        `Теперь репутация: ${user.reputation || 0}`
-    );
-  });
-
-  bot.hears(/^-реп$/i, async (ctx) => {
-    if (!(await requireGroup(ctx, safeReply))) return;
-
-    const target = ctx.message?.reply_to_message?.from;
-
-    if (!target || target.is_bot) {
-      return safeReply(ctx, "Ответь на сообщение человека и напиши -реп.");
-    }
-
-    if (target.id === ctx.from.id) {
-      return safeReply(ctx, "Самому себе репутацию снимать нельзя 😅");
-    }
-
-    upsertUser(ctx.chat.id, ctx.from);
-    upsertUser(ctx.chat.id, target);
-
-    if (!canGiveRep(ctx.chat.id, ctx.from.id, target.id)) {
-      return safeReply(ctx, "⏳ Ты уже недавно менял репутацию этому человеку. Подожди 6 часов.");
-    }
-
-    db.prepare(`
-      UPDATE user_levels
-      SET reputation = reputation - 1,
-          updated_at = ?
-      WHERE chat_id = ? AND user_id = ?
-    `).run(now(), String(ctx.chat.id), String(target.id));
-
-    touchRepCooldown(ctx.chat.id, ctx.from.id, target.id);
-    saveLog(ctx.chat.id, target.id, "REP_MINUS", -1, `from ${ctx.from.id}`);
-
-    const user = getUser(ctx.chat.id, target.id);
-
-    return safeReply(
-      ctx,
-      `📉 ${getDisplayName(target)} получил -1 репутации.\n` +
-        `Теперь репутация: ${user.reputation || 0}`
-    );
-  });
+  console.log('✅ Модуль levels подключён');
 }
 
-module.exports = {
-  registerLevels,
-};
+module.exports = { register, calcLevel, getRank, xpForLevel };

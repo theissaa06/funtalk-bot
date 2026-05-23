@@ -1,20 +1,24 @@
 {
-  "name": "funtalk-ai-bot",
-  "version": "1.0.0",
-  "description": "FunTalk AI Bot — Telegram бот для общения, знакомств, мемов и ИИ-помощника",
+  "name": "funtalk-bot",
+  "version": "3.0.0",
+  "description": "FunTalk Bot — групповой Telegram-бот с модерацией, уровнями и экономикой",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js"
   },
   "dependencies": {
-    "better-sqlite3": "^12.10.0",
-    "dotenv": "^16.4.7",
-    "node-fetch": "^2.7.0",
-    "telegraf": "^4.16.3"
+    "telegraf": "^4.15.3",
+    "dotenv": "^16.3.1",
+    "better-sqlite3": "^9.4.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
+  },
+  "nodemonConfig": {
+    "watch": ["src/"],
+    "ext": "js,json",
+    "ignore": ["*.sqlite", "data/"]
   },
   "engines": {
     "node": ">=18.0.0"
