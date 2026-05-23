@@ -6,12 +6,12 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const OWNER_ID = Number(process.env.OWNER_ID || 0);
 
 if (!BOT_TOKEN) {
-  console.error("❌ BOT_TOKEN не найден. Проверь файл .env или Environment Variables на Render.");
+  console.error("❌ BOT_TOKEN не найден. Проверь .env или Environment Variables на Render.");
   process.exit(1);
 }
 
 if (!OWNER_ID) {
-  console.error("❌ OWNER_ID не найден. Проверь файл .env или Environment Variables на Render.");
+  console.error("❌ OWNER_ID не найден. Проверь .env или Environment Variables на Render.");
   process.exit(1);
 }
 
@@ -289,11 +289,11 @@ async function handleBan(msg) {
       `
 ❌ Не удалось забанить пользователя.
 
-Возможные причины:
-1. Бот не администратор
-2. У бота нет права блокировать пользователей
-3. Пользователь выше бота по правам
-4. Это администратор или владелец группы
+Проверь:
+1. Бот является админом
+2. У бота есть право блокировать пользователей
+3. Цель не является админом
+4. Бот стоит выше пользователя по правам
 
 Ошибка: <code>${escapeHtml(err.message)}</code>
       `.trim(),
@@ -336,9 +336,9 @@ async function handleKick(msg) {
 ❌ Не удалось кикнуть пользователя.
 
 Проверь:
-1. Бот админ
-2. Есть право блокировать пользователей
-3. Пользователь не админ
+1. Бот является админом
+2. У бота есть право блокировать пользователей
+3. Цель не является админом
 
 Ошибка: <code>${escapeHtml(err.message)}</code>
       `.trim(),
@@ -570,7 +570,6 @@ bot.on("message", async (msg) => {
     if (!msg.text) return;
 
     const command = getCommand(msg.text);
-
     if (!command.startsWith("/")) return;
 
     const handlers = {
