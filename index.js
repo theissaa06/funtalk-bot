@@ -1,9 +1,4 @@
-﻿// ======================================================
-// index.js — Telegram bot для "Клуба случайных людей"
-// Приветствие + профиль + топ + скачивание видео ссылок
-// ======================================================
-
-require("dotenv").config();
+﻿require("dotenv").config();
 
 const { Telegraf } = require("telegraf");
 const fs = require("fs");
@@ -14,92 +9,130 @@ const { promisify } = require("util");
 const execFileAsync = promisify(execFile);
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const BOT_USERNAME = process.env.BOT_USERNAME || "ТвойБот";
 
 if (!BOT_TOKEN) {
-  console.error("❌ Ошибка: BOT_TOKEN не найден в .env");
+  console.error("❌ BOT_TOKEN не найден в .env");
   process.exit(1);
 }
 
 const bot = new Telegraf(BOT_TOKEN);
 
 // ======================================================
-// ПАПКИ И ФАЙЛЫ
+// ПАПКИ
 // ======================================================
 
 const DATA_DIR = path.join(__dirname, "data");
 const DOWNLOAD_DIR = path.join(__dirname, "downloads");
-const STATS_FILE = path.join(DATA_DIR, "stats.json");
+const DB_FILE = path.join(DATA_DIR, "database.json");
 
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR);
-}
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
 
-if (!fs.existsSync(DOWNLOAD_DIR)) {
-  fs.mkdirSync(DOWNLOAD_DIR);
-}
-
-if (!fs.existsSync(STATS_FILE)) {
-  fs.writeFileSync(STATS_FILE, JSON.stringify({}, null, 2));
+if (!fs.existsSync(DB_FILE)) {
+  fs.writeFileSync(
+    DB_FILE,
+    JSON.stringify(
+      {
+        chats: {},
+      },
+      null,
+      2
+    )
+  );
 }
 
 // ======================================================
-// РАБОТА СО СТАТИСТИКОЙ
+// БАЗА
 // ======================================================
 
-function loadStats() {
+function loadDB() {
   try {
-    return JSON.parse(fs.readFileSync(STATS_FILE, "utf8"));
+    return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
   } catch {
-    return {};
+    return { chats: {} };
   }
 }
 
-function saveStats(stats) {
-  fs.writeFileSync(STATS_FILE, JSON.stringify(stats, null, 2));
+function saveDB(db) {
+  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
 }
 
-function getUserRank(messages) {
-  if (messages >= 5000) return "👑 Легенда чата";
-  if (messages >= 2500) return "🔥 Элита";
-  if (messages >= 1000) return "💎 Активист";
-  if (messages >= 500) return "⭐ Постоянный";
-  if (messages >= 100) return "💬 Общительный";
-  if (messages >= 25) return "🌱 Новичок";
-  return "👤 Участник";
-}
+function getChatDB(db, chatId) {
+  const id = String(chatId);
 
-function addMessageStat(ctx) {
-  if (!ctx.from || !ctx.chat) return;
-
-  const stats = loadStats();
-
-  const chatId = String(ctx.chat.id);
-  const userId = String(ctx.from.id);
-
-  if (!stats[chatId]) {
-    stats[chatId] = {};
+  if (!db.chats[id]) {
+    db.chats[id] = {
+      users: {},
+      friendships: {},
+      couples: {},
+    };
   }
 
-  if (!stats[chatId][userId]) {
-    stats[chatId][userId] = {
-      id: ctx.from.id,
-      firstName: ctx.from.first_name || "",
-      username: ctx.from.username || "",
+  return db.chats[id];
+}
+
+function getUserDB(chat, user) {
+  const id = String(user.id);
+
+  if (!chat.users[id]) {
+    chat.users[id] = {
+      id: user.id,
+      firstName: user.first_name || "",
+      username: user.username || "",
       messages: 0,
+      coins: 0,
+      reputation: 0,
+      warnings: 0,
+      lastBonus: null,
       joinedAt: new Date().toISOString(),
     };
   }
 
-  stats[chatId][userId].firstName = ctx.from.first_name || "";
-  stats[chatId][userId].username = ctx.from.username || "";
-  stats[chatId][userId].messages += 1;
+  chat.users[id].firstName = user.first_name || "";
+  chat.users[id].username = user.username || "";
 
-  saveStats(stats);
+  return chat.users[id];
 }
 
-// ======================================================
-// ПРОВЕРКА АДМИНА
-// ======================================================
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function escapeHtml(text = "") {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function getUserName(user) {
+  return user.first_name || user.username || "Участник";
+}
+
+function mentionUser(user) {
+  const name = escapeHtml(getUserName(user));
+  return `<a href="tg://user?id=${user.id}">${name}</a>`;
+}
+
+function getRank(messages) {
+  if (messages >= 10000) return "👑 Легенда клуба";
+  if (messages >= 5000) return "💎 Элита чата";
+  if (messages >= 2500) return "🔥 Душа компании";
+  if (messages >= 1000) return "⭐ Супер актив";
+  if (messages >= 500) return "💬 Постоянный";
+  if (messages >= 100) return "🌱 Активный новичок";
+  if (messages >= 25) return "👤 Новичок";
+  return "🕊 Тихий участник";
+}
+
+function getLevel(messages) {
+  return Math.floor(messages / 50) + 1;
+}
+
+function getReplyUser(ctx) {
+  return ctx.message?.reply_to_message?.from || null;
+}
 
 async function isAdmin(ctx, userId) {
   try {
@@ -111,42 +144,167 @@ async function isAdmin(ctx, userId) {
 }
 
 // ======================================================
-// ПРОВЕРКА ССЫЛОК НА ВИДЕО
+// ССЫЛКИ НА ВИДЕО
 // ======================================================
 
-function isVideoLink(text) {
-  if (!text) return false;
+function normalizeUrl(text) {
+  if (!text) return null;
 
-  return /https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com|youtube\.com|youtu\.be|instagram\.com|www\.instagram\.com)/i.test(
-    text
+  const match = text.match(/https?:\/\/[^\s]+/i);
+  if (!match) return null;
+
+  return match[0]
+    .replace(/[)\]}>,.!?]+$/g, "")
+    .trim();
+}
+
+function isVideoLink(text) {
+  const url = normalizeUrl(text);
+  if (!url) return false;
+
+  return /(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com|youtube\.com|youtu\.be|instagram\.com)/i.test(
+    url
   );
 }
 
-async function downloadVideo(url) {
-  const fileName = `video_${Date.now()}.mp4`;
-  const outputPath = path.join(DOWNLOAD_DIR, fileName);
+function getFileSizeMB(filePath) {
+  const stat = fs.statSync(filePath);
+  return stat.size / 1024 / 1024;
+}
 
-  await execFileAsync("yt-dlp", [
+function findDownloadedFile(prefix) {
+  const files = fs.readdirSync(DOWNLOAD_DIR);
+
+  const found = files.find((file) => file.startsWith(prefix));
+
+  if (!found) return null;
+
+  return path.join(DOWNLOAD_DIR, found);
+}
+
+function removeOldDownloadFiles(prefix) {
+  try {
+    const files = fs.readdirSync(DOWNLOAD_DIR);
+
+    for (const file of files) {
+      if (file.startsWith(prefix)) {
+        const filePath = path.join(DOWNLOAD_DIR, file);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      }
+    }
+  } catch {}
+}
+
+async function runYtDlp(command, args) {
+  return execFileAsync(command, args, {
+    timeout: 180000,
+    maxBuffer: 1024 * 1024 * 20,
+  });
+}
+
+async function downloadVideo(url) {
+  const prefix = `video_${Date.now()}_${Math.floor(Math.random() * 99999)}`;
+  const outputTemplate = path.join(DOWNLOAD_DIR, `${prefix}.%(ext)s`);
+
+  const baseArgs = [
+    "--no-playlist",
+    "--no-check-certificates",
+    "--force-overwrites",
+    "--no-warnings",
+
+    "--user-agent",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+
+    "--referer",
+    "https://www.tiktok.com/",
+
     "-f",
-    "mp4/best",
+    "best[ext=mp4]/best",
+
     "--merge-output-format",
     "mp4",
-    "-o",
-    outputPath,
-    url,
-  ]);
 
-  return outputPath;
+    "-o",
+    outputTemplate,
+
+    url,
+  ];
+
+  const attempts = [
+    {
+      name: "py -m yt_dlp",
+      command: "py",
+      args: ["-m", "yt_dlp", ...baseArgs],
+    },
+    {
+      name: "python -m yt_dlp",
+      command: "python",
+      args: ["-m", "yt_dlp", ...baseArgs],
+    },
+    {
+      name: "python3 -m yt_dlp",
+      command: "python3",
+      args: ["-m", "yt_dlp", ...baseArgs],
+    },
+    {
+      name: "yt-dlp",
+      command: "yt-dlp",
+      args: baseArgs,
+    },
+  ];
+
+  const errors = [];
+
+  for (const attempt of attempts) {
+    try {
+      console.log(`▶️ Пробую скачать через: ${attempt.name}`);
+
+      await runYtDlp(attempt.command, attempt.args);
+
+      const downloadedFile = findDownloadedFile(prefix);
+
+      if (!downloadedFile || !fs.existsSync(downloadedFile)) {
+        errors.push(`${attempt.name}: файл не найден после скачивания`);
+        continue;
+      }
+
+      const sizeMB = getFileSizeMB(downloadedFile);
+
+      if (sizeMB > 48) {
+        removeOldDownloadFiles(prefix);
+        throw new Error(
+          `Видео слишком большое: ${sizeMB.toFixed(
+            1
+          )} MB. Telegram Bot API может не принять файл больше 50 MB.`
+        );
+      }
+
+      console.log(`✅ Видео скачано: ${downloadedFile}`);
+      console.log(`📦 Размер: ${sizeMB.toFixed(1)} MB`);
+
+      return downloadedFile;
+    } catch (error) {
+      const message = error.stderr || error.stdout || error.message || String(error);
+      console.log(`❌ Не вышло через ${attempt.name}`);
+      console.log(message);
+      errors.push(`${attempt.name}: ${message}`);
+    }
+  }
+
+  throw new Error(errors.join("\n\n"));
 }
 
 // ======================================================
-// /START
+// START / HELP
 // ======================================================
 
 bot.start(async (ctx) => {
-  const name = ctx.from?.first_name || ctx.from?.username || "друг";
+  const name = escapeHtml(getUserName(ctx.from));
 
-  const text = `
+  await ctx.reply(
+    `
 ━━━━━━━━━━━━━━━━━━
 🤖 <b>Привет, ${name}!</b>
 
@@ -155,364 +313,633 @@ bot.start(async (ctx) => {
 Я умею:
 • встречать новых участников;
 • считать сообщения;
-• показывать профиль;
-• показывать топ активных;
-• выдавать ранги по активности;
-• скачивать видео по ссылкам TikTok / YouTube / Instagram;
+• выдавать ранги;
+• начислять монеты;
+• давать ежедневный бонус;
+• добавлять дружбу;
+• создавать отношения;
+• считать репутацию;
+• показывать топ;
+• скачивать видео TikTok / YouTube / Instagram;
 • помогать администрации.
 
-📌 Команды:
- /help — список команд
- /profile — твой профиль
- /top — топ участников
- /rank — твой ранг
-
-🔥 Добавь меня в чат и выдай права администратора.
+📌 Напиши /help, чтобы увидеть команды.
 ━━━━━━━━━━━━━━━━━━
-`;
-
-  await ctx.reply(text, {
-    parse_mode: "HTML",
-  });
+`,
+    { parse_mode: "HTML" }
+  );
 });
 
-// ======================================================
-// /HELP
-// ======================================================
-
 bot.command("help", async (ctx) => {
-  const text = `
+  await ctx.reply(
+    `
 ━━━━━━━━━━━━━━━━━━
 📌 <b>Команды бота</b>
 
-👤 <b>Для участников:</b>
+👤 <b>Профиль:</b>
 /profile — мой профиль
 /rank — мой ранг
-/top — топ активных
-/help — помощь
+/balance — мои монеты
+/top — топ по сообщениям
+/topcoins — топ по монетам
+/toprep — топ по репутации
 
-🛡 <b>Для администрации:</b>
-/ban — забанить пользователя
-/kick — кикнуть пользователя
-/mute — замутить пользователя
-/unmute — размутить пользователя
+🎁 <b>Бонусы:</b>
+/bonus — ежедневный бонус
+/gift 50 — подарить монеты ответом на сообщение
 
-🎬 <b>Скачивание видео:</b>
-Просто отправь ссылку TikTok / YouTube / Instagram, и бот отправит видео прямо в чат.
+🤝 <b>Дружба:</b>
+/friend — подружиться ответом
+/friends — мои друзья
+/unfriend — удалить друга ответом
 
+❤️ <b>Отношения:</b>
+/love — начать отношения ответом
+/couple — посмотреть пару
+/breakup — расстаться
+
+✨ <b>Действия:</b>
+/hug — обнять ответом
+/kiss — поцеловать ответом
+/pat — погладить ответом
+/slap — шлёпнуть ответом
+/respect — дать репутацию ответом
+
+🛡 <b>Админ:</b>
+/ban — бан ответом
+/kick — кик ответом
+/mute — мут ответом
+/unmute — размут ответом
+/warn — предупреждение ответом
+/unwarn — снять предупреждение ответом
+
+🎬 <b>Видео:</b>
+Просто отправь ссылку TikTok / YouTube / Instagram.
 ━━━━━━━━━━━━━━━━━━
-`;
-
-  await ctx.reply(text, {
-    parse_mode: "HTML",
-  });
+`,
+    { parse_mode: "HTML" }
+  );
 });
 
 // ======================================================
-// 👋 ПРИВЕТСТВИЕ НОВОГО УЧАСТНИКА
+// ПРИВЕТСТВИЕ НОВЫХ УЧАСТНИКОВ
 // ======================================================
 
 bot.on("new_chat_members", async (ctx) => {
   try {
-    const chatTitle = ctx.chat?.title || "Клуб случайных людей";
-    const members = ctx.message?.new_chat_members || [];
+    const db = loadDB();
+    const chat = getChatDB(db, ctx.chat.id);
+    const chatTitle = escapeHtml(ctx.chat?.title || "Клуб случайных людей");
 
-    for (const member of members) {
+    for (const member of ctx.message.new_chat_members || []) {
       if (member.is_bot) continue;
 
-      const name = member.first_name || member.username || "новый участник";
+      const user = getUserDB(chat, member);
+      user.coins += 25;
 
-      const userMention = member.username
-        ? `@${member.username}`
-        : `<a href="tg://user?id=${member.id}">${name}</a>`;
-
-      const welcomeText = `
+      await ctx.reply(
+        `
 ✨ <b>Новый участник в чате!</b>
 
-👋 Добро пожаловать, ${userMention}
+👋 Добро пожаловать, ${mentionUser(member)}!
 
 🏠 Ты попал в:
 <b>${chatTitle}</b>
 
 ━━━━━━━━━━━━━━━━━━
-💬 Здесь можно общаться, знакомиться, поднимать активность и прокачивать свой профиль.
+🎁 Стартовый бонус: <b>+25 монет</b>
+💬 Пиши сообщения, поднимай активность и прокачивай профиль.
 
 📌 Полезные команды:
 • /profile — твой профиль
-• /rank — твой ранг
+• /bonus — ежедневный бонус
 • /top — топ участников
-• /help — помощь по боту
+• /help — все команды
 
 🔥 Удачного общения в <b>Клубе случайных людей</b>!
 ━━━━━━━━━━━━━━━━━━
-`;
-
-      await ctx.reply(welcomeText, {
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-      });
-    }
-  } catch (error) {
-    console.error("Ошибка приветствия нового участника:", error);
-  }
-});
-
-// ======================================================
-// 🤖 КОГДА БОТА ДОБАВИЛИ В ГРУППУ
-// ======================================================
-
-bot.on("my_chat_member", async (ctx) => {
-  try {
-    const oldStatus = ctx.update.my_chat_member.old_chat_member.status;
-    const newStatus = ctx.update.my_chat_member.new_chat_member.status;
-
-    if (
-      ["left", "kicked"].includes(oldStatus) &&
-      ["member", "administrator"].includes(newStatus)
-    ) {
-      await ctx.reply(
-        `
-🤖 <b>Бот подключён!</b>
-
-Спасибо, что добавили меня в чат.
-
-Чтобы я работал правильно:
-1. Выдайте мне права администратора.
-2. Разрешите удалять сообщения.
-3. Разрешите банить пользователей.
-4. Разрешите закреплять сообщения, если нужно.
-
-📌 Напишите /help, чтобы посмотреть команды.
 `,
         {
           parse_mode: "HTML",
+          disable_web_page_preview: true,
         }
       );
     }
+
+    saveDB(db);
   } catch (error) {
-    console.error("Ошибка my_chat_member:", error);
+    console.error("Ошибка приветствия:", error);
   }
 });
 
 // ======================================================
-// /PROFILE
+// ПРОФИЛЬ / ТОПЫ
 // ======================================================
 
 bot.command("profile", async (ctx) => {
-  try {
-    const stats = loadStats();
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+  const user = getUserDB(chat, ctx.from);
 
-    const chatId = String(ctx.chat.id);
-    const userId = String(ctx.from.id);
+  const userId = String(ctx.from.id);
+  const coupleId = chat.couples[userId];
+  const couple = coupleId ? chat.users[String(coupleId)] : null;
 
-    const userStats = stats?.[chatId]?.[userId];
+  const friendsCount = Object.values(chat.friendships).filter((pair) =>
+    pair.includes(userId)
+  ).length;
 
-    const messages = userStats?.messages || 0;
-    const rank = getUserRank(messages);
+  saveDB(db);
 
-    const name = ctx.from.first_name || ctx.from.username || "Участник";
-    const username = ctx.from.username ? `@${ctx.from.username}` : "нет";
-
-    const text = `
+  await ctx.reply(
+    `
 ━━━━━━━━━━━━━━━━━━
-👤 <b>Профиль участника</b>
+👤 <b>Профиль</b>
 
-🆔 Имя: <b>${name}</b>
-🔗 Username: <b>${username}</b>
-💬 Сообщений: <b>${messages}</b>
-✨ Ранг: <b>${rank}</b>
+🆔 Имя: <b>${escapeHtml(user.firstName || "Участник")}</b>
+🔗 Username: <b>${user.username ? "@" + escapeHtml(user.username) : "нет"}</b>
 
-━━━━━━━━━━━━━━━━━━
-`;
+💬 Сообщений: <b>${user.messages}</b>
+🏆 Уровень: <b>${getLevel(user.messages)}</b>
+✨ Ранг: <b>${getRank(user.messages)}</b>
 
-    await ctx.reply(text, {
-      parse_mode: "HTML",
-    });
-  } catch (error) {
-    console.error("Ошибка /profile:", error);
-    await ctx.reply("❌ Не получилось открыть профиль.");
-  }
-});
+🪙 Монеты: <b>${user.coins}</b>
+⭐ Репутация: <b>${user.reputation}</b>
+⚠️ Предупреждения: <b>${user.warnings}</b>
 
-// ======================================================
-// /RANK
-// ======================================================
-
-bot.command("rank", async (ctx) => {
-  try {
-    const stats = loadStats();
-
-    const chatId = String(ctx.chat.id);
-    const userId = String(ctx.from.id);
-
-    const messages = stats?.[chatId]?.[userId]?.messages || 0;
-    const rank = getUserRank(messages);
-
-    await ctx.reply(
-      `
-━━━━━━━━━━━━━━━━━━
-✨ <b>Твой ранг:</b> ${rank}
-
-💬 Сообщений: <b>${messages}</b>
+🤝 Друзей: <b>${friendsCount}</b>
+❤️ Пара: <b>${couple ? escapeHtml(couple.firstName || "участник") : "нет"}</b>
 
 ━━━━━━━━━━━━━━━━━━
 `,
-      {
-        parse_mode: "HTML",
-      }
-    );
-  } catch (error) {
-    console.error("Ошибка /rank:", error);
-    await ctx.reply("❌ Не получилось посмотреть ранг.");
-  }
+    { parse_mode: "HTML" }
+  );
 });
 
-// ======================================================
-// /TOP
-// ======================================================
+bot.command("rank", async (ctx) => {
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+  const user = getUserDB(chat, ctx.from);
+
+  await ctx.reply(
+    `
+✨ <b>Твой ранг:</b> ${getRank(user.messages)}
+🏆 Уровень: <b>${getLevel(user.messages)}</b>
+💬 Сообщений: <b>${user.messages}</b>
+`,
+    { parse_mode: "HTML" }
+  );
+});
+
+bot.command("balance", async (ctx) => {
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+  const user = getUserDB(chat, ctx.from);
+
+  await ctx.reply(`🪙 У тебя <b>${user.coins}</b> монет.`, {
+    parse_mode: "HTML",
+  });
+});
 
 bot.command("top", async (ctx) => {
-  try {
-    const stats = loadStats();
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
 
-    const chatId = String(ctx.chat.id);
-    const chatStats = stats[chatId] || {};
+  const users = Object.values(chat.users)
+    .sort((a, b) => b.messages - a.messages)
+    .slice(0, 10);
 
-    const users = Object.values(chatStats)
-      .sort((a, b) => b.messages - a.messages)
-      .slice(0, 10);
+  if (!users.length) return ctx.reply("Пока нет статистики.");
 
-    if (users.length === 0) {
-      return ctx.reply("Пока нет статистики сообщений.");
-    }
+  let text = "🏆 <b>Топ по сообщениям</b>\n\n";
 
-    let text = "🏆 <b>Топ активных участников</b>\n\n";
+  users.forEach((u, i) => {
+    const name = u.username
+      ? `@${escapeHtml(u.username)}`
+      : escapeHtml(u.firstName || "Участник");
 
-    users.forEach((user, index) => {
-      const place = index + 1;
-      const name = user.username
-        ? `@${user.username}`
-        : user.firstName || "Участник";
+    text += `${i + 1}. ${name} — <b>${u.messages}</b>\n`;
+  });
 
-      text += `${place}. ${name} — <b>${user.messages}</b> сообщений\n`;
-    });
+  await ctx.reply(text, { parse_mode: "HTML" });
+});
 
-    text += "\n━━━━━━━━━━━━━━━━━━";
+bot.command("topcoins", async (ctx) => {
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
 
-    await ctx.reply(text, {
-      parse_mode: "HTML",
-    });
-  } catch (error) {
-    console.error("Ошибка /top:", error);
-    await ctx.reply("❌ Не получилось показать топ.");
-  }
+  const users = Object.values(chat.users)
+    .sort((a, b) => b.coins - a.coins)
+    .slice(0, 10);
+
+  if (!users.length) return ctx.reply("Пока нет статистики.");
+
+  let text = "🪙 <b>Топ богачей чата</b>\n\n";
+
+  users.forEach((u, i) => {
+    const name = u.username
+      ? `@${escapeHtml(u.username)}`
+      : escapeHtml(u.firstName || "Участник");
+
+    text += `${i + 1}. ${name} — <b>${u.coins}</b> монет\n`;
+  });
+
+  await ctx.reply(text, { parse_mode: "HTML" });
+});
+
+bot.command("toprep", async (ctx) => {
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+
+  const users = Object.values(chat.users)
+    .sort((a, b) => b.reputation - a.reputation)
+    .slice(0, 10);
+
+  if (!users.length) return ctx.reply("Пока нет статистики.");
+
+  let text = "⭐ <b>Топ по репутации</b>\n\n";
+
+  users.forEach((u, i) => {
+    const name = u.username
+      ? `@${escapeHtml(u.username)}`
+      : escapeHtml(u.firstName || "Участник");
+
+    text += `${i + 1}. ${name} — <b>${u.reputation}</b> реп.\n`;
+  });
+
+  await ctx.reply(text, { parse_mode: "HTML" });
 });
 
 // ======================================================
-// /BAN
-// Использование: ответь на сообщение пользователя и напиши /ban причина
+// БОНУСЫ
+// ======================================================
+
+bot.command("bonus", async (ctx) => {
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+  const user = getUserDB(chat, ctx.from);
+
+  const today = todayKey();
+
+  if (user.lastBonus === today) {
+    return ctx.reply("⏳ Ты уже забирал ежедневный бонус сегодня. Приходи завтра!");
+  }
+
+  const amount = Math.floor(Math.random() * 76) + 25;
+
+  user.lastBonus = today;
+  user.coins += amount;
+
+  saveDB(db);
+
+  await ctx.reply(
+    `
+🎁 <b>Ежедневный бонус получен!</b>
+
+🪙 Начислено: <b>+${amount}</b> монет
+💰 Баланс: <b>${user.coins}</b> монет
+`,
+    { parse_mode: "HTML" }
+  );
+});
+
+bot.command("gift", async (ctx) => {
+  const target = getReplyUser(ctx);
+
+  if (!target || target.is_bot) {
+    return ctx.reply("❌ Ответь на сообщение пользователя и напиши: /gift 50");
+  }
+
+  const amount = Number(ctx.message.text.split(" ")[1]);
+
+  if (!amount || amount <= 0) {
+    return ctx.reply("❌ Укажи сумму. Например: /gift 50");
+  }
+
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+  const fromUser = getUserDB(chat, ctx.from);
+  const toUser = getUserDB(chat, target);
+
+  if (fromUser.coins < amount) {
+    return ctx.reply("❌ У тебя недостаточно монет.");
+  }
+
+  fromUser.coins -= amount;
+  toUser.coins += amount;
+
+  saveDB(db);
+
+  await ctx.reply(
+    `🎁 ${mentionUser(ctx.from)} подарил ${mentionUser(target)} <b>${amount}</b> монет!`,
+    { parse_mode: "HTML" }
+  );
+});
+
+// ======================================================
+// ДРУЖБА / ОТНОШЕНИЯ
+// ======================================================
+
+bot.command("friend", async (ctx) => {
+  const target = getReplyUser(ctx);
+
+  if (!target || target.is_bot) {
+    return ctx.reply("❌ Ответь на сообщение человека, с которым хочешь подружиться.");
+  }
+
+  if (target.id === ctx.from.id) {
+    return ctx.reply("😅 Сам с собой дружить нельзя.");
+  }
+
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+
+  getUserDB(chat, ctx.from);
+  getUserDB(chat, target);
+
+  const a = String(ctx.from.id);
+  const b = String(target.id);
+  const key = [a, b].sort().join("_");
+
+  if (chat.friendships[key]) {
+    return ctx.reply("🤝 Вы уже друзья.");
+  }
+
+  chat.friendships[key] = [a, b, new Date().toISOString()];
+
+  const user = getUserDB(chat, ctx.from);
+  user.coins += 10;
+
+  saveDB(db);
+
+  await ctx.reply(
+    `
+🤝 <b>Новая дружба!</b>
+
+${mentionUser(ctx.from)} и ${mentionUser(target)} теперь друзья!
+
+🎁 Бонус за дружбу: <b>+10 монет</b>
+`,
+    { parse_mode: "HTML" }
+  );
+});
+
+bot.command("friends", async (ctx) => {
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+
+  const userId = String(ctx.from.id);
+
+  const friends = Object.values(chat.friendships)
+    .filter((pair) => pair.includes(userId))
+    .map((pair) => {
+      const friendId = pair[0] === userId ? pair[1] : pair[0];
+      return chat.users[friendId];
+    })
+    .filter(Boolean);
+
+  if (!friends.length) {
+    return ctx.reply("🤝 У тебя пока нет друзей в чате.");
+  }
+
+  let text = "🤝 <b>Твои друзья:</b>\n\n";
+
+  friends.forEach((friend, index) => {
+    const name = friend.username
+      ? `@${escapeHtml(friend.username)}`
+      : escapeHtml(friend.firstName || "Участник");
+
+    text += `${index + 1}. ${name}\n`;
+  });
+
+  await ctx.reply(text, { parse_mode: "HTML" });
+});
+
+bot.command("unfriend", async (ctx) => {
+  const target = getReplyUser(ctx);
+
+  if (!target) {
+    return ctx.reply("❌ Ответь на сообщение друга командой /unfriend.");
+  }
+
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+
+  const a = String(ctx.from.id);
+  const b = String(target.id);
+  const key = [a, b].sort().join("_");
+
+  if (!chat.friendships[key]) {
+    return ctx.reply("❌ Вы и так не друзья.");
+  }
+
+  delete chat.friendships[key];
+
+  saveDB(db);
+
+  await ctx.reply(`💔 ${mentionUser(ctx.from)} и ${mentionUser(target)} больше не друзья.`, {
+    parse_mode: "HTML",
+  });
+});
+
+bot.command("love", async (ctx) => {
+  const target = getReplyUser(ctx);
+
+  if (!target || target.is_bot) {
+    return ctx.reply("❌ Ответь на сообщение человека, с кем хочешь начать отношения.");
+  }
+
+  if (target.id === ctx.from.id) {
+    return ctx.reply("😅 С самим собой отношения не создать.");
+  }
+
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+
+  getUserDB(chat, ctx.from);
+  getUserDB(chat, target);
+
+  const a = String(ctx.from.id);
+  const b = String(target.id);
+
+  if (chat.couples[a] || chat.couples[b]) {
+    return ctx.reply("❌ У одного из вас уже есть отношения.");
+  }
+
+  chat.couples[a] = b;
+  chat.couples[b] = a;
+
+  const user = getUserDB(chat, ctx.from);
+  const partner = getUserDB(chat, target);
+
+  user.coins += 20;
+  partner.coins += 20;
+
+  saveDB(db);
+
+  await ctx.reply(
+    `
+❤️ <b>Новая пара в чате!</b>
+
+${mentionUser(ctx.from)} и ${mentionUser(target)} теперь вместе!
+
+🎁 Бонус каждому: <b>+20 монет</b>
+💍 Совет да любовь!
+`,
+    { parse_mode: "HTML" }
+  );
+});
+
+bot.command("couple", async (ctx) => {
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+
+  const userId = String(ctx.from.id);
+  const partnerId = chat.couples[userId];
+
+  if (!partnerId) {
+    return ctx.reply("💔 У тебя пока нет пары.");
+  }
+
+  const partner = chat.users[String(partnerId)];
+
+  await ctx.reply(
+    `
+❤️ <b>Твоя пара:</b>
+${partner ? escapeHtml(partner.firstName || "Участник") : "участник"}
+
+💍 Берегите отношения!
+`,
+    { parse_mode: "HTML" }
+  );
+});
+
+bot.command("breakup", async (ctx) => {
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+
+  const userId = String(ctx.from.id);
+  const partnerId = chat.couples[userId];
+
+  if (!partnerId) {
+    return ctx.reply("💔 У тебя нет отношений.");
+  }
+
+  delete chat.couples[userId];
+  delete chat.couples[String(partnerId)];
+
+  saveDB(db);
+
+  await ctx.reply("💔 Отношения завершены.");
+});
+
+// ======================================================
+// ДЕЙСТВИЯ / РЕПУТАЦИЯ
+// ======================================================
+
+async function actionCommand(ctx, emoji, text) {
+  const target = getReplyUser(ctx);
+
+  if (!target || target.is_bot) {
+    return ctx.reply("❌ Ответь на сообщение пользователя.");
+  }
+
+  await ctx.reply(`${emoji} ${mentionUser(ctx.from)} ${text} ${mentionUser(target)}`, {
+    parse_mode: "HTML",
+  });
+}
+
+bot.command("hug", (ctx) => actionCommand(ctx, "🤗", "обнял"));
+bot.command("kiss", (ctx) => actionCommand(ctx, "😘", "поцеловал"));
+bot.command("pat", (ctx) => actionCommand(ctx, "🫶", "погладил"));
+bot.command("slap", (ctx) => actionCommand(ctx, "💥", "шлёпнул"));
+
+bot.command("respect", async (ctx) => {
+  const target = getReplyUser(ctx);
+
+  if (!target || target.is_bot) {
+    return ctx.reply("❌ Ответь на сообщение пользователя командой /respect.");
+  }
+
+  if (target.id === ctx.from.id) {
+    return ctx.reply("😅 Себе репутацию давать нельзя.");
+  }
+
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+
+  const targetUser = getUserDB(chat, target);
+  targetUser.reputation += 1;
+
+  saveDB(db);
+
+  await ctx.reply(
+    `⭐ ${mentionUser(ctx.from)} повысил репутацию ${mentionUser(target)}!\n\nРепутация: <b>${targetUser.reputation}</b>`,
+    { parse_mode: "HTML" }
+  );
+});
+
+// ======================================================
+// АДМИН-КОМАНДЫ
 // ======================================================
 
 bot.command("ban", async (ctx) => {
+  if (!(await isAdmin(ctx, ctx.from.id))) {
+    return ctx.reply("❌ Команда только для администрации.");
+  }
+
+  const target = getReplyUser(ctx);
+  if (!target) return ctx.reply("❌ Ответь на сообщение пользователя командой /ban.");
+
+  const reason = ctx.message.text.replace("/ban", "").trim() || "без причины";
+
   try {
-    const admin = await isAdmin(ctx, ctx.from.id);
-
-    if (!admin) {
-      return ctx.reply("❌ Эта команда только для администрации.");
-    }
-
-    const reply = ctx.message.reply_to_message;
-
-    if (!reply) {
-      return ctx.reply("❌ Ответь на сообщение пользователя командой /ban.");
-    }
-
-    const targetId = reply.from.id;
-    const reason = ctx.message.text.replace("/ban", "").trim() || "без причины";
-
-    await ctx.telegram.banChatMember(ctx.chat.id, targetId);
+    await ctx.telegram.banChatMember(ctx.chat.id, target.id);
 
     await ctx.reply(
-      `
-🚫 <b>Пользователь забанен</b>
-
-👤 ID: <code>${targetId}</code>
-📌 Причина: <b>${reason}</b>
-`,
-      {
-        parse_mode: "HTML",
-      }
+      `🚫 <b>Пользователь забанен</b>\n\n👤 ${mentionUser(target)}\n📌 Причина: <b>${escapeHtml(reason)}</b>`,
+      { parse_mode: "HTML" }
     );
   } catch (error) {
-    console.error("Ошибка /ban:", error);
-    await ctx.reply("❌ Не получилось забанить. Проверь, что бот админ.");
+    console.error(error);
+    await ctx.reply("❌ Не получилось забанить. Проверь права бота.");
   }
 });
-
-// ======================================================
-// /KICK
-// Использование: ответь на сообщение пользователя и напиши /kick причина
-// ======================================================
 
 bot.command("kick", async (ctx) => {
+  if (!(await isAdmin(ctx, ctx.from.id))) {
+    return ctx.reply("❌ Команда только для администрации.");
+  }
+
+  const target = getReplyUser(ctx);
+  if (!target) return ctx.reply("❌ Ответь на сообщение пользователя командой /kick.");
+
+  const reason = ctx.message.text.replace("/kick", "").trim() || "без причины";
+
   try {
-    const admin = await isAdmin(ctx, ctx.from.id);
-
-    if (!admin) {
-      return ctx.reply("❌ Эта команда только для администрации.");
-    }
-
-    const reply = ctx.message.reply_to_message;
-
-    if (!reply) {
-      return ctx.reply("❌ Ответь на сообщение пользователя командой /kick.");
-    }
-
-    const targetId = reply.from.id;
-    const reason = ctx.message.text.replace("/kick", "").trim() || "без причины";
-
-    await ctx.telegram.banChatMember(ctx.chat.id, targetId);
-    await ctx.telegram.unbanChatMember(ctx.chat.id, targetId);
+    await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+    await ctx.telegram.unbanChatMember(ctx.chat.id, target.id);
 
     await ctx.reply(
-      `
-👢 <b>Пользователь кикнут</b>
-
-👤 ID: <code>${targetId}</code>
-📌 Причина: <b>${reason}</b>
-`,
-      {
-        parse_mode: "HTML",
-      }
+      `👢 <b>Пользователь кикнут</b>\n\n👤 ${mentionUser(target)}\n📌 Причина: <b>${escapeHtml(reason)}</b>`,
+      { parse_mode: "HTML" }
     );
   } catch (error) {
-    console.error("Ошибка /kick:", error);
-    await ctx.reply("❌ Не получилось кикнуть. Проверь, что бот админ.");
+    console.error(error);
+    await ctx.reply("❌ Не получилось кикнуть. Проверь права бота.");
   }
 });
 
-// ======================================================
-// /MUTE
-// Использование: ответь на сообщение пользователя и напиши /mute
-// ======================================================
-
 bot.command("mute", async (ctx) => {
+  if (!(await isAdmin(ctx, ctx.from.id))) {
+    return ctx.reply("❌ Команда только для администрации.");
+  }
+
+  const target = getReplyUser(ctx);
+  if (!target) return ctx.reply("❌ Ответь на сообщение пользователя командой /mute.");
+
   try {
-    const admin = await isAdmin(ctx, ctx.from.id);
-
-    if (!admin) {
-      return ctx.reply("❌ Эта команда только для администрации.");
-    }
-
-    const reply = ctx.message.reply_to_message;
-
-    if (!reply) {
-      return ctx.reply("❌ Ответь на сообщение пользователя командой /mute.");
-    }
-
-    const targetId = reply.from.id;
-
-    await ctx.telegram.restrictChatMember(ctx.chat.id, targetId, {
+    await ctx.telegram.restrictChatMember(ctx.chat.id, target.id, {
       permissions: {
         can_send_messages: false,
         can_send_audios: false,
@@ -524,51 +951,28 @@ bot.command("mute", async (ctx) => {
         can_send_polls: false,
         can_send_other_messages: false,
         can_add_web_page_previews: false,
-        can_change_info: false,
-        can_invite_users: false,
-        can_pin_messages: false,
-        can_manage_topics: false,
       },
     });
 
-    await ctx.reply(
-      `
-🔇 <b>Пользователь замучен</b>
-
-👤 ID: <code>${targetId}</code>
-`,
-      {
-        parse_mode: "HTML",
-      }
-    );
+    await ctx.reply(`🔇 ${mentionUser(target)} замучен.`, {
+      parse_mode: "HTML",
+    });
   } catch (error) {
-    console.error("Ошибка /mute:", error);
-    await ctx.reply("❌ Не получилось замутить. Проверь, что бот админ.");
+    console.error(error);
+    await ctx.reply("❌ Не получилось замутить. Проверь права бота.");
   }
 });
 
-// ======================================================
-// /UNMUTE
-// Использование: ответь на сообщение пользователя и напиши /unmute
-// ======================================================
-
 bot.command("unmute", async (ctx) => {
+  if (!(await isAdmin(ctx, ctx.from.id))) {
+    return ctx.reply("❌ Команда только для администрации.");
+  }
+
+  const target = getReplyUser(ctx);
+  if (!target) return ctx.reply("❌ Ответь на сообщение пользователя командой /unmute.");
+
   try {
-    const admin = await isAdmin(ctx, ctx.from.id);
-
-    if (!admin) {
-      return ctx.reply("❌ Эта команда только для администрации.");
-    }
-
-    const reply = ctx.message.reply_to_message;
-
-    if (!reply) {
-      return ctx.reply("❌ Ответь на сообщение пользователя командой /unmute.");
-    }
-
-    const targetId = reply.from.id;
-
-    await ctx.telegram.restrictChatMember(ctx.chat.id, targetId, {
+    await ctx.telegram.restrictChatMember(ctx.chat.id, target.id, {
       permissions: {
         can_send_messages: true,
         can_send_audios: true,
@@ -580,50 +984,92 @@ bot.command("unmute", async (ctx) => {
         can_send_polls: true,
         can_send_other_messages: true,
         can_add_web_page_previews: true,
-        can_change_info: false,
-        can_invite_users: true,
-        can_pin_messages: false,
-        can_manage_topics: false,
       },
     });
 
-    await ctx.reply(
-      `
-🔊 <b>Пользователь размучен</b>
-
-👤 ID: <code>${targetId}</code>
-`,
-      {
-        parse_mode: "HTML",
-      }
-    );
+    await ctx.reply(`🔊 ${mentionUser(target)} размучен.`, {
+      parse_mode: "HTML",
+    });
   } catch (error) {
-    console.error("Ошибка /unmute:", error);
-    await ctx.reply("❌ Не получилось размутить. Проверь, что бот админ.");
+    console.error(error);
+    await ctx.reply("❌ Не получилось размутить. Проверь права бота.");
   }
 });
 
+bot.command("warn", async (ctx) => {
+  if (!(await isAdmin(ctx, ctx.from.id))) {
+    return ctx.reply("❌ Команда только для администрации.");
+  }
+
+  const target = getReplyUser(ctx);
+  if (!target) return ctx.reply("❌ Ответь на сообщение пользователя командой /warn.");
+
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+  const user = getUserDB(chat, target);
+
+  user.warnings += 1;
+
+  saveDB(db);
+
+  await ctx.reply(
+    `⚠️ ${mentionUser(target)} получил предупреждение.\n\nВсего предупреждений: <b>${user.warnings}</b>`,
+    { parse_mode: "HTML" }
+  );
+});
+
+bot.command("unwarn", async (ctx) => {
+  if (!(await isAdmin(ctx, ctx.from.id))) {
+    return ctx.reply("❌ Команда только для администрации.");
+  }
+
+  const target = getReplyUser(ctx);
+  if (!target) return ctx.reply("❌ Ответь на сообщение пользователя командой /unwarn.");
+
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+  const user = getUserDB(chat, target);
+
+  user.warnings = Math.max(0, user.warnings - 1);
+
+  saveDB(db);
+
+  await ctx.reply(
+    `✅ С ${mentionUser(target)} снято предупреждение.\n\nОсталось предупреждений: <b>${user.warnings}</b>`,
+    { parse_mode: "HTML" }
+  );
+});
+
 // ======================================================
-// ОБРАБОТКА ТЕКСТА
-// Статистика + скачивание видео
+// ОБРАБОТКА ТЕКСТА: СТАТИСТИКА + СКАЧИВАНИЕ ВИДЕО
 // ======================================================
 
 bot.on("text", async (ctx) => {
   const text = ctx.message.text;
 
-  // Считаем сообщения
-  addMessageStat(ctx);
+  const db = loadDB();
+  const chat = getChatDB(db, ctx.chat.id);
+  const user = getUserDB(chat, ctx.from);
 
-  // Если это не ссылка на видео — ничего не делаем
+  user.messages += 1;
+
+  if (user.messages % 10 === 0) {
+    user.coins += 2;
+  }
+
+  saveDB(db);
+
   if (!isVideoLink(text)) return;
 
-  let loadingMessage;
-  let videoPath;
+  const url = normalizeUrl(text);
+
+  let loadingMessage = null;
+  let videoPath = null;
 
   try {
-    loadingMessage = await ctx.reply("⏳ Скачиваю видео...");
+    loadingMessage = await ctx.reply("⏳ Скачиваю видео, подожди немного...");
 
-    videoPath = await downloadVideo(text);
+    videoPath = await downloadVideo(url);
 
     if (loadingMessage) {
       await ctx.telegram
@@ -636,7 +1082,7 @@ bot.on("text", async (ctx) => {
         source: videoPath,
       },
       {
-        caption: "👉 Скачано через @ТвойБот",
+        caption: `👉 Скачано через @${BOT_USERNAME}`,
         supports_streaming: true,
       }
     );
@@ -645,7 +1091,7 @@ bot.on("text", async (ctx) => {
       fs.unlinkSync(videoPath);
     }
   } catch (error) {
-    console.error("Ошибка скачивания видео:", error);
+    console.error("Ошибка скачивания видео:", error.message || error);
 
     if (loadingMessage) {
       await ctx.telegram
@@ -653,8 +1099,27 @@ bot.on("text", async (ctx) => {
         .catch(() => {});
     }
 
+    let shortError = String(error.message || error);
+
+    if (shortError.length > 800) {
+      shortError = shortError.slice(0, 800) + "...";
+    }
+
     await ctx.reply(
-      "❌ Не получилось скачать видео. Возможно, ссылка закрытая, видео защищено или yt-dlp не установлен."
+      `
+❌ <b>Не получилось скачать видео.</b>
+
+Что проверить:
+1. На сервере установлен <b>yt-dlp</b>.
+2. На сервере установлен <b>Python</b>.
+3. Ссылка публичная, не закрытая.
+4. Видео не больше 50 MB.
+5. TikTok не заблокировал скачивание с сервера.
+
+🧪 Техническая ошибка:
+<code>${escapeHtml(shortError)}</code>
+`,
+      { parse_mode: "HTML" }
     );
 
     if (videoPath && fs.existsSync(videoPath)) {
@@ -664,30 +1129,18 @@ bot.on("text", async (ctx) => {
 });
 
 // ======================================================
-// ОБРАБОТКА ОШИБОК
+// ОШИБКИ / ЗАПУСК
 // ======================================================
 
-bot.catch((error, ctx) => {
+bot.catch((error) => {
   console.error("Глобальная ошибка бота:", error);
 });
-
-// ======================================================
-// ЗАПУСК БОТА
-// ======================================================
 
 bot.launch();
 
 console.log("✅ Бот запущен!");
 console.log("🤖 Клуб случайных людей работает");
+console.log("🎬 Скачивание видео включено");
 
-// ======================================================
-// КОРРЕКТНОЕ ВЫКЛЮЧЕНИЕ
-// ======================================================
-
-process.once("SIGINT", () => {
-  bot.stop("SIGINT");
-});
-
-process.once("SIGTERM", () => {
-  bot.stop("SIGTERM");
-});
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
