@@ -1,10 +1,11 @@
 {
   "name": "funtalk-bot",
   "version": "1.0.0",
-  "description": "Telegram bot",
+  "description": "Telegram moderation bot for Club Random People",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "node index.js"
   },
   "engines": {
     "node": "20.x"
