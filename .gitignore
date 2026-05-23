@@ -1,12 +1,13 @@
 node_modules/
 .env
+
+relationships.json
+
 data/*.sqlite
 *.sqlite
 *.log
 .DS_Store
 
-data/*.sqlite
 data/*.sqlite-wal
 data/*.sqlite-shm
 data/*.db
-
