@@ -1170,7 +1170,6 @@ async function checkAutoAchievements(ctx, user) {
     user.achievements = [];
   }
 
-  // Убираем дубли старых ачивок, если они появились раньше
   user.achievements = Array.from(new Set(user.achievements));
 
   const earned = [];
@@ -1194,7 +1193,6 @@ async function checkAutoAchievements(ctx, user) {
   const reputation = Number(user.reputation || 0);
   const warnsCount = Number(user.warns?.length || 0);
 
-  // 🏆 Награды за достижения
   if (messages >= 1) {
     addAchievement("first_message", "🏆 Первое сообщение", 25);
   }
@@ -1231,22 +1229,28 @@ async function checkAutoAchievements(ctx, user) {
   saveDB();
 
   const achievementLines = earned
-    .map((item) => item.title + " → <b>+" + item.rewardCoins + " монет</b>")
-    .join("\n");
+    .map((item) => {
+      return "✨ " + item.title + "\n   🎁 Награда: <b>+" + item.rewardCoins + " монет</b>";
+    })
+    .join("\n\n");
 
   const totalReward = earned.reduce((sum, item) => sum + item.rewardCoins, 0);
+
+  const userName = ctx.from.username
+    ? "@" + escapeHtml(ctx.from.username)
+    : escapeHtml(ctx.from.first_name || "Пользователь");
 
   return ctx.reply(
     `🎉 <b>Новое достижение!</b>
 
-👤 ${mentionUser(ctx.from)}
+👤 <b>${userName}</b>
 
 ${achievementLines}
 
 ━━━━━━━━━━━━━━
-🎁 Получено монет: <b>+${totalReward}</b>
-🏆 Всего ачивок: <b>${user.achievements.length}</b>
-🪙 Баланс: <b>${user.balance || 0}</b> монет`,
+💰 <b>Итог награды:</b> +${totalReward} монет
+🏆 <b>Всего ачивок:</b> ${user.achievements.length}
+🪙 <b>Баланс:</b> ${user.balance || 0} монет`,
     { parse_mode: "HTML" }
   );
 }
