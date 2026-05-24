@@ -405,16 +405,14 @@ function parseCommand(ctx) {
 
   const hasSlash = text.startsWith('/');
   const cleanText = hasSlash ? text.slice(1).trim() : text;
-
   const parts = cleanText.split(/\s+/);
   const [raw, ...args] = parts;
 
   const first = cleanCommandName(raw);
   const second = (args[0] || '').toLowerCase();
 
-  // ВАЖНО:
-  // "я" и "я тут" — обычные сообщения, НЕ команда.
-  // Работает только "я профиль" или "/я профиль".
+  // "я" и "я тут" — обычные сообщения.
+  // Профиль открывается только через "я профиль".
   if (first === 'я') {
     if (['профиль', 'profile'].includes(second)) {
       return {
@@ -426,6 +424,45 @@ function parseCommand(ctx) {
     }
 
     return null;
+  }
+
+  // Команда разработчика для монет.
+  // "монеты" без аргументов = баланс.
+  // "монеты ID сумма" = выдача монет.
+  // "/coins ID сумма" = выдача монет.
+  const devCoinWords = ['coins', 'devcoins', 'выдатьмонеты', 'датьмонеты'];
+
+  if (devCoinWords.includes(first)) {
+    return {
+      raw: first,
+      command: 'devcoins',
+      args,
+      argText: args.join(' ')
+    };
+  }
+
+  if (first === 'монеты') {
+    const isReply = Boolean(ctx.message?.reply_to_message?.from);
+    const firstArgIsNumber = /^-?\d+$/.test(args[0] || '');
+    const secondArgIsNumber = /^-?\d+$/.test(args[1] || '');
+
+    // монеты 123456789 5000
+    // reply -> монеты 5000
+    if ((firstArgIsNumber && secondArgIsNumber) || (isReply && firstArgIsNumber)) {
+      return {
+        raw: first,
+        command: 'devcoins',
+        args,
+        argText: args.join(' ')
+      };
+    }
+
+    return {
+      raw: first,
+      command: 'balance',
+      args,
+      argText: args.join(' ')
+    };
   }
 
   const command = REVERSE_ALIASES.get(first) || null;
