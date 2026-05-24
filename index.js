@@ -211,6 +211,7 @@ const RANK_COMMANDS = {
 
 const ALIASES = {
   help: ['help', 'помощь', 'commands', 'команды'],
+  setup: ['setup', 'настроить', 'стартгруппа', 'startgroup'],
   rules: ['rules', 'правила'],
   setrules: ['setrules', 'установитьправила'],
   mute: ['mute', 'мут'],
@@ -813,8 +814,82 @@ async function handleCommand(ctx, parsed) {
   const chat = getChatDB(ctx.chat.id);
   if (isGroup(ctx)) getUserDB(chat, ctx.from);
 
+  if (command === 'setup') {
+    if (!(await requireGroup(ctx))) return;
+
+    const isTgAdmin = await isTelegramAdmin(ctx, ctx.from.id);
+    const currentRank = await getUserAdminRank(ctx, ctx.from.id);
+
+    if (!isTgAdmin && currentRank < 80) {
+      return ctx.reply('❌ Настроить бота может только администратор этой беседы.');
+    }
+
+    const chatTitle = ctx.chat.title || 'эта беседа';
+    const chat = getChatDB(ctx.chat.id);
+    const user = getUserDB(chat, ctx.from);
+
+    chat.title = chatTitle;
+    chat.type = ctx.chat.type;
+    chat.updatedAt = new Date().toISOString();
+
+    const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id).catch(() => null);
+
+    if (member?.status === 'creator' || (OWNER_ID && ctx.from.id === OWNER_ID)) {
+      user.adminRank = 100;
+      chat.admins[String(ctx.from.id)] = 100;
+    } else if ((user.adminRank || 0) < 60) {
+      user.adminRank = 60;
+      chat.admins[String(ctx.from.id)] = 60;
+    }
+
+    if (!chat.settings.rules || chat.settings.rules === DEFAULT_RULES) {
+      chat.settings.rules = `📜 Правила беседы «${chatTitle}»
+
+1. Уважай участников.
+2. Не спамь и не флуди.
+3. Не рекламируй без разрешения администрации.
+4. Не провоцируй конфликты.
+5. Не отправляй запрещённый контент.
+6. Уважай администрацию.
+7. Не обходи наказания.
+
+⚠️ За нарушение: предупреждение, мут, кик или бан.`;
+    }
+
+    if (!chat.settings.welcomeText) {
+      chat.settings.welcomeText = '👋 Добро пожаловать, {user}!\n\nТы попал в «{chat}». Перед общением прочитай /правила.';
+    }
+
+    saveDB();
+
+    return ctx.reply(
+      `✅ <b>Бот настроен для этой беседы</b>
+
+🏠 Беседа: <b>${escapeHtml(chatTitle)}</b>
+🆔 Chat ID: <code>${ctx.chat.id}</code>
+👤 Настроил: ${mentionUser(ctx.from)}
+👑 Твой ранг: <b>${rankInfo(user.adminRank).title}</b>
+
+Теперь у этой беседы свои:
+• правила;
+• админ-ранги;
+• настройки;
+• топы;
+• предупреждения;
+• созывы;
+• логи.
+
+Команды:
+• /правила
+• /настройки
+• /ранги
+• /помощь`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
   if (command === 'help') {
-    return ctx.reply(`🤖 <b>FulTalchik_botik — меню команд</b>\n\nВыбери раздел ниже или используй команды:\n/help /помощь\n/rules /правила\n/profile /профиль\n/shop /магазин`, { parse_mode: 'HTML', ...mainMenuKeyboard() });
+    return ctx.reply(`🤖 <b>FulTalchik_botik — меню команд</b>\n\n🌐 Бот работает отдельно для каждой беседы.\nДля первичной настройки напиши: /настроить\n\nВыбери раздел ниже или используй команды:\n/help /помощь\n/rules /правила\n/profile /профиль\n/shop /магазин`, { parse_mode: 'HTML', ...mainMenuKeyboard() });
   }
   if (command === 'rules') return ctx.reply(escapeHtml(chat.settings.rules), { parse_mode: 'HTML' });
   if (command === 'setrules') {
@@ -1054,7 +1129,32 @@ async function handleCommand(ctx, parsed) {
   if (command === 'punishments') return ctx.reply('📕 <b>Система наказаний</b>\n\n1 пред — предупреждение\n2 преда — мут 30 минут\n3 преда — мут 2 часа\n4 преда — кик\n5 предов — бан\n\nЗа рекламу — мут/бан по решению администрации.', { parse_mode: 'HTML' });
 }
 
-bot.start(async (ctx) => ctx.reply(`🤖 Привет, ${escapeHtml(ctx.from.first_name || 'друг')}!\n\nЯ FulTalchik_botik для «Клуба случайных людей». Напиши /help.`));
+
+bot.use(async (ctx, next) => {
+  try {
+    if (ctx.chat) {
+      const chat = getChatDB(ctx.chat.id);
+
+      chat.title = ctx.chat.title || chat.title || 'Личная переписка';
+      chat.type = ctx.chat.type || chat.type || 'unknown';
+      chat.updatedAt = new Date().toISOString();
+
+      if (!chat.settings) chat.settings = {};
+      if (!chat.settings.rules) chat.settings.rules = DEFAULT_RULES;
+      if (chat.settings.welcomeText === undefined) {
+        chat.settings.welcomeText = '👋 Добро пожаловать, {user}!\n\nТы попал в «{chat}». Перед общением прочитай /правила.';
+      }
+
+      saveDB();
+    }
+  } catch (error) {
+    console.error('sync chat info error:', error);
+  }
+
+  return next();
+});
+
+bot.start(async (ctx) => ctx.reply(`🤖 Привет, ${escapeHtml(ctx.from.first_name || 'друг')}!\n\nЯ FulTalchik_botik — универсальный бот для Telegram-бесед. Добавь меня в группу и напиши /настроить.`));
 
 bot.on('new_chat_members', async (ctx) => {
   try {
@@ -1064,7 +1164,7 @@ bot.on('new_chat_members', async (ctx) => {
       if (member.is_bot) continue;
       const u = getUserDB(chat, member); u.balance += 25; saveDB();
       const text = chat.settings.welcomeText || '👋 Добро пожаловать, {user}!\n\nТы попал в «Клуб случайных людей». Перед общением прочитай /правила.';
-      await ctx.reply(text.replace('{user}', mentionUser(member)), { parse_mode: 'HTML' });
+      await ctx.reply(text.replace('{user}', mentionUser(member)).replace('{chat}', escapeHtml(ctx.chat.title || chat.title || 'эта беседа')), { parse_mode: 'HTML' });
     }
   } catch (e) { console.error('welcome error:', e); }
 });
