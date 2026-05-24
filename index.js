@@ -314,6 +314,7 @@ const RANK_COMMANDS = {
 
 const ALIASES = {
   help: ['help', 'помощь', 'commands', 'команды'],
+  devcoins: ['devcoins', 'coins', 'монеты', 'выдатьмонеты', 'датьмонеты'],
   basedb: ['база', 'db', 'бд', 'участникибаза'],
   setup: ['setup', 'настроить', 'стартгруппа', 'startgroup'],
   rules: ['rules', 'правила'],
@@ -1545,6 +1546,73 @@ function actionsKeyboard(targetId, actorId) {
   ]);
 }
 
+
+async function handleDeveloperCoins(ctx, args) {
+  if (!(await requireGroup(ctx))) return;
+
+  if (!OWNER_ID || Number(ctx.from.id) !== Number(OWNER_ID)) {
+    return ctx.reply('❌ Эта команда доступна только разработчику бота.');
+  }
+
+  const target = resolveTarget(ctx, args);
+
+  if (!target) {
+    return ctx.reply(
+      '❌ Использование:\n\nмонеты ID сумма\n/coins ID сумма\n\nИли по reply:\nмонеты сумма\n/coins сумма'
+    );
+  }
+
+  const amount = Number(target.rest[0]);
+
+  if (!Number.isFinite(amount) || amount === 0) {
+    return ctx.reply('❌ Укажи сумму монет. Например: монеты 1000');
+  }
+
+  const chat = getChatDB(ctx.chat.id);
+
+  let user;
+
+  if (target.user) {
+    user = getUserDB(chat, target.user);
+  } else {
+    user = chat.users[String(target.id)] || getUserDB(chat, {
+      id: target.id,
+      first_name: `ID ${target.id}`
+    });
+  }
+
+  user.balance = Number(user.balance || 0) + amount;
+  user.coins = user.balance;
+
+  if (!user.history) user.history = [];
+
+  user.history.unshift({
+    type: amount > 0 ? 'dev_coins_add' : 'dev_coins_remove',
+    amount,
+    adminId: ctx.from.id,
+    date: new Date().toISOString()
+  });
+
+  user.history = user.history.slice(0, 50);
+
+  saveDB();
+
+  const actionText = amount > 0 ? 'выданы' : 'сняты';
+  const amountText = amount > 0 ? '+' + amount : String(amount);
+
+  return ctx.reply(
+    `🪙 <b>Монеты ${actionText}</b>
+
+👤 Пользователь: ${mentionById(target.id, user.firstName || user.username || `ID ${target.id}`)}
+🆔 ID: <code>${target.id}</code>
+💰 Изменение: <b>${amountText}</b>
+🏦 Новый баланс: <b>${user.balance}</b> монет
+
+👨‍💻 Выдал разработчик: ${mentionUser(ctx.from)}`,
+    { parse_mode: 'HTML' }
+  );
+}
+
 async function handleCommand(ctx, parsed) {
   const { command, raw, args, argText } = parsed;
   const chat = getChatDB(ctx.chat.id);
@@ -1810,6 +1878,10 @@ async function handleCommand(ctx, parsed) {
     const level = levelFromXp(u.xp);
     return ctx.reply(`🎚 <b>Твой уровень:</b> ${level}\n🏷 Ранг активности: <b>${levelTitle(level)}</b>\nXP: <b>${u.xp}</b>`, { parse_mode: 'HTML' });
   }
+  if (command === 'devcoins') {
+    return handleDeveloperCoins(ctx, args);
+  }
+
   if (command === 'balance') {
     const u = getUserDB(chat, ctx.from);
     return ctx.reply(`🪙 У тебя <b>${u.balance}</b> монет.`, { parse_mode: 'HTML' });
@@ -2165,7 +2237,7 @@ reply → /юзер`,
         profile: '👤 <b>Профиль</b>\n/profile /профиль\n/top /топ\n/level /уровень\n/balance /баланс\n/rep /реп\n/myrep /мояреп',
         rules: '📜 <b>Правила</b>\n/rules /правила\n/setrules /установитьправила',
         settings: '⚙️ <b>Настройки</b>\n/settings /настройки\n/antispam /антиспам\n/antilinks /ссылки\n/antimat /антимат\n/setlog /сетлог',
-        shop: '🎁 <b>Магазин</b>\n/shop /магазин\n/buy /купить\n/title /титул\n/daily /ежедневно'
+        shop: '👨‍💻 <b>Разработчик</b>\n/coins ID сумма — выдать/снять монеты\nмонеты ID сумма — без слеша\nreply → монеты сумма\n\n🎁 <b>Магазин</b>\n/shop /магазин\n/buy /купить\n/title /титул\n/daily /ежедневно'
       };
       await ctx.editMessageText(texts[section] || 'Раздел не найден.', { parse_mode: 'HTML', ...mainMenuKeyboard() }).catch(()=>{});
       return ctx.answerCbQuery();
