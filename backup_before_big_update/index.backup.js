@@ -113,13 +113,6 @@ function getChatDB(chatId) {
   chat.settings.welcome ??= true;
   chat.settings.goodbye ??= false;
   chat.settings.logChatId ??= null;
-  chat.settings.fridayPost ??= {
-    enabled: false,
-    time: '18:00',
-    timezone: 'Asia/Almaty',
-    text: '🎉 Пятница пришла! Всем хорошего настроения и лампового общения ❤️',
-    lastSentDate: null
-  };
   chat.users ||= {};
   chat.admins ||= {};
   chat.friendships ||= {};
@@ -258,25 +251,7 @@ const ALIASES = {
   del: ['del', 'удалить'],
   id: ['id', 'айди'],
   transferowner: ['transferowner', 'передатьвладельца'],
-  confirmowner: ['confirmowner', 'подтвердитьвладельца'],
-  call: ['call', 'калл', 'созыв'],
-  love: ['love', 'любовь'],
-  couple: ['couple', 'пара'],
-  breakup: ['breakup', 'расстаться'],
-  hug: ['hug', 'обнять'],
-  kiss: ['kiss', 'поцеловать'],
-  slap: ['slap', 'шлепнуть', 'шлёпнуть'],
-  pat: ['pat', 'погладить'],
-  bite: ['bite', 'укусить'],
-  poke: ['poke', 'тыкнуть'],
-  feed: ['feed', 'покормить'],
-  tea: ['tea', 'чай'],
-  flower: ['flower', 'цветок'],
-  compliment: ['compliment', 'комплимент'],
-  fridaypost: ['fridaypost', 'пятница'],
-  setfriday: ['setfriday', 'сетпятница'],
-  setfridaytime: ['setfridaytime', 'сетвремяпятницы'],
-  fridaynow: ['fridaynow', 'пятницасейчас']
+  confirmowner: ['confirmowner', 'подтвердитьвладельца']
 };
 
 const REVERSE_ALIASES = new Map();
@@ -294,21 +269,12 @@ function cleanCommandName(text = '') {
   return String(text).split('@')[0].toLowerCase();
 }
 function parseCommand(ctx) {
-  const text = (ctx.message?.text || '').trim();
-  if (!text) return null;
-
-  const hasSlash = text.startsWith('/');
-  const source = hasSlash ? text.slice(1).trim() : text;
-  const [raw, ...args] = source.split(/\s+/);
-  if (!raw) return null;
-
+  const text = ctx.message?.text || '';
+  if (!text.startsWith('/')) return null;
+  const [raw, ...args] = text.slice(1).trim().split(/\s+/);
   const alias = cleanCommandName(raw);
-  const command = REVERSE_ALIASES.get(alias);
-
-  // Без слеша принимаем только известные команды, чтобы обычные сообщения не ломались.
-  if (!hasSlash && !command) return null;
-
-  return { raw: alias, command: command || alias, args, argText: args.join(' '), hasSlash };
+  const command = REVERSE_ALIASES.get(alias) || alias;
+  return { raw: alias, command, args, argText: args.join(' ') };
 }
 function isGroup(ctx) {
   return ['group', 'supergroup'].includes(ctx.chat?.type);
@@ -607,75 +573,6 @@ async function downloadVideo(url) {
   }
   throw new Error(errors.join('\n'));
 }
-
-function weekKey(date = new Date()) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-  return `${d.getUTCFullYear()}-${String(weekNo).padStart(2, '0')}`;
-}
-function monthKey(date = new Date()) {
-  return date.toISOString().slice(0, 7);
-}
-function ensurePeriodStats(user) {
-  user.messagesDay ||= {};
-  user.messagesWeek ||= {};
-  user.messagesMonth ||= {};
-}
-function callKeyboard(actorId) {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback('👥 Все', `call:all:${actorId}`), Markup.button.callback('🛡 Админы', `call:admins:${actorId}`)],
-    [Markup.button.callback('👑 Владельцы', `call:owners:${actorId}`), Markup.button.callback('❌ Отмена', `cancel:${actorId}`)]
-  ]);
-}
-function fridayParts(timezone = 'Asia/Almaty') {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
-    weekday: 'short',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }).formatToParts(new Date());
-  const data = {};
-  for (const part of parts) data[part.type] = part.value;
-  return {
-    weekday: data.weekday,
-    date: `${data.year}-${data.month}-${data.day}`,
-    time: `${data.hour}:${data.minute}`
-  };
-}
-async function sendFridayPost(chatId) {
-  const chat = getChatDB(chatId);
-  const cfg = chat.settings.fridayPost;
-  await bot.telegram.sendMessage(chatId, cfg.text || '🎉 Пятница пришла! Всем хорошего настроения ❤️', { parse_mode: 'HTML' }).catch(console.error);
-}
-function startFridayScheduler() {
-  setInterval(async () => {
-    try {
-      const db = loadDB();
-      for (const chatId of Object.keys(db.chats || {})) {
-        const chat = getChatDB(chatId);
-        const cfg = chat.settings.fridayPost;
-        if (!cfg?.enabled) continue;
-        const now = fridayParts(cfg.timezone || 'Asia/Almaty');
-        if (now.weekday !== 'Fri') continue;
-        if (now.time !== (cfg.time || '18:00')) continue;
-        if (cfg.lastSentDate === now.date) continue;
-        cfg.lastSentDate = now.date;
-        saveDB();
-        await sendFridayPost(chatId);
-      }
-    } catch (error) {
-      console.error('friday scheduler error:', error);
-    }
-  }, 60 * 1000);
-}
-
 function mainMenuKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback('🛡 Модерация', 'help:mod'), Markup.button.callback('👑 Ранги', 'help:ranks')],
@@ -743,31 +640,12 @@ async function handleCommand(ctx, parsed) {
   }
   if (command === 'id') return ctx.reply(`🆔 Твой ID: <code>${ctx.from.id}</code>`, { parse_mode: 'HTML' });
   if (command === 'top') {
-    const period = args[0]?.toLowerCase() || 'all';
-    const day = todayKey();
-    const week = weekKey();
-    const month = monthKey();
-
-    const users = Object.values(chat.users).map(u => {
-      ensurePeriodStats(u);
-      let score = u.messages || 0;
-      let title = '🏆 Топ за всё время';
-      if (['day', 'день', 'today', 'сегодня'].includes(period)) {
-        score = u.messagesDay?.[day] || 0;
-        title = '🏆 Топ дня';
-      } else if (['week', 'неделя'].includes(period)) {
-        score = u.messagesWeek?.[week] || 0;
-        title = '🏆 Топ недели';
-      } else if (['month', 'месяц'].includes(period)) {
-        score = u.messagesMonth?.[month] || 0;
-        title = '🏆 Топ месяца';
-      }
-      return { ...u, score, topTitle: title };
-    }).filter(u => u.score > 0).sort((a,b)=>b.score-a.score);
-
-    const title = users[0]?.topTitle || '🏆 Топ активных участников';
-    const list = users.slice(0, 10).map((u, i) => `${i + 1}. ${usernameText(u)} — <b>${u.score}</b>`).join('\\n') || 'Пока нет статистики.';
-    return ctx.reply(`<b>${title}</b>\\n\\n${list}`, { parse_mode: 'HTML' });
+    const period = args[0]?.toLowerCase();
+    let users = Object.values(chat.users);
+    if (['day', 'день'].includes(period)) users = users.map(u => ({ ...u, score: u.messagesDay?.[todayKey()] || 0 })).sort((a,b)=>b.score-a.score);
+    else users = users.map(u => ({ ...u, score: u.messages || 0 })).sort((a,b)=>b.score-a.score);
+    const list = users.slice(0, 10).map((u, i) => `${i + 1}. ${usernameText(u)} — <b>${u.score}</b>`).join('\n') || 'Пока нет статистики.';
+    return ctx.reply(`🏆 <b>Топ активных участников</b>\n\n${list}`, { parse_mode: 'HTML' });
   }
   if (command === 'level') {
     const u = getUserDB(chat, ctx.from);
@@ -837,126 +715,6 @@ async function handleCommand(ctx, parsed) {
     return ctx.reply(`${command === 'rep' ? '⭐ Репутация повышена' : '➖ Репутация понижена'}\n\n👤 Пользователь: ${mentionById(target.id, usernameText(to))}\n⭐ Репутация: <b>${to.reputation}</b>`, { parse_mode: 'HTML' });
   }
   if (command === 'myrep') { const u = getUserDB(chat, ctx.from); return ctx.reply(`⭐ Твоя репутация: <b>${u.reputation}</b>`, { parse_mode: 'HTML' }); }
-
-
-  if (command === 'call') {
-    if (!(await requireGroup(ctx)) || !(await requireRank(ctx, 40))) return;
-    const mode = (args[0] || '').toLowerCase();
-    if (!mode) return ctx.reply('📢 <b>Выбери тип созыва:</b>', { parse_mode: 'HTML', ...callKeyboard(ctx.from.id) });
-
-    let minRank = 60;
-    let filter = 'all';
-    let title = 'все участники';
-    if (['admins', 'админы', 'админов'].includes(mode)) { minRank = 40; filter = 'admins'; title = 'администрация'; }
-    if (['owners', 'владельцы', 'владельцев'].includes(mode)) { minRank = 80; filter = 'owners'; title = 'владельцы'; }
-    if (!(await requireRank(ctx, minRank))) return;
-
-    chat.cooldowns ||= {};
-    const last = chat.cooldowns.call || 0;
-    if (nowTs() - last < 10 * 60 * 1000) {
-      const left = Math.ceil((10 * 60 * 1000 - (nowTs() - last)) / 60000);
-      return ctx.reply(`⏳ Созыв уже был недавно. Подожди ещё ${left} мин.`);
-    }
-
-    let users = Object.values(chat.users || {});
-    if (filter === 'admins') users = users.filter(u => Number(u.adminRank || chat.admins[String(u.id)] || 0) >= 10);
-    if (filter === 'owners') users = users.filter(u => Number(u.adminRank || chat.admins[String(u.id)] || 0) >= 95 || Number(u.id) === OWNER_ID);
-    users = users.filter(u => u && u.id && !u.is_bot);
-
-    if (!users.length) return ctx.reply('❌ Некого созывать. Бот ещё не знает пользователей этой группы.');
-
-    chat.cooldowns.call = nowTs();
-    saveDB();
-
-    await ctx.reply(`📢 <b>Созыв: ${title}</b>\\n\\n👮 Созвал: ${mentionUser(ctx.from)}`, { parse_mode: 'HTML' });
-    for (let i = 0; i < users.length; i += 25) {
-      const mentions = users.slice(i, i + 25).map(u => mentionById(u.id, u.firstName || u.username || `ID ${u.id}`)).join(' ');
-      await ctx.reply(mentions, { parse_mode: 'HTML' });
-    }
-    return;
-  }
-
-  if (command === 'love') {
-    const target = resolveTarget(ctx, args);
-    if (!target || target.id === ctx.from.id) return ctx.reply('❌ Ответь на сообщение человека, с кем хочешь создать пару.');
-    const a = String(ctx.from.id), b = String(target.id);
-    if (chat.couples[a] || chat.couples[b]) return ctx.reply('❌ У одного из вас уже есть пара.');
-    getUserDB(chat, ctx.from);
-    if (target.user) getUserDB(chat, target.user);
-    else if (!chat.users[b]) getUserDB(chat, { id: target.id, first_name: `ID ${target.id}` });
-    chat.couples[a] = b; chat.couples[b] = a; saveDB();
-    return ctx.reply(`❤️ <b>Новая пара!</b>\\n\\n${mentionUser(ctx.from)} и ${mentionById(target.id, chat.users[b]?.firstName || `ID ${target.id}`)} теперь вместе!`, { parse_mode: 'HTML' });
-  }
-  if (command === 'couple') {
-    const pid = chat.couples[String(ctx.from.id)];
-    if (!pid) return ctx.reply('💔 У тебя пока нет пары.');
-    const p = chat.users[String(pid)];
-    return ctx.reply(`❤️ Твоя пара: ${mentionById(pid, p?.firstName || `ID ${pid}`)}`, { parse_mode: 'HTML' });
-  }
-  if (command === 'breakup') {
-    const uid = String(ctx.from.id), pid = chat.couples[uid];
-    if (!pid) return ctx.reply('💔 У тебя нет пары.');
-    delete chat.couples[uid]; delete chat.couples[String(pid)]; saveDB();
-    return ctx.reply('💔 Отношения завершены.');
-  }
-
-  const actionTexts = {
-    hug: ['🤗', 'обнял(а)', 'нежно обнял(а) свою пару'],
-    kiss: ['😘', 'поцеловал(а)', 'нежно поцеловал(а) свою пару'],
-    slap: ['💥', 'шлёпнул(а)', 'игриво шлёпнул(а) свою пару'],
-    pat: ['🫶', 'погладил(а)', 'ласково погладил(а) свою пару'],
-    bite: ['😈', 'укусил(а)', 'игриво укусил(а) свою пару'],
-    poke: ['👉', 'тыкнул(а)', 'тыкнул(а) свою пару'],
-    feed: ['🍽', 'покормил(а)', 'покормил(а) свою пару'],
-    tea: ['🍵', 'налил(а) чай для', 'налил(а) чай своей паре'],
-    flower: ['🌹', 'подарил(а) цветок', 'подарил(а) цветок своей паре'],
-    compliment: ['✨', 'сказал(а) комплимент', 'сказал(а) комплимент своей паре']
-  };
-  if (actionTexts[command]) {
-    const u = getUserDB(chat, ctx.from);
-    if (nowTs() - (u.cooldowns.action || 0) < 5000) return ctx.reply('⏳ Не так быстро. Подожди пару секунд.');
-    u.cooldowns.action = nowTs();
-
-    let target = ctx.message?.reply_to_message?.from;
-    let couple = false;
-    if (!target) {
-      const pid = chat.couples[String(ctx.from.id)];
-      if (pid && chat.users[String(pid)]) {
-        const p = chat.users[String(pid)];
-        target = { id: Number(pid), first_name: p.firstName || 'Пара', username: p.username || '' };
-        couple = true;
-      }
-    }
-    saveDB();
-    if (!target || target.is_bot) return ctx.reply('❌ Ответь на сообщение пользователя или создай пару командой /любовь.');
-    const [emoji, normal, pair] = actionTexts[command];
-    return ctx.reply(`${emoji} ${mentionUser(ctx.from)} ${couple ? pair : normal} ${mentionUser(target)}`, { parse_mode: 'HTML' });
-  }
-
-  if (command === 'fridaypost') {
-    if (!(await requireRank(ctx, 60))) return;
-    const mode = (args[0] || '').toLowerCase();
-    if (!['on', 'off'].includes(mode)) return ctx.reply('🎉 Использование: /пятница on или /пятница off');
-    chat.settings.fridayPost.enabled = mode === 'on'; saveDB();
-    return ctx.reply(`✅ Пятничный пост: ${mode === 'on' ? 'ON' : 'OFF'}`);
-  }
-  if (command === 'setfriday') {
-    if (!(await requireRank(ctx, 60))) return;
-    if (!argText) return ctx.reply('❌ Напиши текст пятничного поста.');
-    chat.settings.fridayPost.text = argText; saveDB();
-    return ctx.reply('✅ Текст пятничного поста обновлён.');
-  }
-  if (command === 'setfridaytime') {
-    if (!(await requireRank(ctx, 60))) return;
-    if (!/^\\d{2}:\\d{2}$/.test(args[0] || '')) return ctx.reply('❌ Формат времени: 18:00');
-    chat.settings.fridayPost.time = args[0]; saveDB();
-    return ctx.reply(`✅ Время пятничного поста: ${args[0]}`);
-  }
-  if (command === 'fridaynow') {
-    if (!(await requireRank(ctx, 60))) return;
-    await sendFridayPost(ctx.chat.id);
-    return;
-  }
 
   // admin/moder commands
   if (['mute','unmute','ban','unban','kick','warn','unwarn','warns','history','actions','del'].includes(command)) {
@@ -1065,19 +823,6 @@ bot.on('callback_query', async (ctx) => {
       await ctx.editMessageText('⚙️ Настройки чата', settingsKeyboard(chat)).catch(()=>{});
       return ctx.answerCbQuery('Готово');
     }
-    if (parts[0] === 'call') {
-      const mode = parts[1];
-      const actorId = Number(parts[2]);
-      if (ctx.from.id !== actorId) return ctx.answerCbQuery('❌ Эта кнопка не для тебя.');
-      await ctx.answerCbQuery();
-      if (mode === 'cancel') {
-        await ctx.editMessageText('❌ Созыв отменён.').catch(()=>{});
-        return;
-      }
-      const fakeCtx = { ...ctx, message: { text: `/call ${mode}` }, chat: ctx.callbackQuery.message.chat };
-      await handleCommand(fakeCtx, { command: 'call', raw: 'call', args: [mode], argText: mode });
-      return;
-    }
     if (parts[0] === 'mute') {
       const actorId = Number(parts[1]), targetId = Number(parts[2]), minutes = Number(parts[3]);
       if (ctx.from.id !== actorId) return ctx.answerCbQuery('❌ Эта кнопка не для тебя.');
@@ -1122,7 +867,7 @@ bot.on('text', async (ctx, next) => {
       const chat = getChatDB(ctx.chat.id);
       const user = getUserDB(chat, ctx.from);
       const day = todayKey();
-      ensurePeriodStats(user); const week = weekKey(); const month = monthKey(); user.messages += 1; user.xp += 1; user.messagesDay[day] = (user.messagesDay[day] || 0) + 1; user.messagesWeek[week] = (user.messagesWeek[week] || 0) + 1; user.messagesMonth[month] = (user.messagesMonth[month] || 0) + 1;
+      user.messages += 1; user.xp += 1; user.messagesDay[day] = (user.messagesDay[day] || 0) + 1;
       if (nowTs() - (user.lastMessageCoinAt || 0) > 30000) { user.balance += 1; user.lastMessageCoinAt = nowTs(); }
       saveDB();
       const rank = await getUserAdminRank(ctx, ctx.from.id);
@@ -1175,8 +920,6 @@ process.on('unhandledRejection', (reason) => console.error('unhandledRejection:'
 process.on('uncaughtException', (error) => console.error('uncaughtException:', error));
 
 bot.catch((error) => console.error('Глобальная ошибка Telegraf:', error));
-
-startFridayScheduler();
 
 bot.launch({ dropPendingUpdates: true });
 console.log('✅ FulTalchik_botik запущен!');

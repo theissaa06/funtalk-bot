@@ -1,59 +1,6 @@
 {
   "meta": {
-    "version": "4.0.0"
+    "version": "4.1.0"
   },
-  "chats": {
-    "-1003937839731": {
-      "settings": {
-        "antispam": false,
-        "antilinks": false,
-        "antimat": false,
-        "welcome": true,
-        "goodbye": false,
-        "rules": "📜 Правила чата «Клуб случайных людей»\n\n1. Не оскорблять участников.\n2. Не спамить и не флудить.\n3. Не рекламировать без разрешения.\n4. Не провоцировать конфликты.\n5. Не отправлять запрещённый контент.\n6. Уважать администрацию.\n7. Не обходить наказания.\n\n⚠️ За нарушение правил: предупреждение, мут, кик или бан.",
-        "logChatId": null,
-        "logThreadId": null
-      },
-      "users": {
-        "891927621": {
-          "id": 891927621,
-          "firstName": "Урахара",
-          "username": "urahara58",
-          "messages": 1,
-          "messagesDay": {
-            "2026-05-24": 1
-          },
-          "xp": 1,
-          "balance": 1,
-          "coins": 0,
-          "reputation": 0,
-          "title": null,
-          "role": null,
-          "adminRank": 0,
-          "warnings": 0,
-          "warns": [],
-          "history": [],
-          "inventory": {
-            "vip": false,
-            "premium": false,
-            "customTitle": false,
-            "warnShield": 0,
-            "coloredProfile": false
-          },
-          "cooldowns": {
-            "daily": 0,
-            "rep": {}
-          },
-          "joinedAt": "2026-05-24T11:19:18.625Z",
-          "lastMessageCoinAt": 1779621558625
-        }
-      },
-      "admins": {},
-      "friendships": {},
-      "couples": {},
-      "logs": [],
-      "tempActions": {},
-      "antispam": {}
-    }
-  }
+  "chats": {}
 }

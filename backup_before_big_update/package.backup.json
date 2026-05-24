@@ -1,10 +1,11 @@
 {
   "name": "fultalchik-botik",
-  "version": "4.1.0",
-  "description": "FulTalchik Telegram bot for groups",
+  "version": "4.0.0",
+  "description": "FulTalchik_botik — Telegram bot for moderation, ranks, economy and chat activity",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "dev": "node index.js",
     "check": "node --check index.js"
   },
   "dependencies": {
@@ -12,6 +13,7 @@
     "telegraf": "^4.16.3"
   },
   "engines": {
-    "node": ">=20"
-  }
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
 }
