@@ -1132,24 +1132,22 @@ async function checkAutoAchievements(ctx, user) {
     user.achievements = [];
   }
 
-  // Убираем возможные дубли, если они уже появились раньше
+  // Убираем дубли старых ачивок, если они появились раньше
   user.achievements = Array.from(new Set(user.achievements));
 
   const earned = [];
 
-  function addAchievement(id, text, rewardCoins = 0) {
+  function addAchievement(id, title, rewardCoins) {
     if (user.achievements.includes(id)) return;
 
     user.achievements.push(id);
 
-    if (rewardCoins > 0) {
-      user.balance = (user.balance || 0) + rewardCoins;
-      user.coins = user.balance;
-    }
+    user.balance = Number(user.balance || 0) + rewardCoins;
+    user.coins = user.balance;
 
     earned.push({
       id,
-      text,
+      title,
       rewardCoins
     });
   }
@@ -1158,32 +1156,33 @@ async function checkAutoAchievements(ctx, user) {
   const reputation = Number(user.reputation || 0);
   const warnsCount = Number(user.warns?.length || 0);
 
+  // 🏆 Награды за достижения
   if (messages >= 1) {
-    addAchievement('first_message', '🏆 Первое сообщение', 25);
+    addAchievement("first_message", "🏆 Первое сообщение", 25);
   }
 
   if (messages >= 100) {
-    addAchievement('messages_100', '💬 100 сообщений', 300);
+    addAchievement("messages_100", "💬 100 сообщений", 300);
   }
 
   if (messages >= 500) {
-    addAchievement('messages_500', '🔥 500 сообщений', 1000);
+    addAchievement("messages_500", "🔥 500 сообщений", 1000);
   }
 
   if (messages >= 1000) {
-    addAchievement('messages_1000', '👑 1000 сообщений', 2500);
+    addAchievement("messages_1000", "👑 1000 сообщений", 2500);
   }
 
   if (reputation >= 10) {
-    addAchievement('rep_10', '⭐ 10 репутации', 500);
+    addAchievement("rep_10", "⭐ 10 репутации", 500);
   }
 
   if (user.birthday) {
-    addAchievement('birthday_set', '🎂 Указал день рождения', 200);
+    addAchievement("birthday_set", "🎂 Указал день рождения", 200);
   }
 
   if (warnsCount === 0 && messages >= 100) {
-    addAchievement('clean_100', '🛡 100 сообщений без предупреждений', 700);
+    addAchievement("clean_100", "🛡 100 сообщений без предупреждений", 700);
   }
 
   if (!earned.length) {
@@ -1193,25 +1192,24 @@ async function checkAutoAchievements(ctx, user) {
 
   saveDB();
 
-  const lines = earned.map((item) => {
-    if (item.rewardCoins > 0) {
-      return item.text + '  <b>+ ' + item.rewardCoins + ' монет</b>';
-    }
+  const achievementLines = earned
+    .map((item) => item.title + " → <b>+" + item.rewardCoins + " монет</b>")
+    .join("\n");
 
-    return item.text;
-  });
+  const totalReward = earned.reduce((sum, item) => sum + item.rewardCoins, 0);
 
   return ctx.reply(
     `🎉 <b>Новое достижение!</b>
 
 👤 ${mentionUser(ctx.from)}
 
-${lines.join('\n')}
+${achievementLines}
 
 ━━━━━━━━━━━━━━
+🎁 Получено монет: <b>+${totalReward}</b>
 🏆 Всего ачивок: <b>${user.achievements.length}</b>
 🪙 Баланс: <b>${user.balance || 0}</b> монет`,
-    { parse_mode: 'HTML' }
+    { parse_mode: "HTML" }
   );
 }
 
