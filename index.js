@@ -1083,16 +1083,7 @@ async function handleCommand(cmd, msg, args, argText) {
       [{ text:'🌍 Глоб.ранги', callback_data:'help:global'   }, { text:'💰 Монеты',    callback_data:'help:coins'   }]
     ]};
     await replyTo(msg,
-      `🤖 <b>FulTalchik_Botik — меню команд</b>
-
-Выбери раздел ниже или используй команды:
-
-/help /помощь
-/rules /правила
-/profile /профиль
-/shop /магазин
-
-⚙️ Команды работают со слешем и без слеша.`,
+      `🤖 <b>FulTalchik_Botik</b> — меню команд\n\n⚙️ Все команды работают <b>со слешем и без</b>:\n• <code>/топ день</code> = <code>топ день</code>\n• <code>/мут 123 10 флуд</code> = <code>мут 123 10 флуд</code>\n\nВыбери раздел:`,
       { reply_markup: kb }
     );
     break;
@@ -1602,154 +1593,9 @@ async function handleCommand(cmd, msg, args, argText) {
 
   case 'buy': {
     const k2 = args[0]?.toLowerCase().replace(/[^a-zа-яё]/gi,'');
-    const MAP = {
-        moder:   `🛡 <b>Модерация</b>
-
-/mute /мут — выдать мут
-/unmute /унмут — снять мут
-/ban /бан — забанить
-/unban /разбан — разбанить
-/kick /кик — кикнуть
-/warn /пред — предупреждение
-/unwarn /унпред — снять предупреждение
-/warns /преды — список предов
-/del /удалить — удалить сообщение
-
-Работает по reply и по ID.`,
-
-        ranks:   `👑 <b>Ранги администрации</b>
-
-/ranks /ранги — список рангов
-/rank /ранг — посмотреть ранг
-/setrank /выдатьранг — выдать ранг по уровню
-/delrank /снятьранг — снять ранг
-/admins /админы — список администрации
-
-<b>Команды рангов:</b>
-/владелец
-/зам
-/га
-/куратор
-/са
-/админ
-/ма
-/см
-/модер
-/помощник
-/стажер
-/юзер
-
-Можно писать без слеша.`,
-
-        profile: `👤 <b>Профиль</b>
-
-/profile /профиль — открыть профиль
-я профиль — открыть профиль
-/top /топ — топ участников
-/top день — топ дня
-/top неделя — топ недели
-/level /уровень — уровень
-/balance /баланс /монеты — баланс
-/rep /реп — репутация
-
-Обычное сообщение “я” профиль не открывает.`,
-
-        rules:   `📜 <b>Правила</b>
-
-/rules /правила — показать правила
-/setrules /установитьправила — изменить правила
-
-Правила отдельные для каждой беседы.`,
-
-        settings:`⚙️ <b>Настройки</b>
-
-/settings /настройки — панель настроек
-/antispam /антиспам — антиспам
-/antilinks /ссылки — анти-ссылки
-/antimat /антимат — антимат
-/setlog /сетлог — лог-чат
-/logs /логи — логи
-
-Настройки отдельные для каждой беседы.`,
-
-        shop:    `🎁 <b>Магазин</b>
-
-/shop /магазин — открыть магазин
-/buy /купить — купить товар
-/title /титул — установить титул
-/removetitle /снятьтитул — снять титул
-/daily /ежедневно — ежедневный бонус
-
-Монеты можно получать за активность и достижения.`,
-
-        call:    `📢 <b>Созыв</b>
-
-/call /калл /созыв — меню созыва
-калл все — созвать всех из БД
-калл админы — созвать админов
-калл владельцы — созвать владельцев
-база — статистика БД
-запомнить — добавить пользователя в базу
-
-Созыв работает по базе участников.`,
-
-        social:  `❤️ <b>Отношения и действия</b>
-
-/love /любовь — создать пару по reply
-/couple /пара — посмотреть пару
-/breakup /расстаться — расстаться
-
-<b>Действия:</b>
-/hug /обнять
-/kiss /поцеловать
-/slap /шлепнуть
-/pat /погладить
-/bite /укусить
-/poke /тыкнуть
-/feed /покормить
-/tea /чай
-/flower /цветок
-/compliment /комплимент`,
-
-        tops:    `🏆 <b>Топы</b>
-
-/top /топ — общий топ
-топ день — топ дня
-топ неделя — топ недели
-топ месяц — топ месяца
-
-Учитываются текст, голосовые, фото, видео, стикеры и другие сообщения.`,
-
-        friday:  `🎉 <b>Пятничный пост</b>
-
-/fridaypost /пятница on/off
-/setfriday /сетпятница текст
-/setfridaytime /сетвремяпятницы HH:MM
-/fridaynow /пятницасейчас
-
-Пост безопасный, без 18+.`,
-
-        global:  `🌍 <b>Глобальные ранги</b>
-
-/gsetrank ID ранг — выдать глобальный ранг
-/gdelrank ID — снять глобальный ранг
-/globaladmins — список глобальной администрации
-
-Глобальный ранг работает во всех беседах.
-Доступно только владельцу бота.`,
-
-        coins:   `💰 <b>Монеты разработчика</b>
-
-/coins ID сумма
-монеты ID сумма
-выдатьмонеты ID сумма
-
-По reply:
-монеты сумма
-
-Можно выдавать и снимать монеты.
-Доступно только OWNER_ID.`
-      };
+    const MAP = { vip:'vip', premium:'premium', титул:'customtitle', customtitle:'customtitle',
+                  защита:'warnshield', warnshield:'warnshield', цвет:'coloredprofile',
+                  coloredprofile:'coloredprofile', реп:'reputationboost', reputationboost:'reputationboost' };
     const key3 = MAP[k2], item = key3 && SHOP[key3];
     if (!item) { await replyTo(msg,`❌ Товар не найден. Доступные: ${Object.keys(SHOP).join(', ')}`); return; }
     const u = getUser(chatId, msg.from.id);
@@ -2021,16 +1867,7 @@ bot.on('callback_query', async (query) => {
         [{ text:'🏆 Топы',     callback_data:'help:tops' },      { text:'🎉 Пятница',   callback_data:'help:friday'  }],
         [{ text:'🌍 Глоб.ранги',callback_data:'help:global' },  { text:'💰 Монеты',    callback_data:'help:coins'   }]
       ]};
-      await bot.editMessageText('🤖 <b>FulTalchik_Botik — меню команд</b>
-
-Выбери раздел ниже или используй команды:
-
-/help /помощь
-/rules /правила
-/profile /профиль
-/shop /магазин
-
-⚙️ Команды работают со слешем и без слеша.', {
+      await bot.editMessageText('🤖 <b>FulTalchik_Botik</b> — меню команд\n\n⚙️ Все команды работают со слешем и без!\n\nВыбери раздел:', {
         chat_id: chatId, message_id: msg.message_id, parse_mode:'HTML', reply_markup: kb
       });
       return;
