@@ -699,6 +699,74 @@ function startFridayScheduler() {
   }, 60 * 1000);
 }
 
+
+async function sendCallByMode(ctx, mode) {
+  const chat = getChatDB(ctx.chat.id);
+
+  let minRank = 40;
+  if (mode === 'all') minRank = 60;
+  if (mode === 'admins') minRank = 40;
+  if (mode === 'owners') minRank = 80;
+
+  if (!(await requireRank(ctx, minRank))) return;
+
+  const now = nowTs();
+  const lastCall = chat.lastCallAt || 0;
+  const cooldown = 10 * 60 * 1000;
+
+  if (now - lastCall < cooldown) {
+    const left = Math.ceil((cooldown - (now - lastCall)) / 60000);
+    return ctx.reply(`⏳ Созыв уже был недавно. Подожди ещё ${left} мин.`);
+  }
+
+  let users = Object.values(chat.users || {});
+
+  if (mode === 'admins') {
+    users = users.filter((u) => Number(u.adminRank || chat.admins[String(u.id)] || 0) >= 10);
+  }
+
+  if (mode === 'owners') {
+    users = users.filter((u) => {
+      const rank = Number(u.adminRank || chat.admins[String(u.id)] || 0);
+      return rank >= 95 || Number(u.id) === OWNER_ID;
+    });
+  }
+
+  if (mode === 'all') {
+    users = users.filter((u) => !u.is_bot);
+  }
+
+  users = users.filter((u) => u && u.id && !u.is_bot);
+
+  if (!users.length) {
+    return ctx.reply('❌ Некого созывать. Бот ещё не знает участников этой категории.');
+  }
+
+  chat.lastCallAt = now;
+  saveDB();
+
+  const title =
+    mode === 'all'
+      ? '👥 Все участники'
+      : mode === 'admins'
+        ? '🛡 Администрация'
+        : '👑 Владельцы';
+
+  await ctx.reply(
+    `📢 <b>Созыв: ${title}</b>\n\n👮 Созвал: ${mentionUser(ctx.from)}`,
+    { parse_mode: 'HTML' }
+  );
+
+  for (let i = 0; i < users.length; i += 25) {
+    const chunk = users.slice(i, i + 25);
+    const mentions = chunk
+      .map((u) => mentionById(u.id, u.firstName || u.username || `ID ${u.id}`))
+      .join(' ');
+
+    await ctx.reply(mentions, { parse_mode: 'HTML' });
+  }
+}
+
 function mainMenuKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback('🛡 Модерация', 'help:mod'), Markup.button.callback('👑 Ранги', 'help:ranks')],
@@ -905,128 +973,39 @@ async function handleCommand(ctx, parsed) {
 
 
   if (command === 'call') {
-    if (!(await requireGroup(ctx)) || !(await requireRank(ctx, 40))) return;
-    const mode = (args[0] || '').toLowerCase();
-    if (!mode) return ctx.reply('📢 <b>Выбери тип созыва:</b>', { parse_mode: 'HTML', ...callKeyboard(ctx.from.id) });
-
-    let minRank = 60;
-    let filter = 'all';
-    let title = 'все участники';
-    if (['admins', 'админы', 'админов'].includes(mode)) { minRank = 40; filter = 'admins'; title = 'администрация'; }
-    if (['owners', 'владельцы', 'владельцев'].includes(mode)) { minRank = 80; filter = 'owners'; title = 'владельцы'; }
-    if (!(await requireRank(ctx, minRank))) return;
-
-    chat.cooldowns ||= {};
-    const last = chat.cooldowns.call || 0;
-    if (nowTs() - last < 10 * 60 * 1000) {
-      const left = Math.ceil((10 * 60 * 1000 - (nowTs() - last)) / 60000);
-      return ctx.reply(`⏳ Созыв уже был недавно. Подожди ещё ${left} мин.`);
-    }
-
-    let users = Object.values(chat.users || {});
-    if (filter === 'admins') users = users.filter(u => Number(u.adminRank || chat.admins[String(u.id)] || 0) >= 10);
-    if (filter === 'owners') users = users.filter(u => Number(u.adminRank || chat.admins[String(u.id)] || 0) >= 95 || Number(u.id) === OWNER_ID);
-    users = users.filter(u => u && u.id && !u.is_bot);
-
-    if (!users.length) return ctx.reply('❌ Некого созывать. Бот ещё не знает пользователей этой группы.');
-
-    chat.cooldowns.call = nowTs();
-    saveDB();
-
-    await ctx.reply(`📢 <b>Созыв: ${title}</b>\\n\\n👮 Созвал: ${mentionUser(ctx.from)}`, { parse_mode: 'HTML' });
-    for (let i = 0; i < users.length; i += 25) {
-      const mentions = users.slice(i, i + 25).map(u => mentionById(u.id, u.firstName || u.username || `ID ${u.id}`)).join(' ');
-      await ctx.reply(mentions, { parse_mode: 'HTML' });
-    }
-    return;
-  }
-
-  if (command === 'love') {
-    const target = resolveTarget(ctx, args);
-    if (!target || target.id === ctx.from.id) return ctx.reply('❌ Ответь на сообщение человека, с кем хочешь создать пару.');
-    const a = String(ctx.from.id), b = String(target.id);
-    if (chat.couples[a] || chat.couples[b]) return ctx.reply('❌ У одного из вас уже есть пара.');
-    getUserDB(chat, ctx.from);
-    if (target.user) getUserDB(chat, target.user);
-    else if (!chat.users[b]) getUserDB(chat, { id: target.id, first_name: `ID ${target.id}` });
-    chat.couples[a] = b; chat.couples[b] = a; saveDB();
-    return ctx.reply(`❤️ <b>Новая пара!</b>\\n\\n${mentionUser(ctx.from)} и ${mentionById(target.id, chat.users[b]?.firstName || `ID ${target.id}`)} теперь вместе!`, { parse_mode: 'HTML' });
-  }
-  if (command === 'couple') {
-    const pid = chat.couples[String(ctx.from.id)];
-    if (!pid) return ctx.reply('💔 У тебя пока нет пары.');
-    const p = chat.users[String(pid)];
-    return ctx.reply(`❤️ Твоя пара: ${mentionById(pid, p?.firstName || `ID ${pid}`)}`, { parse_mode: 'HTML' });
-  }
-  if (command === 'breakup') {
-    const uid = String(ctx.from.id), pid = chat.couples[uid];
-    if (!pid) return ctx.reply('💔 У тебя нет пары.');
-    delete chat.couples[uid]; delete chat.couples[String(pid)]; saveDB();
-    return ctx.reply('💔 Отношения завершены.');
-  }
-
-  const actionTexts = {
-    hug: ['🤗', 'обнял(а)', 'нежно обнял(а) свою пару'],
-    kiss: ['😘', 'поцеловал(а)', 'нежно поцеловал(а) свою пару'],
-    slap: ['💥', 'шлёпнул(а)', 'игриво шлёпнул(а) свою пару'],
-    pat: ['🫶', 'погладил(а)', 'ласково погладил(а) свою пару'],
-    bite: ['😈', 'укусил(а)', 'игриво укусил(а) свою пару'],
-    poke: ['👉', 'тыкнул(а)', 'тыкнул(а) свою пару'],
-    feed: ['🍽', 'покормил(а)', 'покормил(а) свою пару'],
-    tea: ['🍵', 'налил(а) чай для', 'налил(а) чай своей паре'],
-    flower: ['🌹', 'подарил(а) цветок', 'подарил(а) цветок своей паре'],
-    compliment: ['✨', 'сказал(а) комплимент', 'сказал(а) комплимент своей паре']
-  };
-  if (actionTexts[command]) {
-    const u = getUserDB(chat, ctx.from);
-    if (nowTs() - (u.cooldowns.action || 0) < 5000) return ctx.reply('⏳ Не так быстро. Подожди пару секунд.');
-    u.cooldowns.action = nowTs();
-
-    let target = ctx.message?.reply_to_message?.from;
-    let couple = false;
-    if (!target) {
-      const pid = chat.couples[String(ctx.from.id)];
-      if (pid && chat.users[String(pid)]) {
-        const p = chat.users[String(pid)];
-        target = { id: Number(pid), first_name: p.firstName || 'Пара', username: p.username || '' };
-        couple = true;
-      }
-    }
-    saveDB();
-    if (!target || target.is_bot) return ctx.reply('❌ Ответь на сообщение пользователя или создай пару командой /любовь.');
-    const [emoji, normal, pair] = actionTexts[command];
-    return ctx.reply(`${emoji} ${mentionUser(ctx.from)} ${couple ? pair : normal} ${mentionUser(target)}`, { parse_mode: 'HTML' });
-  }
-
-  if (command === 'fridaypost') {
-    if (!(await requireRank(ctx, 60))) return;
-    const mode = (args[0] || '').toLowerCase();
-    if (!['on', 'off'].includes(mode)) return ctx.reply('🎉 Использование: /пятница on или /пятница off');
-    chat.settings.fridayPost.enabled = mode === 'on'; saveDB();
-    return ctx.reply(`✅ Пятничный пост: ${mode === 'on' ? 'ON' : 'OFF'}`);
-  }
-  if (command === 'setfriday') {
-    if (!(await requireRank(ctx, 60))) return;
-    if (!argText) return ctx.reply('❌ Напиши текст пятничного поста.');
-    chat.settings.fridayPost.text = argText; saveDB();
-    return ctx.reply('✅ Текст пятничного поста обновлён.');
-  }
-  if (command === 'setfridaytime') {
-    if (!(await requireRank(ctx, 60))) return;
-    if (!/^\\d{2}:\\d{2}$/.test(args[0] || '')) return ctx.reply('❌ Формат времени: 18:00');
-    chat.settings.fridayPost.time = args[0]; saveDB();
-    return ctx.reply(`✅ Время пятничного поста: ${args[0]}`);
-  }
-  if (command === 'fridaynow') {
-    if (!(await requireRank(ctx, 60))) return;
-    await sendFridayPost(ctx.chat.id);
-    return;
-  }
-
-  // admin/moder commands
-  if (['mute','unmute','ban','unban','kick','warn','unwarn','warns','history','actions','del'].includes(command)) {
     if (!(await requireGroup(ctx))) return;
+
+    const modeRaw = (args[0] || '').toLowerCase();
+
+    if (['all', 'все', 'всех'].includes(modeRaw)) {
+      return sendCallByMode(ctx, 'all');
+    }
+
+    if (['admins', 'админы', 'админов'].includes(modeRaw)) {
+      return sendCallByMode(ctx, 'admins');
+    }
+
+    if (['owners', 'владельцы', 'владельцев'].includes(modeRaw)) {
+      return sendCallByMode(ctx, 'owners');
+    }
+
+    if (!(await requireRank(ctx, 40))) return;
+
+    return ctx.reply('📢 <b>Выбери тип созыва:</b>', {
+      parse_mode: 'HTML',
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback('👥 Все', `call:all:${ctx.from.id}`),
+          Markup.button.callback('🛡 Админы', `call:admins:${ctx.from.id}`)
+        ],
+        [
+          Markup.button.callback('👑 Владельцы', `call:owners:${ctx.from.id}`),
+          Markup.button.callback('❌ Отмена', `call:cancel:${ctx.from.id}`)
+        ]
+      ])
+    });
   }
+
   if (command === 'mute') {
     if (!(await requireRank(ctx, 30))) return;
     const target = resolveTarget(ctx, args);
