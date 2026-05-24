@@ -951,32 +951,116 @@ async function handleCommand(ctx, parsed) {
 
   if (command === 'id') return ctx.reply(`🆔 Твой ID: <code>${ctx.from.id}</code>`, { parse_mode: 'HTML' });
   if (command === 'top') {
-    const period = args[0]?.toLowerCase() || 'all';
-    const day = todayKey();
-    const week = weekKey();
-    const month = monthKey();
+    const period = (args[0] || 'all').toLowerCase();
 
-    const users = Object.values(chat.users).map(u => {
-      ensurePeriodStats(u);
-      let score = u.messages || 0;
-      let title = '🏆 Топ за всё время';
-      if (['day', 'день', 'today', 'сегодня'].includes(period)) {
-        score = u.messagesDay?.[day] || 0;
-        title = '🏆 Топ дня';
-      } else if (['week', 'неделя'].includes(period)) {
-        score = u.messagesWeek?.[week] || 0;
-        title = '🏆 Топ недели';
-      } else if (['month', 'месяц'].includes(period)) {
-        score = u.messagesMonth?.[month] || 0;
-        title = '🏆 Топ месяца';
+    let mode = 'all';
+
+    if (['day', 'день', 'today', 'сегодня'].includes(period)) {
+      mode = 'day';
+    }
+
+    if (['week', 'неделя', 'weeks', 'недели'].includes(period)) {
+      mode = 'week';
+    }
+
+    if (['month', 'месяц', 'months', 'месяца'].includes(period)) {
+      mode = 'month';
+    }
+
+    if (['all', 'все', 'всё'].includes(period)) {
+      mode = 'all';
+    }
+
+    const now = new Date();
+
+    function sameDay(dateKey) {
+      return dateKey === todayKey();
+    }
+
+    function sameMonth(dateKey) {
+      return dateKey.slice(0, 7) === now.toISOString().slice(0, 7);
+    }
+
+    function sameWeek(dateKey) {
+      const date = new Date(dateKey + 'T00:00:00');
+      const current = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+      const day = current.getDay() || 7;
+
+      const monday = new Date(current);
+      monday.setDate(current.getDate() - day + 1);
+      monday.setHours(0, 0, 0, 0);
+
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      sunday.setHours(23, 59, 59, 999);
+
+      return date >= monday && date <= sunday;
+    }
+
+    function getScore(user) {
+      if (mode === 'all') {
+        return user.messages || 0;
       }
-      return { ...u, score, topTitle: title };
-    }).filter(u => u.score > 0).sort((a,b)=>b.score-a.score);
 
-    const title = users[0]?.topTitle || '🏆 Топ активных участников';
-    const list = users.slice(0, 10).map((u, i) => `${i + 1}. ${usernameText(u)} — <b>${u.score}</b>`).join('\\n') || 'Пока нет статистики.';
-    return ctx.reply(`<b>${title}</b>\\n\\n${list}`, { parse_mode: 'HTML' });
+      const days = user.messagesDay || {};
+      let total = 0;
+
+      for (const [dateKey, count] of Object.entries(days)) {
+        if (mode === 'day' && sameDay(dateKey)) total += count;
+        if (mode === 'week' && sameWeek(dateKey)) total += count;
+        if (mode === 'month' && sameMonth(dateKey)) total += count;
+      }
+
+      return total;
+    }
+
+    function getTopName(user) {
+      if (user.username) {
+        return '@' + escapeHtml(user.username);
+      }
+
+      return escapeHtml(user.firstName || user.first_name || 'Участник');
+    }
+
+    function medal(index) {
+      if (index === 0) return '🥇';
+      if (index === 1) return '🥈';
+      if (index === 2) return '🥉';
+      return '▫️';
+    }
+
+    const titles = {
+      day: '🏆 Топ дня',
+      week: '🏆 Топ недели',
+      month: '🏆 Топ месяца',
+      all: '🏆 Топ за всё время'
+    };
+
+    const users = Object.values(chat.users || {})
+      .map((user) => ({
+        ...user,
+        score: getScore(user)
+      }))
+      .filter((user) => user.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+
+    if (!users.length) {
+      return ctx.reply(titles[mode] + '\n\nПока нет статистики для этого периода.');
+    }
+
+    const lines = users.map((user, index) => {
+      return medal(index) + ' ' + (index + 1) + '. ' + getTopName(user) + ' — <b>' + user.score + '</b>';
+    });
+
+    const text = titles[mode] + '\n\n' + lines.join('\n');
+
+    return ctx.reply(text, {
+      parse_mode: 'HTML'
+    });
   }
+
   if (command === 'level') {
     const u = getUserDB(chat, ctx.from);
     const level = levelFromXp(u.xp);
