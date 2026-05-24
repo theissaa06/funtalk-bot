@@ -1,14 +1,19 @@
 {
-  "name": "funtalk-bot",
-  "version": "1.0.0",
-  "description": "Telegram bot for FunTalk chat",
+  "name": "fultalchik-botik",
+  "version": "4.0.0",
+  "description": "FulTalchik_botik — Telegram bot for moderation, ranks, economy and chat activity",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "node index.js",
+    "check": "node --check index.js"
   },
   "dependencies": {
     "dotenv": "^16.6.1",
-    "telegraf": "^4.16.3",
-    "yt-dlp-exec": "^1.0.2"
-  }
+    "telegraf": "^4.16.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
 }
