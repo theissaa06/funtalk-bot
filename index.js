@@ -1126,55 +1126,117 @@ async function tryAutoCreateReminder(ctx, text) {
 }
 
 async function checkAutoAchievements(ctx, user) {
-  if (!user.achievements) user.achievements = [];
+  if (!user) return;
+
+  if (!Array.isArray(user.achievements)) {
+    user.achievements = [];
+  }
+
+  // Убираем возможные дубли, если они уже появились раньше
+  user.achievements = Array.from(new Set(user.achievements));
 
   const earned = [];
 
-  function addAchievement(id, text) {
-    if (!user.achievements.includes(id)) {
-      user.achievements.push(id);
-      earned.push(text);
+  function addAchievement(id, text, rewardCoins = 0) {
+    if (user.achievements.includes(id)) return;
+
+    user.achievements.push(id);
+
+    if (rewardCoins > 0) {
+      user.balance = (user.balance || 0) + rewardCoins;
+      user.coins = user.balance;
     }
+
+    earned.push({
+      id,
+      text,
+      rewardCoins
+    });
   }
 
-  if ((user.messages || 0) >= 1) addAchievement('first_message', '🏆 Первое сообщение');
-  if ((user.messages || 0) >= 100) addAchievement('messages_100', '💬 100 сообщений');
-  if ((user.messages || 0) >= 500) addAchievement('messages_500', '🔥 500 сообщений');
-  if ((user.messages || 0) >= 1000) addAchievement('messages_1000', '👑 1000 сообщений');
-  if ((user.reputation || 0) >= 10) addAchievement('rep_10', '⭐ 10 репутации');
-  if (user.birthday) addAchievement('birthday_set', '🎂 Указал день рождения');
-  if ((user.warns?.length || 0) === 0 && (user.messages || 0) >= 100) {
-    addAchievement('clean_100', '🛡 100 сообщений без предупреждений');
+  const messages = Number(user.messages || 0);
+  const reputation = Number(user.reputation || 0);
+  const warnsCount = Number(user.warns?.length || 0);
+
+  if (messages >= 1) {
+    addAchievement('first_message', '🏆 Первое сообщение', 25);
   }
 
-  if (earned.length) {
+  if (messages >= 100) {
+    addAchievement('messages_100', '💬 100 сообщений', 300);
+  }
+
+  if (messages >= 500) {
+    addAchievement('messages_500', '🔥 500 сообщений', 1000);
+  }
+
+  if (messages >= 1000) {
+    addAchievement('messages_1000', '👑 1000 сообщений', 2500);
+  }
+
+  if (reputation >= 10) {
+    addAchievement('rep_10', '⭐ 10 репутации', 500);
+  }
+
+  if (user.birthday) {
+    addAchievement('birthday_set', '🎂 Указал день рождения', 200);
+  }
+
+  if (warnsCount === 0 && messages >= 100) {
+    addAchievement('clean_100', '🛡 100 сообщений без предупреждений', 700);
+  }
+
+  if (!earned.length) {
     saveDB();
+    return;
+  }
 
-    await ctx.reply(
-      `🎉 <b>Новое достижение!</b>
+  saveDB();
+
+  const lines = earned.map((item) => {
+    if (item.rewardCoins > 0) {
+      return item.text + '  <b>+ ' + item.rewardCoins + ' монет</b>';
+    }
+
+    return item.text;
+  });
+
+  return ctx.reply(
+    `🎉 <b>Новое достижение!</b>
 
 👤 ${mentionUser(ctx.from)}
 
-${earned.join('\n')}`,
-      { parse_mode: 'HTML' }
-    );
-  }
+${lines.join('\n')}
+
+━━━━━━━━━━━━━━
+🏆 Всего ачивок: <b>${user.achievements.length}</b>
+🪙 Баланс: <b>${user.balance || 0}</b> монет`,
+    { parse_mode: 'HTML' }
+  );
 }
 
 async function processAutoFeaturesForMessage(ctx, text, user) {
   if (!ctx.chat || !ctx.from || ctx.from.is_bot) return;
+  if (!user) return;
+
+  const messageText = String(text || '').trim();
+
+  // Не обрабатываем пустые сообщения
+  if (!messageText) return;
 
   const chat = getChatDB(ctx.chat.id);
   const cfg = ensureAutoFeatures(chat);
 
   if (!cfg.enabled) return;
 
-  const birthdaySaved = await tryAutoSaveBirthday(ctx, text, user);
+  // День рождения и напоминания срабатывают только на подходящие фразы
+  const birthdaySaved = await tryAutoSaveBirthday(ctx, messageText, user);
   if (birthdaySaved) return;
 
-  const reminderCreated = await tryAutoCreateReminder(ctx, text);
+  const reminderCreated = await tryAutoCreateReminder(ctx, messageText);
   if (reminderCreated) return;
 
+  // Ачивки проверяются всегда, но каждая выдаётся только 1 раз
   await checkAutoAchievements(ctx, user);
 }
 
