@@ -1170,6 +1170,7 @@ async function checkAutoAchievements(ctx, user) {
     user.achievements = [];
   }
 
+  // Убираем дубли старых ачивок
   user.achievements = Array.from(new Set(user.achievements));
 
   const earned = [];
@@ -1193,9 +1194,10 @@ async function checkAutoAchievements(ctx, user) {
   const reputation = Number(user.reputation || 0);
   const warnsCount = Number(user.warns?.length || 0);
 
-  if (messages >= 1) {
-    addAchievement("first_message", "🏆 Первое сообщение", 25);
-  }
+  // ВАЖНО:
+  // Мелкие ачивки типа "Первое сообщение" больше НЕ выдаём.
+  // Бот просто считает активность внутри БД.
+  // Сообщение отправляется только за крупные достижения.
 
   if (messages >= 100) {
     addAchievement("messages_100", "💬 100 сообщений", 300);
@@ -1209,12 +1211,12 @@ async function checkAutoAchievements(ctx, user) {
     addAchievement("messages_1000", "👑 1000 сообщений", 2500);
   }
 
-  if (reputation >= 10) {
-    addAchievement("rep_10", "⭐ 10 репутации", 500);
+  if (messages >= 5000) {
+    addAchievement("messages_5000", "💎 5000 сообщений", 7000);
   }
 
-  if (user.birthday) {
-    addAchievement("birthday_set", "🎂 Указал день рождения", 200);
+  if (reputation >= 10) {
+    addAchievement("rep_10", "⭐ 10 репутации", 500);
   }
 
   if (warnsCount === 0 && messages >= 100) {
@@ -1241,7 +1243,7 @@ async function checkAutoAchievements(ctx, user) {
     : escapeHtml(ctx.from.first_name || "Пользователь");
 
   return ctx.reply(
-    `🎉 <b>Новое достижение!</b>
+    `🎉 <b>Новое крупное достижение!</b>
 
 👤 <b>${userName}</b>
 
@@ -1249,7 +1251,7 @@ ${achievementLines}
 
 ━━━━━━━━━━━━━━
 💰 <b>Итог награды:</b> +${totalReward} монет
-🏆 <b>Всего ачивок:</b> ${user.achievements.length}
+🏆 <b>Всего крупных ачивок:</b> ${user.achievements.filter(a => !["first_message", "birthday_set"].includes(a)).length}
 🪙 <b>Баланс:</b> ${user.balance || 0} монет`,
     { parse_mode: "HTML" }
   );
@@ -2510,6 +2512,32 @@ bot.catch((error) => console.error('Глобальная ошибка Telegraf:'
 startFridayScheduler();
 
 startAutoFeaturesScheduler();
+
+
+function cleanupOldSmallAchievements() {
+  try {
+    const db = loadDB();
+
+    for (const chat of Object.values(db.chats || {})) {
+      for (const user of Object.values(chat.users || {})) {
+        if (!Array.isArray(user.achievements)) continue;
+
+        user.achievements = user.achievements.filter((id) => {
+          return !["first_message", "birthday_set"].includes(id);
+        });
+
+        user.achievements = Array.from(new Set(user.achievements));
+      }
+    }
+
+    saveDB();
+  } catch (error) {
+    console.error("cleanupOldSmallAchievements error:", error);
+  }
+}
+
+cleanupOldSmallAchievements();
+
 
 bot.launch({ dropPendingUpdates: true });
 console.log('✅ FulTalchik_botik запущен!');
