@@ -1,7 +1,6 @@
-node_modules/
 .env
+node_modules/
+downloads/
+data/database.broken.*.json
 *.log
 .DS_Store
-downloads/
-*.sqlite
-*.db

@@ -1,6 +1,7 @@
 {
   "meta": {
-    "version": "4.1.0"
+    "version": "3.0.1"
   },
+  "globalAdmins": {},
   "chats": {}
 }

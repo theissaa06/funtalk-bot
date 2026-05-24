@@ -1,2548 +1,1998 @@
+// ═══════════════════════════════════════════════════════════════
+//  FulTalchik_Botik  v3.0  —  node-telegram-bot-api
+//  Railway 24/7  |  data/database.json
+// ═══════════════════════════════════════════════════════════════
+'use strict';
 require('dotenv').config();
-
-const { Telegraf, Markup } = require('telegraf');
-const fs = require('fs');
+const TelegramBot = require('node-telegram-bot-api');
+const fs   = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
-
 const execFileAsync = promisify(execFile);
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const BOT_USERNAME = process.env.BOT_USERNAME || 'FunTalchik_Botik';
-const OWNER_ID = Number(process.env.OWNER_ID || 0);
+// ── ENV ──────────────────────────────────────────────────────────
+const BOT_TOKEN    = process.env.BOT_TOKEN;
+const BOT_USERNAME = (process.env.BOT_USERNAME || '').toLowerCase();
+const OWNER_ID     = parseInt(process.env.OWNER_ID || '0', 10);
 
 if (!BOT_TOKEN) {
-  console.error('❌ BOT_TOKEN не найден. Добавь BOT_TOKEN в .env или Railway Variables.');
+  console.error('❌  BOT_TOKEN не найден. Добавь его в .env или Railway Variables.');
   process.exit(1);
 }
 
-const bot = new Telegraf(BOT_TOKEN);
-
-const DATA_DIR = path.join(__dirname, 'data');
+// ── DATABASE ──────────────────────────────────────────────────────
+const DB_DIR  = path.join(__dirname, 'data');
+const DB_PATH = path.join(DB_DIR, 'database.json');
 const DOWNLOAD_DIR = path.join(__dirname, 'downloads');
-const DB_FILE = path.join(DATA_DIR, 'database.json');
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
-fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+const mkDefaultChat = () => ({
+  title: '',
+  type: '',
+  settings: {
+    antispam: false, antilinks: false, antimat: false,
+    welcome: true,  goodbye: false,
+    welcomeText: null, goodbyeText: null,
+    rules: '1. Не оскорблять участников.\n2. Не спамить и не флудить.\n3. Не рекламировать без разрешения.\n4. Не провоцировать конфликты.\n5. Не отправлять запрещённый контент.\n6. Уважать администрацию.\n7. Не обходить наказания.',
+    logChatId: null,
+    badwords: [],
+    morningEnabled: true,  nightEnabled: true,
+    weeklyReportEnabled: true,
+    lastMorningDate: null, lastNightDate: null,
+    lastWeeklyDate: null,
+    callCooldown: 0,
+    fridayPost: { enabled: false, time: '18:00', text: null, lastSentDate: null }
+  },
+  users: {},
+  logs: [],
+  reminders: [],
+  pendingOwnerTransfer: null
+});
 
-const DEFAULT_RULES = `📜 Правила чата «Клуб случайных людей»\n\n1. Не оскорблять участников.\n2. Не спамить и не флудить.\n3. Не рекламировать без разрешения.\n4. Не провоцировать конфликты.\n5. Не отправлять запрещённый контент.\n6. Уважать администрацию.\n7. Не обходить наказания.\n\n⚠️ За нарушение правил: предупреждение, мут, кик или бан.`;
+const mkDefaultUser = (id, firstName, username) => ({
+  id,
+  firstName: firstName || 'Без имени',
+  username:  username  || null,
+  isBot: false,
+  canCall: true,
+  leftChat: false,
+  firstSeenAt: Date.now(),
+  lastSeenAt:  Date.now(),
+  messages: 0,
+  xp: 0,
+  balance: 0,
+  reputation: 0,
+  title: null,
+  adminRank: 0,
+  warns: [],
+  history: [],
+  birthday: null,
+  couple: null,
+  inventory: { vip: false, premium: false, customTitle: false, warnShield: 0, coloredProfile: false },
+  cooldowns:  { daily: 0, rep: {}, action: 0 },
+  stats: { daily: {}, weekly: {}, monthly: {} },
+  msgTypes: {
+    text: 0, voice: 0, circle: 0, photo: 0, video: 0,
+    sticker: 0, document: 0, audio: 0, animation: 0, other: 0
+  },
+  achievements: {}
+});
 
-const DEFAULT_DB = {
-  meta: { version: '4.0.0', createdAt: new Date().toISOString() },
-  chats: {}
-};
-
-function safeReadJSON(filePath, fallback) {
-  try {
-    if (!fs.existsSync(filePath)) return fallback;
-    const raw = fs.readFileSync(filePath, 'utf8').trim();
-    if (!raw) return fallback;
-    return JSON.parse(raw);
-  } catch (error) {
-    const backup = `${filePath}.broken.${Date.now()}.json`;
-    try { fs.copyFileSync(filePath, backup); } catch {}
-    console.error('❌ database.json повреждён. Создан backup:', backup);
-    return fallback;
-  }
-}
-
-function ensureDBFile() {
-  if (!fs.existsSync(DB_FILE)) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(DEFAULT_DB, null, 2));
-  }
-}
-
-ensureDBFile();
-let dbCache = safeReadJSON(DB_FILE, DEFAULT_DB);
-let saveTimer = null;
+let db = { meta: { version: '3.0' }, globalAdmins: {}, chats: {} };
+let _saveTimer = null;
 
 function loadDB() {
-  if (!dbCache || typeof dbCache !== 'object') dbCache = structuredCloneSafe(DEFAULT_DB);
-  if (!dbCache.chats) dbCache.chats = {};
-  return dbCache;
-}
-
-function saveDBNow() {
   try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(dbCache, null, 2));
-  } catch (error) {
-    console.error('❌ Ошибка сохранения database.json:', error);
+    if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
+    if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+    if (!fs.existsSync(DB_PATH)) { saveDB(true); console.log('📁  database.json создан.'); return; }
+    const raw = fs.readFileSync(DB_PATH, 'utf8').trim();
+    if (!raw) { saveDB(true); return; }
+    const parsed = JSON.parse(raw);
+    db = parsed;
+    if (!db.meta)         db.meta         = { version: '3.0' };
+    if (!db.globalAdmins) db.globalAdmins = {};
+    if (!db.chats)        db.chats        = {};
+  } catch (e) {
+    const bak = `database.broken.${Date.now()}.json`;
+    try { fs.renameSync(DB_PATH, path.join(DB_DIR, bak)); } catch (_) {}
+    console.error(`⚠️  database.json повреждён → резервная копия: ${bak}`);
+    db = { meta: { version: '3.0' }, globalAdmins: {}, chats: {} };
+    saveDB(true);
   }
 }
 
-function saveDB() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveDBNow, 300);
-}
-
-function structuredCloneSafe(obj) {
-  return JSON.parse(JSON.stringify(obj));
-}
-
-function getChatDB(chatId) {
-  const db = loadDB();
-  const id = String(chatId);
-  if (!db.chats[id]) {
-    db.chats[id] = {
-      settings: {
-        antispam: false,
-        antilinks: false,
-        antimat: false,
-        welcome: true,
-        goodbye: false,
-        rules: DEFAULT_RULES,
-        logChatId: null,
-        logThreadId: null
-      },
-      users: {},
-      admins: {},
-      friendships: {},
-      couples: {},
-      logs: [],
-      tempActions: {},
-      antispam: {}
-    };
-  }
-  const chat = db.chats[id];
-  chat.settings ||= {};
-  chat.settings.rules ||= DEFAULT_RULES;
-  chat.settings.antispam ??= false;
-  chat.settings.antilinks ??= false;
-  chat.settings.antimat ??= false;
-  chat.settings.welcome ??= true;
-  chat.settings.goodbye ??= false;
-  chat.settings.logChatId ??= null;
-  chat.settings.fridayPost ??= {
-    enabled: false,
-    time: '18:00',
-    timezone: 'Asia/Almaty',
-    text: '🎉 Пятница пришла! Всем хорошего настроения и лампового общения ❤️',
-    lastSentDate: null
+function saveDB(immediate = false) {
+  const write = () => {
+    try {
+      if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
+      fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf8');
+    } catch (e) { console.error('DB write error:', e.message); }
   };
-  chat.users ||= {};
-  chat.admins ||= {};
-  chat.friendships ||= {};
-  chat.couples ||= {};
-  chat.logs ||= [];
-  chat.tempActions ||= {};
-  chat.antispam ||= {};
-  return chat;
+  if (immediate) { write(); return; }
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(write, 1500);
 }
 
-function getUserDB(chat, user) {
-  const id = String(user.id || user.telegram_id);
-  if (!chat.users[id]) {
-    chat.users[id] = {
-      id: Number(id),
-      firstName: user.first_name || user.firstName || '',
-      username: user.username || '',
-      messages: 0,
-      messagesDay: {},
-      xp: 0,
-      balance: 0,
-      coins: 0,
-      reputation: 0,
-      title: null,
-      role: null,
-      adminRank: 0,
-      warnings: 0,
-      warns: [],
-      history: [],
-      inventory: {
-        vip: false,
-        premium: false,
-        customTitle: false,
-        warnShield: 0,
-        coloredProfile: false
-      },
-      cooldowns: { daily: 0, rep: {} },
-      joinedAt: new Date().toISOString(),
-      lastMessageCoinAt: 0
-    };
+function getChat(chatId, title, type) {
+  const cid = String(chatId);
+  if (!db.chats[cid]) { db.chats[cid] = mkDefaultChat(); saveDB(); }
+  const c = db.chats[cid];
+  // migration guards
+  if (!c.settings.fridayPost)  c.settings.fridayPost  = mkDefaultChat().settings.fridayPost;
+  if (c.settings.morningEnabled === undefined) c.settings.morningEnabled = true;
+  if (c.settings.nightEnabled   === undefined) c.settings.nightEnabled   = true;
+  if (c.settings.weeklyReportEnabled === undefined) c.settings.weeklyReportEnabled = true;
+  if (!c.reminders) c.reminders = [];
+  if (title) c.title = title;
+  if (type)  c.type  = type;
+  return c;
+}
+
+function getUser(chatId, userId, firstName, username) {
+  const chat = getChat(chatId);
+  const uid  = String(userId);
+  if (!chat.users[uid]) {
+    chat.users[uid] = mkDefaultUser(userId, firstName, username);
+    saveDB();
   }
-  const u = chat.users[id];
-  u.firstName = user.first_name || user.firstName || u.firstName || '';
-  u.username = user.username || u.username || '';
-  u.messagesDay ||= {};
-  u.xp ??= 0;
-  u.balance ??= u.coins ?? 0;
-  u.coins ??= u.balance ?? 0;
-  u.reputation ??= 0;
-  u.adminRank ??= 0;
-  u.warnings ??= Array.isArray(u.warns) ? u.warns.length : 0;
-  u.warns ||= [];
-  u.history ||= [];
-  u.inventory ||= { vip: false, premium: false, customTitle: false, warnShield: 0, coloredProfile: false };
-  u.cooldowns ||= { daily: 0, rep: {} };
-  u.cooldowns.rep ||= {};
+  const u = chat.users[uid];
+  if (firstName) u.firstName = firstName;
+  if (username !== undefined) u.username = username;
+  if (!u.stats)    u.stats    = { daily: {}, weekly: {}, monthly: {} };
+  if (!u.msgTypes) u.msgTypes = { text:0, voice:0, circle:0, photo:0, video:0, sticker:0, document:0, audio:0, animation:0, other:0 };
+  if (!u.achievements) u.achievements = {};
+  if (!u.cooldowns)    u.cooldowns    = { daily: 0, rep: {}, action: 0 };
+  if (u.couple === undefined)  u.couple  = null;
+  if (u.birthday === undefined) u.birthday = null;
+  u.lastSeenAt = Date.now();
   return u;
 }
 
-const ADMIN_RANKS = {
-  100: {
-    title: '👑 Владелец',
-    note: 'Главный владелец беседы/бота. Полный доступ ко всем функциям.',
-    muteLimit: Infinity
-  },
-  95: {
-    title: '🛡 Заместитель владельца',
-    note: 'Правая рука владельца. Может управлять почти всем, кроме владельца.',
-    muteLimit: Infinity
-  },
-  90: {
-    title: '💎 Главный администратор',
-    note: 'Главный админ. Управляет администрацией ниже себя, модерацией и настройками.',
-    muteLimit: Infinity
-  },
-  80: {
-    title: '🔥 Куратор администрации',
-    note: 'Следит за администрацией, логами, наказаниями и порядком в беседе.',
-    muteLimit: Infinity
-  },
-  70: {
-    title: '⚡ Старший администратор',
-    note: 'Старший админ. Может банить, мутить, кикать и выдавать предупреждения.',
-    muteLimit: Infinity
-  },
-  60: {
-    title: '🧩 Администратор',
-    note: 'Админ беседы. Может мутить, кикать, выдавать предупреждения и смотреть историю.',
-    muteLimit: 1440
-  },
-  50: {
-    title: '🛠 Младший администратор',
-    note: 'Младший админ. Может выдавать муты до 120 минут, преды и удалять сообщения.',
-    muteLimit: 120
-  },
-  40: {
-    title: '👮 Старший модератор',
-    note: 'Старший модер. Может выдавать муты до 60 минут и предупреждения.',
-    muteLimit: 60
-  },
-  30: {
-    title: '🧹 Модератор',
-    note: 'Модер. Может выдавать муты до 30 минут, преды и удалять сообщения.',
-    muteLimit: 30
-  },
-  20: {
-    title: '🤝 Помощник',
-    note: 'Помощник администрации. Может смотреть профили, правила, преды и помогать с порядком.',
-    muteLimit: 0
-  },
-  10: {
-    title: '🌱 Стажёр',
-    note: 'Начальный ранг администрации. Может смотреть базовую информацию.',
-    muteLimit: 0
-  },
-  0: {
-    title: '👤 Пользователь',
-    note: 'Обычный участник беседы без административных прав.',
-    muteLimit: 0
-  }
+loadDB();
+
+// ── BOT INIT ──────────────────────────────────────────────────────
+const bot = new TelegramBot(BOT_TOKEN, { polling: { dropPendingUpdates: true } });
+
+bot.on('polling_error', err => console.error('Polling error:', err.message));
+process.on('unhandledRejection', r  => console.error('UnhandledRejection:', r));
+process.on('uncaughtException',  e  => console.error('UncaughtException:',  e.message));
+
+let _botId = 0, _botUser = null;
+bot.getMe().then(me => { _botId = me.id; _botUser = me; }).catch(() => {});
+
+// ── RANK SYSTEM ───────────────────────────────────────────────────
+const RANKS = {
+  100: { emoji: '👑', name: 'Владелец',                note: 'Полный доступ',            muteLimit: Infinity },
+  95:  { emoji: '🛡', name: 'Заместитель владельца',   note: 'Всё кроме смены владельца', muteLimit: Infinity },
+  90:  { emoji: '💎', name: 'Главный администратор',   note: 'Бан, мут, ранги до 80',     muteLimit: Infinity },
+  80:  { emoji: '🔥', name: 'Куратор администрации',   note: 'Ранги до 70, бан, мут',     muteLimit: Infinity },
+  70:  { emoji: '⚡', name: 'Старший администратор',   note: 'Ранги до 60, бан, мут',     muteLimit: Infinity },
+  60:  { emoji: '🧩', name: 'Администратор',           note: 'Ранги до 50, мут, кик',     muteLimit: 1440 },
+  50:  { emoji: '🛠', name: 'Младший администратор',   note: 'Мут до 2ч, предупреждения', muteLimit: 120 },
+  40:  { emoji: '👮', name: 'Старший модератор',       note: 'Мут до 60мин',              muteLimit: 60 },
+  30:  { emoji: '🧹', name: 'Модератор',               note: 'Мут до 30мин, удаление',    muteLimit: 30 },
+  20:  { emoji: '🤝', name: 'Помощник',                note: 'Просмотр, удаление',        muteLimit: 0 },
+  10:  { emoji: '🌱', name: 'Стажёр',                  note: 'Просмотр команд',           muteLimit: 0 },
+  0:   { emoji: '👤', name: 'Пользователь',            note: 'Базовые команды',           muteLimit: 0 }
 };
 
-const RANK_COMMANDS = {
-  // 100 — Владелец
-  owner: 100,
-  владелец: 100,
-
-  // 95 — Заместитель владельца
-  deputy: 95,
-  зам: 95,
-  заместитель: 95,
-  замвладельца: 95,
-
-  // 90 — Главный администратор
-  headadmin: 90,
-  главныйадмин: 90,
-  главадмин: 90,
-  га: 90,
-
-  // 80 — Куратор администрации
-  curator: 80,
-  куратор: 80,
-  ка: 80,
-
-  // 70 — Старший администратор
-  senioradmin: 70,
-  старшийадмин: 70,
-  стадмин: 70,
-  са: 70,
-
-  // 60 — Администратор
-  admin: 60,
-  админ: 60,
-  администратор: 60,
-
-  // 50 — Младший администратор
-  junioradmin: 50,
-  младшийадмин: 50,
-  младший: 50,
-  ма: 50,
-
-  // 40 — Старший модератор
-  seniormoder: 40,
-  старшиймодер: 40,
-  стмодер: 40,
-  см: 40,
-
-  // 30 — Модератор
-  moder: 30,
-  модер: 30,
-  модератор: 30,
-  мд: 30,
-
-  // 20 — Помощник
-  helper: 20,
-  хелпер: 20,
-  помощник: 20,
-  пом: 20,
-
-  // 10 — Стажёр
-  trainee: 10,
-  стажер: 10,
-  стажёр: 10,
-  стаж: 10,
-
-  // 0 — Пользователь
-  user: 0,
-  пользователь: 0,
-  юзер: 0,
-  снятьранг: 0
-};
-
-const ALIASES = {
-  help: ['help', 'помощь', 'commands', 'команды'],
-  devcoins: ['devcoins', 'coins', 'монеты', 'выдатьмонеты', 'датьмонеты'],
-  basedb: ['база', 'db', 'бд', 'участникибаза'],
-  setup: ['setup', 'настроить', 'стартгруппа', 'startgroup'],
-  rules: ['rules', 'правила'],
-  setrules: ['setrules', 'установитьправила'],
-  mute: ['mute', 'мут'],
-  unmute: ['unmute', 'унмут'],
-  ban: ['ban', 'бан'],
-  unban: ['unban', 'разбан'],
-  kick: ['kick', 'кик'],
-  warn: ['warn', 'пред'],
-  unwarn: ['unwarn', 'унпред'],
-  warns: ['warns', 'преды'],
-  punishments: ['punishments', 'наказания'],
-  rank: ['rank', 'ранг'],
-  ranks: ['ranks', 'ранги'],
-  setrank: ['setrank', 'выдатьранг'],
-  delrank: ['delrank', 'снятьранг'],
-  admins: ['admins', 'админы'],
-  actions: ['actions', 'действия'],
-  history: ['history', 'история'],
-  profile: ['profile', 'профиль', 'me'],
-  top: ['top', 'топ'],
-  level: ['level', 'уровень'],
-  balance: ['balance', 'баланс', 'coins', 'монеты'],
-  daily: ['daily', 'ежедневно', 'bonus', 'бонус'],
-  give: ['give', 'передать', 'gift', 'подарить'],
-  shop: ['shop', 'магазин'],
-  buy: ['buy', 'купить'],
-  title: ['title', 'титул'],
-  removetitle: ['removetitle', 'снятьтитул'],
-  rep: ['rep', 'реп', 'respect'],
-  minusrep: ['minusrep', 'минусреп'],
-  myrep: ['myrep', 'мояреп'],
-  settings: ['settings', 'настройки'],
-  setlog: ['setlog', 'сетлог'],
-  logs: ['logs', 'логи'],
-  antispam: ['antispam', 'антиспам'],
-  antilinks: ['antilinks', 'ссылки'],
-  antimat: ['antimat', 'антимат'],
-  badwords: ['badwords', 'матлист'],
-  addbadword: ['addbadword', 'добавитьмат'],
-  delbadword: ['delbadword', 'удалитьмат'],
-  welcome: ['welcome', 'приветствие'],
-  setwelcome: ['setwelcome', 'сетпривет'],
-  goodbye: ['goodbye', 'прощание'],
-  setgoodbye: ['setgoodbye', 'сетпрощание'],
-  del: ['del', 'удалить'],
-  id: ['id', 'айди'],
-  transferowner: ['transferowner', 'передатьвладельца'],
-  confirmowner: ['confirmowner', 'подтвердитьвладельца'],
-  call: ['call', 'калл', 'созыв'],
-  love: ['love', 'любовь'],
-  couple: ['couple', 'пара'],
-  breakup: ['breakup', 'расстаться'],
-  hug: ['hug', 'обнять'],
-  kiss: ['kiss', 'поцеловать'],
-  slap: ['slap', 'шлепнуть', 'шлёпнуть'],
-  pat: ['pat', 'погладить'],
-  bite: ['bite', 'укусить'],
-  poke: ['poke', 'тыкнуть'],
-  feed: ['feed', 'покормить'],
-  tea: ['tea', 'чай'],
-  flower: ['flower', 'цветок'],
-  compliment: ['compliment', 'комплимент'],
-  fridaypost: ['fridaypost', 'пятница'],
-  setfriday: ['setfriday', 'сетпятница'],
-  setfridaytime: ['setfridaytime', 'сетвремяпятницы'],
-  fridaynow: ['fridaynow', 'пятницасейчас']
-};
-
-const REVERSE_ALIASES = new Map();
-for (const [key, list] of Object.entries(ALIASES)) {
-  for (const alias of list) REVERSE_ALIASES.set(alias.toLowerCase(), key);
-}
-for (const alias of Object.keys(RANK_COMMANDS)) REVERSE_ALIASES.set(alias.toLowerCase(), 'rankShortcut');
-
-const pendingOwnerTransfers = new Map();
-
-function escapeHtml(text = '') {
-  return String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-}
-function cleanCommandName(text = '') {
-  return String(text).split('@')[0].toLowerCase();
-}
-function parseCommand(ctx) {
-  const text = (ctx.message?.text || '').trim();
-  if (!text) return null;
-
-  const hasSlash = text.startsWith('/');
-  const cleanText = hasSlash ? text.slice(1).trim() : text;
-  const parts = cleanText.split(/\s+/);
-  const [raw, ...args] = parts;
-
-  const first = cleanCommandName(raw);
-  const second = (args[0] || '').toLowerCase();
-
-  // "я" и "я тут" — обычные сообщения.
-  // Профиль открывается только через "я профиль".
-  if (first === 'я') {
-    if (['профиль', 'profile'].includes(second)) {
-      return {
-        raw: 'я профиль',
-        command: 'profile',
-        args: args.slice(1),
-        argText: args.slice(1).join(' ')
-      };
-    }
-
-    return null;
-  }
-
-  // Команда разработчика для монет.
-  // "монеты" без аргументов = баланс.
-  // "монеты ID сумма" = выдача монет.
-  // "/coins ID сумма" = выдача монет.
-  const devCoinWords = ['coins', 'devcoins', 'выдатьмонеты', 'датьмонеты'];
-
-  if (devCoinWords.includes(first)) {
-    return {
-      raw: first,
-      command: 'devcoins',
-      args,
-      argText: args.join(' ')
-    };
-  }
-
-  if (first === 'монеты') {
-    const isReply = Boolean(ctx.message?.reply_to_message?.from);
-    const firstArgIsNumber = /^-?\d+$/.test(args[0] || '');
-    const secondArgIsNumber = /^-?\d+$/.test(args[1] || '');
-
-    // монеты 123456789 5000
-    // reply -> монеты 5000
-    if ((firstArgIsNumber && secondArgIsNumber) || (isReply && firstArgIsNumber)) {
-      return {
-        raw: first,
-        command: 'devcoins',
-        args,
-        argText: args.join(' ')
-      };
-    }
-
-    return {
-      raw: first,
-      command: 'balance',
-      args,
-      argText: args.join(' ')
-    };
-  }
-
-  const command = REVERSE_ALIASES.get(first) || null;
-  if (!command) return null;
-
-  return {
-    raw: first,
-    command,
-    args,
-    argText: args.join(' ')
-  };
+function getRankInfo(rank) {
+  const keys = Object.keys(RANKS).map(Number).sort((a,b) => b - a);
+  for (const k of keys) if (rank >= k) return { level: k, ...RANKS[k] };
+  return { level: 0, ...RANKS[0] };
 }
 
-function isGroup(ctx) {
-  return ['group', 'supergroup'].includes(ctx.chat?.type);
+function getMuteLimit(rank) {
+  if (rank >= 70) return Infinity;
+  if (rank >= 60) return 1440;
+  if (rank >= 50) return 120;
+  if (rank >= 40) return 60;
+  if (rank >= 30) return 30;
+  return 0;
 }
-function mentionById(id, name = 'Пользователь') {
-  return `<a href="tg://user?id=${id}">${escapeHtml(name)}</a>`;
-}
-function mentionUser(user) {
-  return mentionById(user.id, user.first_name || user.username || 'Пользователь');
-}
-function usernameText(userLike) {
-  if (!userLike) return 'Пользователь';
-  if (userLike.username) return `@${escapeHtml(userLike.username)}`;
-  return escapeHtml(userLike.firstName || userLike.first_name || `ID ${userLike.id}`);
-}
-function rankInfo(rank) {
-  return ADMIN_RANKS[Number(rank)] || ADMIN_RANKS[0];
-}
-function levelFromXp(xp) {
-  return Math.floor(Math.sqrt((xp || 0) / 10)) + 1;
-}
-function levelTitle(level) {
-  if (level >= 50) return 'Король чата';
-  if (level >= 30) return 'Душа беседы';
-  if (level >= 20) return 'Легенда чата';
-  if (level >= 10) return 'Свой человек';
-  if (level >= 5) return 'Активный';
-  return 'Новичок';
-}
-function todayKey() { return new Date().toISOString().slice(0, 10); }
-function nowTs() { return Date.now(); }
-function pushHistory(chat, userId, item) {
-  const user = chat.users[String(userId)];
-  if (!user) return;
-  user.history ||= [];
-  user.history.unshift({ date: new Date().toISOString(), ...item });
-  user.history = user.history.slice(0, 50);
-}
-async function logAction(ctx, text) {
+
+async function getEffectiveRank(chatId, userId) {
+  const uid = parseInt(userId, 10);
+  // OWNER_ID from env
+  if (OWNER_ID && uid === OWNER_ID) return 100;
+  // Telegram creator
   try {
-    const chat = getChatDB(ctx.chat.id);
-    chat.logs.unshift({ date: new Date().toISOString(), text: text.replace(/<[^>]*>/g, '') });
-    chat.logs = chat.logs.slice(0, 100);
-    saveDB();
-    if (chat.settings.logChatId) {
-      await ctx.telegram.sendMessage(chat.settings.logChatId, `📢 <b>Лог действия</b>\n\n${text}`, { parse_mode: 'HTML' }).catch(() => {});
-    }
-  } catch (error) {
-    console.error('logAction error:', error);
-  }
+    const m = await bot.getChatMember(chatId, uid);
+    if (m.status === 'creator') return 100;
+  } catch (_) {}
+  // global admin
+  const ga = db.globalAdmins[String(uid)];
+  const globalRank = ga ? ga.rank : 0;
+  // local admin
+  const u = getUser(chatId, uid);
+  const localRank = u.adminRank || 0;
+  return Math.max(globalRank, localRank);
 }
-async function getTelegramRank(ctx, userId) {
-  try {
-    const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
-    if (member.status === 'creator') return 100;
-    return null;
-  } catch { return null; }
+
+async function canManageTarget(chatId, actorId, targetId) {
+  const aRank = await getEffectiveRank(chatId, actorId);
+  const tRank = await getEffectiveRank(chatId, targetId);
+  return aRank > tRank && aRank >= 30;
 }
-async function getUserAdminRank(ctx, userId) {
-  if (OWNER_ID && Number(userId) === OWNER_ID) return 100;
-  const tgRank = await getTelegramRank(ctx, userId);
-  if (tgRank === 100) return 100;
-  const chat = getChatDB(ctx.chat.id);
-  const u = chat.users[String(userId)];
-  const stored = Number(u?.adminRank || chat.admins[String(userId)] || 0);
-  return stored;
+
+// ── HELPERS ───────────────────────────────────────────────────────
+const esc = s => s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : '';
+
+function mention(user) {
+  if (user.username) return `@${esc(user.username)}`;
+  return esc(user.firstName || user.first_name || String(user.id));
 }
-async function isTelegramAdmin(ctx, userId) {
-  try {
-    const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
-    return ['creator', 'administrator'].includes(member.status);
-  } catch { return false; }
+
+function fmtDur(min) {
+  if (!min || min === Infinity) return 'навсегда';
+  if (min < 60)   return `${min} мин.`;
+  if (min < 1440) return `${Math.round(min/60)} ч.`;
+  return `${Math.round(min/1440)} д.`;
 }
-async function requireGroup(ctx) {
-  if (!isGroup(ctx)) {
-    await ctx.reply('❌ Эта команда работает только в группе.');
-    return false;
-  }
-  return true;
-}
-async function requireRank(ctx, minRank) {
-  const rank = await getUserAdminRank(ctx, ctx.from.id);
-  if (rank < minRank) {
-    return ctx.reply(`❌ Недостаточно прав.\n\nТвой ранг: ${rankInfo(rank).title}\nНужный ранг: ${rankInfo(minRank).title}`), false;
-  }
-  return true;
-}
-async function canManageTarget(ctx, actorId, targetId, action = 'наказать') {
-  const actorRank = await getUserAdminRank(ctx, actorId);
-  const targetRank = await getUserAdminRank(ctx, targetId);
-  if (Number(actorId) === Number(targetId)) return { ok: false, reason: '❌ Нельзя применить действие к самому себе.' };
-  if (targetRank >= actorRank && actorRank < 100) {
-    return { ok: false, reason: `❌ Нельзя ${action} пользователя с рангом выше или равным твоему.\n\nТвой ранг: ${rankInfo(actorRank).title}\nРанг цели: ${rankInfo(targetRank).title}` };
-  }
-  return { ok: true, actorRank, targetRank };
-}
-async function getBotMember(ctx) {
-  return ctx.telegram.getChatMember(ctx.chat.id, ctx.botInfo.id);
-}
-async function checkBotAdmin(ctx) {
-  try {
-    const member = await getBotMember(ctx);
-    if (!['administrator', 'creator'].includes(member.status)) {
-      await ctx.reply('❌ Бот должен быть администратором группы.');
-      return false;
-    }
-    return true;
-  } catch {
-    await ctx.reply('❌ Не удалось проверить права бота.');
-    return false;
-  }
-}
-function resolveTarget(ctx, args, options = {}) {
-  const reply = ctx.message?.reply_to_message?.from;
-  if (reply && !reply.is_bot) {
-    return { id: reply.id, user: reply, rest: args, source: 'reply' };
-  }
-  const first = args[0];
-  if (first && /^-?\d+$/.test(first)) {
-    return { id: Number(first), user: null, rest: args.slice(1), source: 'id' };
-  }
-  if (options.self) return { id: ctx.from.id, user: ctx.from, rest: args, source: 'self' };
-  return null;
-}
-function durationToText(minutes) {
-  if (minutes >= 1440) return `${Math.round(minutes / 1440)} дн.`;
-  if (minutes >= 60) return `${Math.round(minutes / 60)} ч.`;
-  return `${minutes} мин.`;
-}
-async function muteUser(ctx, targetId, minutes = 60, reason = 'без причины', admin = ctx.from) {
-  if (!(await checkBotAdmin(ctx))) return;
-  const actorRank = await getUserAdminRank(ctx, admin.id);
-  const limit = rankInfo(actorRank).muteLimit;
-  if (Number.isFinite(limit) && minutes > limit) {
-    return ctx.reply(`❌ Ты не можешь выдать мут на такой срок.\n\nТвой лимит: ${limit} минут\nТы указал: ${minutes} минут`);
-  }
-  const can = await canManageTarget(ctx, admin.id, targetId, 'замутить');
-  if (!can.ok) return ctx.reply(can.reason);
-  const untilDate = Math.floor(Date.now() / 1000) + Number(minutes) * 60;
-  await ctx.telegram.restrictChatMember(ctx.chat.id, targetId, {
-    until_date: untilDate,
-    permissions: {
-      can_send_messages: false,
-      can_send_audios: false,
-      can_send_documents: false,
-      can_send_photos: false,
-      can_send_videos: false,
-      can_send_video_notes: false,
-      can_send_voice_notes: false,
-      can_send_polls: false,
-      can_send_other_messages: false,
-      can_add_web_page_previews: false
-    }
-  });
-  const chat = getChatDB(ctx.chat.id);
-  if (!chat.users[String(targetId)]) getUserDB(chat, { id: targetId, first_name: `ID ${targetId}` });
-  pushHistory(chat, targetId, { type: 'mute', minutes, reason, adminId: admin.id });
-  saveDB();
-  const text = `🔇 <b>Мут выдан</b>\n\n👤 Пользователь: ${mentionById(targetId, `ID ${targetId}`)}\n🆔 ID: <code>${targetId}</code>\n⏱ Срок: <b>${durationToText(minutes)}</b>\n📌 Причина: <b>${escapeHtml(reason)}</b>\n👮 Выдал: ${mentionUser(admin)}\n\n✅ Мут будет снят автоматически.`;
-  await ctx.reply(text, { parse_mode: 'HTML' });
-  await logAction(ctx, text);
-}
-async function unmuteUser(ctx, targetId) {
-  if (!(await checkBotAdmin(ctx))) return;
-  const can = await canManageTarget(ctx, ctx.from.id, targetId, 'размутить');
-  if (!can.ok) return ctx.reply(can.reason);
-  await ctx.telegram.restrictChatMember(ctx.chat.id, targetId, {
-    permissions: {
-      can_send_messages: true,
-      can_send_audios: true,
-      can_send_documents: true,
-      can_send_photos: true,
-      can_send_videos: true,
-      can_send_video_notes: true,
-      can_send_voice_notes: true,
-      can_send_polls: true,
-      can_send_other_messages: true,
-      can_add_web_page_previews: true
-    }
-  });
-  const chat = getChatDB(ctx.chat.id);
-  pushHistory(chat, targetId, { type: 'unmute', adminId: ctx.from.id });
-  saveDB();
-  const text = `🔊 <b>Мут снят</b>\n\n👤 Пользователь: ${mentionById(targetId, `ID ${targetId}`)}\n🆔 ID: <code>${targetId}</code>\n👮 Снял: ${mentionUser(ctx.from)}\n\n✅ Пользователь снова может писать в чат.`;
-  await ctx.reply(text, { parse_mode: 'HTML' });
-  await logAction(ctx, text);
-}
-async function banUser(ctx, targetId, reason = 'без причины') {
-  if (!(await checkBotAdmin(ctx))) return;
-  const can = await canManageTarget(ctx, ctx.from.id, targetId, 'забанить');
-  if (!can.ok) return ctx.reply(can.reason);
-  await ctx.telegram.banChatMember(ctx.chat.id, targetId);
-  const chat = getChatDB(ctx.chat.id);
-  pushHistory(chat, targetId, { type: 'ban', reason, adminId: ctx.from.id });
-  saveDB();
-  const text = `🚫 <b>Пользователь забанен</b>\n\n👤 Пользователь: ${mentionById(targetId, `ID ${targetId}`)}\n🆔 ID: <code>${targetId}</code>\n📌 Причина: <b>${escapeHtml(reason)}</b>\n👮 Выдал: ${mentionUser(ctx.from)}`;
-  await ctx.reply(text, { parse_mode: 'HTML' });
-  await logAction(ctx, text);
-}
-async function kickUser(ctx, targetId, reason = 'без причины') {
-  if (!(await checkBotAdmin(ctx))) return;
-  const can = await canManageTarget(ctx, ctx.from.id, targetId, 'кикнуть');
-  if (!can.ok) return ctx.reply(can.reason);
-  await ctx.telegram.banChatMember(ctx.chat.id, targetId);
-  await ctx.telegram.unbanChatMember(ctx.chat.id, targetId);
-  const chat = getChatDB(ctx.chat.id);
-  pushHistory(chat, targetId, { type: 'kick', reason, adminId: ctx.from.id });
-  saveDB();
-  const text = `👢 <b>Пользователь кикнут</b>\n\n👤 Пользователь: ${mentionById(targetId, `ID ${targetId}`)}\n🆔 ID: <code>${targetId}</code>\n📌 Причина: <b>${escapeHtml(reason)}</b>\n👮 Выдал: ${mentionUser(ctx.from)}`;
-  await ctx.reply(text, { parse_mode: 'HTML' });
-  await logAction(ctx, text);
-}
-async function warnUser(ctx, targetId, reason = 'без причины') {
-  const can = await canManageTarget(ctx, ctx.from.id, targetId, 'выдать предупреждение');
-  if (!can.ok) return ctx.reply(can.reason);
-  const chat = getChatDB(ctx.chat.id);
-  if (!chat.users[String(targetId)]) getUserDB(chat, { id: targetId, first_name: `ID ${targetId}` });
-  const user = chat.users[String(targetId)];
-  user.inventory ||= {};
-  if ((user.inventory.warnShield || 0) > 0) {
-    user.inventory.warnShield -= 1;
-    saveDB();
-    return ctx.reply(`🛡 У пользователя была защита от предупреждения. Защита использована.`, { parse_mode: 'HTML' });
-  }
-  user.warns ||= [];
-  user.warns.push({ reason, adminId: ctx.from.id, date: new Date().toISOString() });
-  user.warnings = user.warns.length;
-  pushHistory(chat, targetId, { type: 'warn', reason, adminId: ctx.from.id });
-  saveDB();
-  const count = user.warns.length;
-  await ctx.reply(`⚠️ <b>Предупреждение выдано</b>\n\n👤 Пользователь: ${mentionById(targetId, `ID ${targetId}`)}\n🆔 ID: <code>${targetId}</code>\n📌 Причина: <b>${escapeHtml(reason)}</b>\n📊 Предупреждений: <b>${count}/5</b>\n👮 Выдал: ${mentionUser(ctx.from)}`, { parse_mode: 'HTML' });
-  await logAction(ctx, `⚠️ ${mentionById(targetId, `ID ${targetId}`)} получил предупреждение. Причина: ${escapeHtml(reason)}`);
-  if (count === 2) await muteUser(ctx, targetId, 30, '2 предупреждения', ctx.from);
-  else if (count === 3) await muteUser(ctx, targetId, 120, '3 предупреждения', ctx.from);
-  else if (count === 4) await kickUser(ctx, targetId, '4 предупреждения');
-  else if (count >= 5) await banUser(ctx, targetId, '5 предупреждений');
-}
-async function setRank(ctx, targetId, newRank) {
-  const actorRank = await getUserAdminRank(ctx, ctx.from.id);
-  const currentTargetRank = await getUserAdminRank(ctx, targetId);
-  if (newRank >= actorRank && actorRank < 100) {
-    return ctx.reply(`❌ Ты не можешь выдать ранг выше или равный своему.\n\nТвой ранг: ${rankInfo(actorRank).title}\nЗапрошенный ранг: ${rankInfo(newRank).title}`);
-  }
-  if (currentTargetRank >= actorRank && actorRank < 100) {
-    return ctx.reply(`❌ Ты не можешь управлять пользователем с рангом выше или равным своему.`);
-  }
-  const chat = getChatDB(ctx.chat.id);
-  if (!chat.users[String(targetId)]) getUserDB(chat, { id: targetId, first_name: `ID ${targetId}` });
-  chat.users[String(targetId)].adminRank = Number(newRank);
-  if (newRank > 0) chat.admins[String(targetId)] = Number(newRank);
-  else delete chat.admins[String(targetId)];
-  pushHistory(chat, targetId, { type: 'rank', newRank, adminId: ctx.from.id });
-  saveDB();
-  const text = newRank > 0
-    ? `👑 <b>Новый ранг выдан</b>\n\n👤 Пользователь: ${mentionById(targetId, `ID ${targetId}`)}\n🆔 ID: <code>${targetId}</code>\n🎚 Новый ранг: <b>${rankInfo(newRank).title}</b>\n📊 Уровень: <b>${newRank}</b>\n👮 Выдал: ${mentionUser(ctx.from)}\n\n✅ Пользователь получил новые права администрации.`
-    : `👤 <b>Ранг снят</b>\n\n👤 Пользователь: ${mentionById(targetId, `ID ${targetId}`)}\n🆔 ID: <code>${targetId}</code>\n📉 Новый статус: <b>обычный пользователь</b>\n👮 Снял: ${mentionUser(ctx.from)}`;
-  await ctx.reply(text, { parse_mode: 'HTML' });
-  await logAction(ctx, text);
-}
-function normalizeUrl(text) {
-  const match = String(text || '').match(/https?:\/\/[^\s]+/i);
-  return match ? match[0].replace(/[)\]}>,.!?]+$/g, '').trim() : null;
-}
+
+function todayKey()  { return new Date().toISOString().slice(0,10); }
+function weekKey()   { const d=new Date(); const j=new Date(d.getFullYear(),0,1); return `${d.getFullYear()}-W${String(Math.ceil(((d-j)/86400000+j.getDay()+1)/7)).padStart(2,'0')}`; }
+function monthKey()  { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+
 function isVideoLink(text) {
-  const url = normalizeUrl(text);
-  return url && /(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com|youtube\.com|youtu\.be|instagram\.com)/i.test(url);
+  return /https?:\/\/(www\.)?(tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com|youtube\.com|youtu\.be|instagram\.com|www\.instagram\.com)/i.test(text || '');
 }
-function hasLink(text) { return /(https?:\/\/|t\.me\/|telegram\.me\/|www\.)/i.test(text || ''); }
-function isAllowedVideoLink(text) { return /(youtube\.com|youtu\.be|tiktok\.com|vm\.tiktok\.com|vt\.tiktok\.com)/i.test(text || ''); }
-async function runYtDlp(command, args) {
-  return execFileAsync(command, args, { timeout: 180000, maxBuffer: 1024 * 1024 * 20 });
+
+function extractVideoUrl(text) {
+  const match = String(text || '').match(/https?:\/\/\S+/i);
+  return match ? match[0] : null;
 }
-function findDownloadedFile(prefix) {
-  const files = fs.readdirSync(DOWNLOAD_DIR);
-  const found = files.find(f => f.startsWith(prefix));
-  return found ? path.join(DOWNLOAD_DIR, found) : null;
-}
+
 async function downloadVideo(url) {
-  const prefix = `video_${Date.now()}_${Math.floor(Math.random() * 99999)}`;
-  const outputTemplate = path.join(DOWNLOAD_DIR, `${prefix}.%(ext)s`);
-  const baseArgs = ['--no-playlist', '--no-check-certificates', '--force-overwrites', '--no-warnings', '-f', 'best[ext=mp4]/best', '--merge-output-format', 'mp4', '-o', outputTemplate, url];
-  const attempts = [
-    { command: 'py', args: ['-m', 'yt_dlp', ...baseArgs] },
-    { command: 'python', args: ['-m', 'yt_dlp', ...baseArgs] },
-    { command: 'python3', args: ['-m', 'yt_dlp', ...baseArgs] },
-    { command: 'yt-dlp', args: baseArgs }
-  ];
-  const errors = [];
-  for (const a of attempts) {
-    try {
-      await runYtDlp(a.command, a.args);
-      const file = findDownloadedFile(prefix);
-      if (file && fs.existsSync(file)) return file;
-      errors.push(`${a.command}: файл не найден`);
-    } catch (e) { errors.push(`${a.command}: ${e.stderr || e.message}`); }
-  }
-  throw new Error(errors.join('\n'));
+  if (!fs.existsSync(DOWNLOAD_DIR)) fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+  const outputPath = path.join(DOWNLOAD_DIR, `video_${Date.now()}.mp4`);
+
+  await execFileAsync('yt-dlp', [
+    '-f',
+    'mp4/best',
+    '--merge-output-format',
+    'mp4',
+    '-o',
+    outputPath,
+    url
+  ], { timeout: 120000 });
+
+  return outputPath;
 }
 
-function weekKey(date = new Date()) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-  return `${d.getUTCFullYear()}-${String(weekNo).padStart(2, '0')}`;
-}
-function monthKey(date = new Date()) {
-  return date.toISOString().slice(0, 7);
-}
-function ensurePeriodStats(user) {
-  user.messagesDay ||= {};
-  user.messagesWeek ||= {};
-  user.messagesMonth ||= {};
-}
-function callKeyboard(actorId) {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback('👥 Все', `call:all:${actorId}`), Markup.button.callback('🛡 Админы', `call:admins:${actorId}`)],
-    [Markup.button.callback('👑 Владельцы', `call:owners:${actorId}`), Markup.button.callback('❌ Отмена', `cancel:${actorId}`)]
-  ]);
-}
-function fridayParts(timezone = 'Asia/Almaty') {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
-    weekday: 'short',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }).formatToParts(new Date());
-  const data = {};
-  for (const part of parts) data[part.type] = part.value;
-  return {
-    weekday: data.weekday,
-    date: `${data.year}-${data.month}-${data.day}`,
-    time: `${data.hour}:${data.minute}`
-  };
-}
-async function sendFridayPost(chatId) {
-  const chat = getChatDB(chatId);
-  const cfg = chat.settings.fridayPost;
-  await bot.telegram.sendMessage(chatId, cfg.text || '🎉 Пятница пришла! Всем хорошего настроения ❤️', { parse_mode: 'HTML' }).catch(console.error);
-}
-function startFridayScheduler() {
-  setInterval(async () => {
-    try {
-      const db = loadDB();
-      for (const chatId of Object.keys(db.chats || {})) {
-        const chat = getChatDB(chatId);
-        const cfg = chat.settings.fridayPost;
-        if (!cfg?.enabled) continue;
-        const now = fridayParts(cfg.timezone || 'Asia/Almaty');
-        if (now.weekday !== 'Fri') continue;
-        if (now.time !== (cfg.time || '18:00')) continue;
-        if (cfg.lastSentDate === now.date) continue;
-        cfg.lastSentDate = now.date;
-        saveDB();
-        await sendFridayPost(chatId);
-      }
-    } catch (error) {
-      console.error('friday scheduler error:', error);
-    }
-  }, 60 * 1000);
-}
+async function handleVideoDownload(msg) {
+  const url = extractVideoUrl(msg.text || msg.caption || '');
+  if (!url) return false;
 
+  let loadingMessage = null;
+  let videoPath = null;
 
-async function sendCallByMode(ctx, mode) {
-  const chat = getChatDB(ctx.chat.id);
+  try {
+    loadingMessage = await bot.sendMessage(msg.chat.id, '⏳ Скачиваю видео, подожди немного...');
+    videoPath = await downloadVideo(url);
 
-  let minRank = 40;
-  if (mode === 'all') minRank = 60;
-  if (mode === 'admins') minRank = 40;
-  if (mode === 'owners') minRank = 80;
-
-  if (!(await requireRank(ctx, minRank))) return;
-
-  const now = nowTs();
-  const lastCall = chat.lastCallAt || 0;
-  const cooldown = 10 * 60 * 1000;
-
-  if (now - lastCall < cooldown) {
-    const left = Math.ceil((cooldown - (now - lastCall)) / 60000);
-    return ctx.reply(`⏳ Созыв уже был недавно. Подожди ещё ${left} мин.`);
-  }
-
-  let users = Object.values(chat.users || {});
-
-  if (mode === 'admins') {
-    users = users.filter((u) => Number(u.adminRank || chat.admins[String(u.id)] || 0) >= 10);
-  }
-
-  if (mode === 'owners') {
-    users = users.filter((u) => {
-      const rank = Number(u.adminRank || chat.admins[String(u.id)] || 0);
-      return rank >= 95 || Number(u.id) === OWNER_ID;
+    await bot.sendVideo(msg.chat.id, videoPath, {
+      caption: '✅ Видео готово!'
     });
-  }
 
-  if (mode === 'all') {
-    users = users.filter((u) => !u.is_bot);
-  }
+    if (loadingMessage) {
+      await bot.deleteMessage(msg.chat.id, loadingMessage.message_id).catch(() => {});
+    }
 
-  users = users.filter((u) => u && u.id && !u.is_bot);
-
-  if (!users.length) {
-    return ctx.reply('❌ Некого созывать. Бот ещё не знает участников этой категории.');
-  }
-
-  chat.lastCallAt = now;
-  saveDB();
-
-  const title =
-    mode === 'all'
-      ? '👥 Все участники'
-      : mode === 'admins'
-        ? '🛡 Администрация'
-        : '👑 Владельцы';
-
-  await ctx.reply(
-    `📢 <b>Созыв: ${title}</b>\n\n👮 Созвал: ${mentionUser(ctx.from)}`,
-    { parse_mode: 'HTML' }
-  );
-
-  for (let i = 0; i < users.length; i += 25) {
-    const chunk = users.slice(i, i + 25);
-    const mentions = chunk
-      .map((u) => mentionById(u.id, u.firstName || u.username || `ID ${u.id}`))
-      .join(' ');
-
-    await ctx.reply(mentions, { parse_mode: 'HTML' });
-  }
-}
-
-
-function rememberChatUserForCalls(ctx, userLike) {
-  if (!ctx || !ctx.chat || !userLike || userLike.is_bot) return null;
-
-  const chat = getChatDB(ctx.chat.id);
-  const user = getUserDB(chat, userLike);
-
-  user.id = Number(userLike.id);
-  user.firstName = userLike.first_name || userLike.firstName || user.firstName || '';
-  user.username = userLike.username || user.username || '';
-  user.isBot = Boolean(userLike.is_bot);
-  user.canCall = true;
-  user.leftChat = false;
-  user.chatId = ctx.chat.id;
-  user.chatTitle = ctx.chat.title || chat.title || 'эта беседа';
-  user.lastSeenAt = new Date().toISOString();
-
-  if (!user.firstSeenAt) {
-    user.firstSeenAt = new Date().toISOString();
-  }
-
-  return user;
-}
-
-function markUserLeftChat(ctx, userLike) {
-  if (!ctx || !ctx.chat || !userLike) return;
-
-  const chat = getChatDB(ctx.chat.id);
-  const user = getUserDB(chat, userLike);
-
-  user.leftChat = true;
-  user.canCall = false;
-  user.leftAt = new Date().toISOString();
-
-  saveDB();
-}
-
-function getCallableUsersFromDB(chat, mode = 'all') {
-  let users = Object.values(chat.users || {});
-
-  users = users.filter((u) => {
-    if (!u) return false;
-    if (!u.id) return false;
-    if (u.isBot) return false;
-    if (u.leftChat) return false;
-    if (u.canCall === false) return false;
+    if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
     return true;
-  });
+  } catch (error) {
+    console.error('Ошибка скачивания видео:', error.message);
 
-  if (mode === 'admins') {
-    users = users.filter((u) => {
-      const rank = Number(u.adminRank || chat.admins[String(u.id)] || 0);
-      return rank >= 10;
-    });
-  }
-
-  if (mode === 'owners') {
-    users = users.filter((u) => {
-      const rank = Number(u.adminRank || chat.admins[String(u.id)] || 0);
-      return rank >= 95 || Number(u.id) === OWNER_ID;
-    });
-  }
-
-  const unique = new Map();
-
-  for (const user of users) {
-    unique.set(String(user.id), user);
-  }
-
-  return Array.from(unique.values());
-}
-
-
-function ensureAutoFeatures(chat) {
-  if (!chat.settings) chat.settings = {};
-
-  if (!chat.settings.autoFeatures) {
-    chat.settings.autoFeatures = {
-      enabled: true,
-      timezone: 'Asia/Almaty',
-      birthdayTime: '09:00',
-      weeklyReportTime: '20:00',
-      lastWeeklyReportDate: null
-    };
-  }
-
-  if (!chat.reminders) chat.reminders = [];
-  return chat.settings.autoFeatures;
-}
-
-function getAutoTimeParts(timezone = 'Asia/Almaty') {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
-    weekday: 'short',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }).formatToParts(new Date());
-
-  const data = {};
-  for (const part of parts) data[part.type] = part.value;
-
-  return {
-    weekday: data.weekday,
-    date: data.year + '-' + data.month + '-' + data.day,
-    monthDay: data.day + '.' + data.month,
-    time: data.hour + ':' + data.minute
-  };
-}
-
-function normalizeBirthdayDayMonth(day, month) {
-  const d = Number(day);
-  const m = Number(month);
-
-  if (!d || !m) return null;
-  if (d < 1 || d > 31) return null;
-  if (m < 1 || m > 12) return null;
-
-  return {
-    day: String(d).padStart(2, '0'),
-    month: String(m).padStart(2, '0')
-  };
-}
-
-async function tryAutoSaveBirthday(ctx, text, user) {
-  const lower = String(text || '').toLowerCase();
-
-  const hasBirthdayWords =
-    lower.includes('др') ||
-    lower.includes('днюха') ||
-    lower.includes('день рождения') ||
-    lower.includes('родился') ||
-    lower.includes('родилась');
-
-  if (!hasBirthdayWords) return false;
-
-  const match = lower.match(/(\d{1,2})[\.\/-](\d{1,2})/);
-
-  if (!match) return false;
-
-  const date = normalizeBirthdayDayMonth(match[1], match[2]);
-  if (!date) return false;
-
-  user.birthday = {
-    day: date.day,
-    month: date.month,
-    setAt: new Date().toISOString()
-  };
-
-  if (!user.achievements) user.achievements = [];
-
-  if (!user.achievements.includes('birthday_set')) {
-    user.achievements.push('birthday_set');
-  }
-
-  saveDB();
-
-  await ctx.reply(
-    `🎂 <b>День рождения запомнил!</b>
-
-👤 Пользователь: ${mentionUser(ctx.from)}
-📅 Дата: <b>${date.day}.${date.month}</b>
-
-В этот день бот поздравит тебя в беседе 🥳`,
-    { parse_mode: 'HTML' }
-  );
-
-  return true;
-}
-
-function parseNaturalReminder(text) {
-  const raw = String(text || '').trim();
-  const lower = raw.toLowerCase();
-
-  if (!lower.startsWith('напомни')) return null;
-
-  let match = lower.match(/^напомни\s+через\s+(\d+)\s*(минут|минуту|минуты|мин|час|часа|часов)\s+(.+)/i);
-
-  if (match) {
-    const amount = Number(match[1]);
-    const unit = match[2];
-    const reminderText = raw.slice(match[0].indexOf(match[3])).trim();
-
-    let ms = 0;
-
-    if (unit.startsWith('мин')) ms = amount * 60 * 1000;
-    else ms = amount * 60 * 60 * 1000;
-
-    return {
-      dueAt: Date.now() + ms,
-      text: reminderText,
-      human: 'через ' + amount + ' ' + unit
-    };
-  }
-
-  match = lower.match(/^напомни\s+завтра\s+в\s+(\d{1,2}):(\d{2})\s+(.+)/i);
-
-  if (match) {
-    const hour = Number(match[1]);
-    const minute = Number(match[2]);
-
-    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
-      const due = new Date();
-      due.setDate(due.getDate() + 1);
-      due.setHours(hour, minute, 0, 0);
-
-      const reminderText = raw.slice(match[0].indexOf(match[3])).trim();
-
-      return {
-        dueAt: due.getTime(),
-        text: reminderText,
-        human: 'завтра в ' + String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0')
-      };
+    if (loadingMessage) {
+      await bot.deleteMessage(msg.chat.id, loadingMessage.message_id).catch(() => {});
     }
-  }
 
+    await bot.sendMessage(
+      msg.chat.id,
+      '❌ Не получилось скачать видео. Возможно, ссылка закрытая, видео защищено или yt-dlp не установлен.'
+    );
+
+    if (videoPath && fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
+    return true;
+  }
+}
+
+async function tgReply(chatId, text, extra = {}) {
+  try { return await bot.sendMessage(chatId, text, { parse_mode: 'HTML', ...extra }); }
+  catch (e) { console.error('tgReply error:', e.message); }
+}
+
+async function replyTo(msg, text, extra = {}) {
+  return tgReply(msg.chat.id, text, extra);
+}
+
+async function sendLog(chatId, text) {
+  try {
+    const chat = getChat(chatId);
+    if (!chat.logs) chat.logs = [];
+    chat.logs.push({ time: Date.now(), text: text.replace(/<[^>]+>/g,'') });
+    if (chat.logs.length > 500) chat.logs = chat.logs.slice(-500);
+    if (chat.settings.logChatId) {
+      await bot.sendMessage(chat.settings.logChatId, `📋 <b>Лог</b>\n${text}`, { parse_mode: 'HTML' });
+    }
+    saveDB();
+  } catch (_) {}
+}
+
+function addHistory(chatId, userId, action) {
+  const u = getUser(chatId, userId);
+  if (!u.history) u.history = [];
+  u.history.push({ ...action, time: Date.now() });
+  if (u.history.length > 100) u.history = u.history.slice(-100);
+  saveDB();
+}
+
+async function resolveTarget(msg, args, chatId) {
+  if (msg.reply_to_message && msg.reply_to_message.from) {
+    const u = msg.reply_to_message.from;
+    return { id: u.id, firstName: u.first_name, username: u.username, args };
+  }
+  if (args[0] && /^\d+$/.test(args[0])) {
+    const id = parseInt(args[0], 10);
+    try {
+      const m = await bot.getChatMember(chatId, id);
+      return { id: m.user.id, firstName: m.user.first_name, username: m.user.username, args: args.slice(1) };
+    } catch (_) { return { id, firstName: String(id), username: null, args: args.slice(1) }; }
+  }
   return null;
 }
 
-async function tryAutoCreateReminder(ctx, text) {
-  const reminder = parseNaturalReminder(text);
-  if (!reminder) return false;
+function isGroup(msg) { return msg.chat.type === 'group' || msg.chat.type === 'supergroup'; }
 
-  const chat = getChatDB(ctx.chat.id);
-  ensureAutoFeatures(chat);
+// ── COMMAND ALIASES & PARSER ──────────────────────────────────────
+const CMD_ALIASES = {
+  // core
+  help:          ['help','помощь','команды','commands'],
+  rules:         ['rules','правила'],
+  setrules:      ['setrules','установитьправила'],
+  setup:         ['setup','настроить'],
+  profile:       ['profile','профиль','me','я профиль'],
+  id:            ['id'],
+  top:           ['top','топ'],
+  level:         ['level','уровень'],
+  history:       ['history','история'],
+  actions:       ['actions','действия'],
+  admins:        ['admins','админы'],
+  rank:          ['rank','ранг'],
+  ranks:         ['ranks','ранги'],
+  db:            ['db','база','бд'],
+  remember:      ['remember','запомнить'],
+  // moderation
+  mute:          ['mute','мут'],
+  unmute:        ['unmute','унмут','размут'],
+  ban:           ['ban','бан'],
+  unban:         ['unban','разбан'],
+  kick:          ['kick','кик'],
+  warn:          ['warn','пред'],
+  unwarn:        ['unwarn','унпред'],
+  warns:         ['warns','преды'],
+  del:           ['del','удалить'],
+  // rank assign
+  setrank:       ['setrank','выдатьранг'],
+  delrank:       ['delrank','снятьранг'],
+  owner:         ['owner','владелец'],
+  deputy:        ['deputy','зам','заместитель'],
+  headadmin:     ['headadmin','га','главныйадмин','главадмин'],
+  curator:       ['curator','куратор'],
+  senioradmin:   ['senioradmin','са','старшийадмин','стадмин'],
+  admin:         ['admin','админ'],
+  junioradmin:   ['junioradmin','ма','младшийадмин','младший'],
+  seniormoder:   ['seniormoder','см','старшиймодер','стмодер'],
+  moder:         ['moder','модер','модератор'],
+  helper:        ['helper','помощник'],
+  trainee:       ['trainee','стажер','стажёр'],
+  user:          ['user','юзер','пользователь'],
+  transferowner: ['transferowner','передатьвладельца'],
+  confirmowner:  ['confirmowner','подтвердитьвладельца'],
+  // global ranks
+  gsetrank:      ['gsetrank','глобалранг'],
+  gdelrank:      ['gdelrank','снятьглобал'],
+  globaladmins:  ['globaladmins','глобаладмины'],
+  // settings
+  antispam:      ['antispam','антиспам'],
+  antilinks:     ['antilinks','ссылки'],
+  antimat:       ['antimat','антимат'],
+  welcome:       ['welcome','приветствие'],
+  goodbye:       ['goodbye','прощание'],
+  setwelcome:    ['setwelcome','сетпривет'],
+  setgoodbye:    ['setgoodbye','сетпрощание'],
+  settings:      ['settings','настройки'],
+  setlog:        ['setlog','сетлог'],
+  logs:          ['logs','логи'],
+  badwords:      ['badwords','матлист'],
+  addbadword:    ['addbadword','добавитьмат'],
+  delbadword:    ['delbadword','удалитьмат'],
+  // economy
+  balance:       ['balance','баланс','монеты'],
+  daily:         ['daily','ежедневно','бонус','bonus'],
+  give:          ['give','передать'],
+  coins:         ['coins','выдатьмонеты'],
+  shop:          ['shop','магазин'],
+  buy:           ['buy','купить'],
+  title:         ['title','титул'],
+  removetitle:   ['removetitle','снятьтитул'],
+  // social
+  rep:           ['rep','реп'],
+  minusrep:      ['minusrep','минусреп'],
+  myrep:         ['myrep','мояреп'],
+  // call
+  call:          ['call','калл','созыв'],
+  // friday
+  fridaypost:    ['fridaypost','пятница'],
+  setfriday:     ['setfriday','сетпятница'],
+  setfridaytime: ['setfridaytime','сетвремяпятницы'],
+  fridaynow:     ['fridaynow','пятницасейчас'],
+  // relations
+  love:          ['love','любовь'],
+  couple:        ['couple','пара'],
+  breakup:       ['breakup','расстаться'],
+  hug:           ['hug','обнять'],
+  kiss:          ['kiss','поцеловать'],
+  slap:          ['slap','шлепнуть','шлёпнуть'],
+  pat:           ['pat','погладить'],
+  bite:          ['bite','укусить'],
+  poke:          ['poke','тыкнуть'],
+  feed:          ['feed','покормить'],
+  tea:           ['tea','чай'],
+  flower:        ['flower','цветок'],
+  compliment:    ['compliment','комплимент']
+};
 
-  chat.reminders.push({
-    id: 'rem_' + Date.now() + '_' + Math.floor(Math.random() * 99999),
-    userId: ctx.from.id,
-    userName: ctx.from.first_name || ctx.from.username || 'Пользователь',
-    text: reminder.text,
-    dueAt: reminder.dueAt,
-    createdAt: new Date().toISOString(),
-    done: false
-  });
+// reverse map
+const CMD_MAP = {};
+for (const [canon, list] of Object.entries(CMD_ALIASES)) {
+  for (const a of list) CMD_MAP[a.toLowerCase()] = canon;
+}
+// Set of first-words for no-slash detection
+const CMD_WORDS = new Set(Object.keys(CMD_MAP));
 
-  saveDB();
+/**
+ * parseCommand(text) → { command, raw, args, argText } | null
+ * Works both with and without leading slash.
+ * Ordinary messages like "привет" or "я тут" return null.
+ * Special case: "я профиль" → profile (multi-word alias).
+ */
+function parseCommand(text) {
+  if (!text) return null;
+  const trimmed = text.trim();
 
-  await ctx.reply(
-    `⏰ <b>Напоминание создано!</b>
+  // multi-word aliases first
+  const lower = trimmed.toLowerCase();
+  for (const [alias, canon] of Object.entries(CMD_MAP)) {
+    if (alias.includes(' ') && lower.startsWith(alias)) {
+      const rest = trimmed.slice(alias.length).trim();
+      return { command: canon, raw: alias, args: rest ? rest.split(/\s+/) : [], argText: rest };
+    }
+  }
 
-👤 Для: ${mentionUser(ctx.from)}
-📝 Текст: <b>${escapeHtml(reminder.text)}</b>
-⏳ Когда: <b>${escapeHtml(reminder.human)}</b>`,
-    { parse_mode: 'HTML' }
-  );
+  let raw;
+  if (trimmed.startsWith('/')) {
+    raw = trimmed.slice(1).split(/[\s@]/)[0].toLowerCase();
+    if (BOT_USERNAME) raw = raw.replace(`@${BOT_USERNAME}`, '');
+  } else {
+    const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
+    if (!CMD_WORDS.has(firstWord)) return null;
+    raw = firstWord;
+  }
 
+  const canon = CMD_MAP[raw];
+  if (!canon) return null;
+  const rest = trimmed.slice(trimmed.indexOf(raw) + raw.length).trim();
+  const args = rest ? rest.split(/\s+/) : [];
+  return { command: canon, raw, args, argText: rest };
+}
+
+// ── GUARD HELPERS ─────────────────────────────────────────────────
+async function guardGroup(msg) {
+  if (!isGroup(msg)) { await replyTo(msg, '❌ Команда работает только в группах.'); return false; }
   return true;
 }
 
-async function checkAutoAchievements(ctx, user) {
-  if (!user) return;
-
-  if (!Array.isArray(user.achievements)) {
-    user.achievements = [];
+async function guardRank(msg, minRank, label) {
+  const rank = await getEffectiveRank(msg.chat.id, msg.from.id);
+  if (rank < minRank) {
+    const ri = getRankInfo(rank);
+    await replyTo(msg, `❌ <b>Недостаточно прав</b>\nТвой ранг: ${ri.emoji} ${ri.name} (${rank})\nТребуется: ${minRank}+`);
+    return false;
   }
+  return true;
+}
 
-  // Убираем дубли старых ачивок
-  user.achievements = Array.from(new Set(user.achievements));
+async function guardTarget(msg, args, chatId) {
+  const t = await resolveTarget(msg, args, chatId);
+  if (!t) {
+    await replyTo(msg, '❌ <b>Пользователь не указан</b>\n\n• /команда ID причина\n• Или ответь на сообщение');
+    return null;
+  }
+  return t;
+}
 
-  const earned = [];
+async function guardCanPunish(msg, targetId) {
+  const chatId  = msg.chat.id;
+  const actorId = msg.from.id;
+  if (targetId === actorId)  { await replyTo(msg, '❌ Нельзя наказать самого себя.'); return false; }
+  if (targetId === _botId)   { await replyTo(msg, '❌ Нельзя наказать бота.');         return false; }
+  if (!await canManageTarget(chatId, actorId, targetId)) {
+    const tr = getRankInfo(await getEffectiveRank(chatId, targetId));
+    const ar = getRankInfo(await getEffectiveRank(chatId, actorId));
+    await replyTo(msg, `❌ Нельзя наказать этого пользователя.\nТвой ранг: ${ar.emoji} ${ar.name}\nРанг цели: ${tr.emoji} ${tr.name}`);
+    return false;
+  }
+  return true;
+}
 
-  function addAchievement(id, title, rewardCoins) {
-    if (user.achievements.includes(id)) return;
-
-    user.achievements.push(id);
-
-    user.balance = Number(user.balance || 0) + rewardCoins;
-    user.coins = user.balance;
-
-    earned.push({
-      id,
-      title,
-      rewardCoins
+// ── CORE MOD ACTIONS ──────────────────────────────────────────────
+async function doMute(chatId, targetId, minutes, reason, byName, silent = false) {
+  try {
+    const until = minutes === Infinity ? 0 : Math.floor(Date.now()/1000) + minutes * 60;
+    await bot.restrictChatMember(chatId, targetId, {
+      permissions: { can_send_messages: false, can_send_media_messages: false,
+                     can_send_other_messages: false, can_add_web_page_previews: false },
+      until_date: until
     });
-  }
+    const u = getUser(chatId, targetId);
+    addHistory(chatId, targetId, { type:'mute', reason, by: byName, duration: minutes });
+    const log = `🔇 <b>Мут</b>\n👤 ${mention(u)}\n🆔 ${targetId}\n⏱ ${fmtDur(minutes)}\n📌 ${esc(reason)}\n👮 ${esc(byName)}`;
+    await sendLog(chatId, log);
+    return log;
+  } catch (e) { if (!silent) throw e; console.error('doMute:', e.message); }
+}
 
-  const messages = Number(user.messages || 0);
-  const reputation = Number(user.reputation || 0);
-  const warnsCount = Number(user.warns?.length || 0);
+async function doUnmute(chatId, targetId, byName) {
+  await bot.restrictChatMember(chatId, targetId, {
+    permissions: { can_send_messages: true, can_send_media_messages: true,
+                   can_send_other_messages: true, can_add_web_page_previews: true }
+  });
+  addHistory(chatId, targetId, { type:'unmute', by: byName });
+  const u   = getUser(chatId, targetId);
+  const log = `🔊 <b>Мут снят</b>\n👤 ${mention(u)}\n🆔 ${targetId}\n👮 ${esc(byName)}`;
+  await sendLog(chatId, log);
+  return log;
+}
 
-  // ВАЖНО:
-  // Мелкие ачивки типа "Первое сообщение" больше НЕ выдаём.
-  // Бот просто считает активность внутри БД.
-  // Сообщение отправляется только за крупные достижения.
+async function doBan(chatId, targetId, reason, byName) {
+  await bot.banChatMember(chatId, targetId);
+  const u = getUser(chatId, targetId);
+  addHistory(chatId, targetId, { type:'ban', reason, by: byName });
+  const log = `🚫 <b>Бан</b>\n👤 ${mention(u)}\n🆔 ${targetId}\n📌 ${esc(reason)}\n👮 ${esc(byName)}`;
+  await sendLog(chatId, log);
+  return log;
+}
 
-  if (messages >= 100) {
-    addAchievement("messages_100", "💬 100 сообщений", 300);
-  }
+async function doUnban(chatId, targetId, byName) {
+  await bot.unbanChatMember(chatId, targetId, { only_if_banned: true });
+  const u = getUser(chatId, targetId);
+  addHistory(chatId, targetId, { type:'unban', by: byName });
+  const log = `✅ <b>Разбан</b>\n👤 ${mention(u)}\n🆔 ${targetId}\n👮 ${esc(byName)}`;
+  await sendLog(chatId, log);
+  return log;
+}
 
-  if (messages >= 500) {
-    addAchievement("messages_500", "🔥 500 сообщений", 1000);
-  }
+async function doKick(chatId, targetId, reason, byName) {
+  await bot.banChatMember(chatId, targetId);
+  await bot.unbanChatMember(chatId, targetId);
+  const u = getUser(chatId, targetId);
+  addHistory(chatId, targetId, { type:'kick', reason, by: byName });
+  const log = `👢 <b>Кик</b>\n👤 ${mention(u)}\n🆔 ${targetId}\n📌 ${esc(reason)}\n👮 ${esc(byName)}`;
+  await sendLog(chatId, log);
+  return log;
+}
 
-  if (messages >= 1000) {
-    addAchievement("messages_1000", "👑 1000 сообщений", 2500);
-  }
+async function doWarn(chatId, targetId, reason, byName, replyMsg) {
+  const u = getUser(chatId, targetId);
+  if (!u.warns) u.warns = [];
 
-  if (messages >= 5000) {
-    addAchievement("messages_5000", "💎 5000 сообщений", 7000);
-  }
-
-  if (reputation >= 10) {
-    addAchievement("rep_10", "⭐ 10 репутации", 500);
-  }
-
-  if (warnsCount === 0 && messages >= 100) {
-    addAchievement("clean_100", "🛡 100 сообщений без предупреждений", 700);
-  }
-
-  if (!earned.length) {
+  // warn shield
+  if (u.inventory?.warnShield > 0) {
+    u.inventory.warnShield--;
     saveDB();
+    if (replyMsg) await replyTo(replyMsg, `🛡 Щит сработал! ${mention(u)} защищён. Щитов: ${u.inventory.warnShield}`);
     return;
   }
 
+  u.warns.push({ reason, by: byName || 'Авто', time: Date.now() });
+  const count = u.warns.length;
   saveDB();
 
-  const achievementLines = earned
-    .map((item) => {
-      return "✨ " + item.title + "\n   🎁 Награда: <b>+" + item.rewardCoins + " монет</b>";
-    })
-    .join("\n\n");
+  const log = `⚠️ <b>Предупреждение</b>\n👤 ${mention(u)}\n🆔 ${targetId}\n📌 ${esc(reason)}\n📊 ${count}/5\n👮 ${esc(byName || 'Авто')}`;
+  await sendLog(chatId, log);
 
-  const totalReward = earned.reduce((sum, item) => sum + item.rewardCoins, 0);
+  let autoText = '';
+  if (count === 2) autoText = '\n⏳ Автомут: 30 мин.';
+  else if (count === 3) autoText = '\n⏳ Автомут: 2 часа.';
+  else if (count === 4) autoText = '\n⏳ Автокик.';
+  else if (count >= 5)  autoText = '\n⏳ Автобан.';
+  if (replyMsg) await replyTo(replyMsg, log + autoText);
 
-  const userName = ctx.from.username
-    ? "@" + escapeHtml(ctx.from.username)
-    : escapeHtml(ctx.from.first_name || "Пользователь");
-
-  return ctx.reply(
-    `🎉 <b>Новое крупное достижение!</b>
-
-👤 <b>${userName}</b>
-
-${achievementLines}
-
-━━━━━━━━━━━━━━
-💰 <b>Итог награды:</b> +${totalReward} монет
-🏆 <b>Всего крупных ачивок:</b> ${user.achievements.filter(a => !["first_message", "birthday_set"].includes(a)).length}
-🪙 <b>Баланс:</b> ${user.balance || 0} монет`,
-    { parse_mode: "HTML" }
-  );
+  if (count === 2) await doMute(chatId, targetId, 30,  'Авто: 2 преда',   'Бот', true);
+  else if (count === 3) await doMute(chatId, targetId, 120, 'Авто: 3 преда',   'Бот', true);
+  else if (count === 4) await doKick(chatId, targetId, 'Авто: 4 преда',   'Бот');
+  else if (count >= 5)  await doBan(chatId,  targetId, 'Авто: 5 предов',  'Бот');
 }
 
-async function processAutoFeaturesForMessage(ctx, text, user) {
-  if (!ctx.chat || !ctx.from || ctx.from.is_bot) return;
-  if (!user) return;
+// ── QUICK RANK ────────────────────────────────────────────────────
+async function quickRank(msg, args, targetRank, chatId) {
+  if (!await guardGroup(msg)) return;
+  const actorRank = await getEffectiveRank(chatId, msg.from.id);
 
-  const messageText = String(text || '').trim();
-
-  // Не обрабатываем пустые сообщения
-  if (!messageText) return;
-
-  const chat = getChatDB(ctx.chat.id);
-  const cfg = ensureAutoFeatures(chat);
-
-  if (!cfg.enabled) return;
-
-  // День рождения и напоминания срабатывают только на подходящие фразы
-  const birthdaySaved = await tryAutoSaveBirthday(ctx, messageText, user);
-  if (birthdaySaved) return;
-
-  const reminderCreated = await tryAutoCreateReminder(ctx, messageText);
-  if (reminderCreated) return;
-
-  // Ачивки проверяются всегда, но каждая выдаётся только 1 раз
-  await checkAutoAchievements(ctx, user);
-}
-
-function getWeeklyStats(chat) {
-  const now = new Date();
-  const days = [];
-
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(now);
-    d.setDate(now.getDate() - i);
-    days.push(d.toISOString().slice(0, 10));
+  if (targetRank === 100) {
+    const existing = Object.values(getChat(chatId).users).find(u => u.adminRank === 100);
+    if (existing && String(existing.id) !== String(msg.from.id)) {
+      await replyTo(msg, '❌ Владелец уже назначен. Используй /transferowner'); return;
+    }
+    if (actorRank < 100) {
+      try { const m = await bot.getChatMember(chatId, msg.from.id); if (m.status !== 'creator') { await replyTo(msg, '❌ Только создатель группы.'); return; } }
+      catch (_) { await replyTo(msg, '❌ Только создатель группы.'); return; }
+    }
+  } else if (targetRank >= actorRank) {
+    await replyTo(msg, `❌ Нельзя выдать ранг ≥ своему (${actorRank}).`); return;
   }
 
-  let totalMessages = 0;
-  let activeUsers = 0;
-  let topUser = null;
-  let topScore = 0;
-  let topRepUser = null;
-  let topRep = -999999;
-  let warns = 0;
+  const t = await resolveTarget(msg, args, chatId);
+  if (!t) { await replyTo(msg, '❌ Укажи пользователя (ID или reply).'); return; }
 
-  for (const user of Object.values(chat.users || {})) {
-    let userWeekMessages = 0;
-
-    for (const day of days) {
-      userWeekMessages += user.messagesDay?.[day] || 0;
-    }
-
-    if (userWeekMessages > 0) activeUsers++;
-    totalMessages += userWeekMessages;
-
-    if (userWeekMessages > topScore) {
-      topScore = userWeekMessages;
-      topUser = user;
-    }
-
-    if ((user.reputation || 0) > topRep) {
-      topRep = user.reputation || 0;
-      topRepUser = user;
-    }
-
-    warns += user.warns?.length || 0;
+  const u  = getUser(chatId, t.id, t.firstName, t.username);
+  u.adminRank = targetRank;
+  saveDB();
+  const ri = getRankInfo(targetRank);
+  if (targetRank === 0) {
+    await replyTo(msg, `👤 <b>Ранг снят</b>\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n📉 Обычный пользователь\n👮 ${esc(msg.from.first_name)}`);
+  } else {
+    await replyTo(msg, `${ri.emoji} <b>Ранг выдан</b>\n\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n🎚 ${ri.emoji} ${ri.name} (${targetRank})\n👮 ${esc(msg.from.first_name)}`);
   }
-
-  return {
-    totalMessages,
-    activeUsers,
-    topUser,
-    topScore,
-    topRepUser,
-    topRep,
-    warns
-  };
+  await sendLog(chatId, `🎚 Ранг ${ri.name} (${targetRank}) → ${mention(u)} | ${msg.from.first_name}`);
 }
 
-async function sendWeeklyReport(chatId) {
-  const chat = getChatDB(chatId);
-  const stats = getWeeklyStats(chat);
+// ── ACHIEVEMENTS ──────────────────────────────────────────────────
+const ACHIEVEMENTS = [
+  { id: 'msg100',  emoji: '💬', label: '100 сообщений',         reward: 300,  check: u => u.messages >= 100   },
+  { id: 'msg500',  emoji: '🔥', label: '500 сообщений',         reward: 1000, check: u => u.messages >= 500   },
+  { id: 'msg1000', emoji: '👑', label: '1000 сообщений',        reward: 2500, check: u => u.messages >= 1000  },
+  { id: 'msg5000', emoji: '💎', label: '5000 сообщений',        reward: 7000, check: u => u.messages >= 5000  },
+  { id: 'rep10',   emoji: '⭐', label: '10 репутации',          reward: 500,  check: u => u.reputation >= 10  },
+  { id: 'clean100',emoji: '🛡', label: '100 сообщений без преда',reward: 700,
+    check: u => u.messages >= 100 && (!u.warns || u.warns.length === 0) }
+];
 
-  const topName = stats.topUser
-    ? usernameText(stats.topUser)
-    : 'пока нет';
-
-  const repName = stats.topRepUser
-    ? usernameText(stats.topRepUser)
-    : 'пока нет';
-
-  await bot.telegram.sendMessage(
-    chatId,
-    `📊 <b>Итоги недели</b>
-
-💬 Сообщений за неделю: <b>${stats.totalMessages}</b>
-👥 Активных участников: <b>${stats.activeUsers}</b>
-🏆 Самый активный: <b>${topName}</b> — <b>${stats.topScore}</b>
-⭐ Больше всего репутации: <b>${repName}</b>
-⚠️ Предупреждений в базе: <b>${stats.warns}</b>
-
-━━━━━━━━━━━━━━
-🚀 Новая неделя — новый топ!`,
-    { parse_mode: 'HTML' }
-  );
+async function checkAchievements(chatId, userId) {
+  try {
+    const u    = getUser(chatId, userId);
+    const hits = [];
+    for (const a of ACHIEVEMENTS) {
+      if (!u.achievements[a.id] && a.check(u)) {
+        u.achievements[a.id] = Date.now();
+        u.balance = (u.balance || 0) + a.reward;
+        hits.push(a);
+      }
+    }
+    if (!hits.length) { saveDB(); return; }
+    saveDB();
+    const total = hits.reduce((s, a) => s + a.reward, 0);
+    const list  = hits.map(a => `✨ ${a.emoji} ${a.label}\n   🎁 +${a.reward} монет`).join('\n');
+    const count = Object.keys(u.achievements).length;
+    await tgReply(chatId,
+      `🎉 <b>Новое крупное достижение!</b>\n\n👤 ${mention(u)}\n\n${list}\n\n━━━━━━━━━━━━━━\n💰 Итого: +${total} монет\n🏆 Крупных ачивок: ${count}\n🪙 Баланс: ${u.balance} монет`
+    );
+  } catch (_) {}
 }
 
-function startAutoFeaturesScheduler() {
-  setInterval(async () => {
-    try {
-      const db = loadDB();
+// ── ANTI-SPAM / LINKS / WORDS ────────────────────────────────────
+const spamMap = {};
+async function checkSpam(msg) {
+  const chatId = msg.chat.id, userId = msg.from.id;
+  if (!getChat(chatId).settings.antispam) return;
+  if (await getEffectiveRank(chatId, userId) >= 30) return;
+  const key = `${chatId}:${userId}`;
+  if (!spamMap[key]) spamMap[key] = { times: [], last: null, same: 0 };
+  const s = spamMap[key], now = Date.now();
+  s.times.push(now); s.times = s.times.filter(t => now - t < 10000);
+  const txt = msg.text || msg.sticker?.file_id || '';
+  if (txt && txt === s.last) s.same++; else { s.same = 1; s.last = txt; }
+  if (s.times.filter(t => now - t < 5000).length >= 5) { await doMute(chatId, userId, 5,  'Антиспам: быстро', 'Бот', true); return; }
+  if (s.times.length >= 10)                             { await doMute(chatId, userId, 30, 'Антиспам: флуд',   'Бот', true); return; }
+  if (s.same >= 3) { try { await bot.deleteMessage(chatId, msg.message_id); } catch (_) {} await doWarn(chatId, userId, 'Антиспам: повтор', null, msg); s.same = 0; }
+}
 
-      for (const chatId of Object.keys(db.chats || {})) {
-        const chat = db.chats[chatId];
-        const cfg = ensureAutoFeatures(chat);
-        const now = getAutoTimeParts(cfg.timezone || 'Asia/Almaty');
+const LINK_RE   = /(?:https?:\/\/|t\.me\/|(?:www\.)\S+\.\S+)/i;
+const TG_INV_RE = /t\.me\/(?:joinchat\/|\+)\S+/i;
+async function checkLinks(msg) {
+  const chatId = msg.chat.id;
+  if (!getChat(chatId).settings.antilinks) return;
+  if (await getEffectiveRank(chatId, msg.from.id) >= 30) return;
+  const txt = msg.text || msg.caption || '';
+  if (TG_INV_RE.test(txt) || (LINK_RE.test(txt) && !/youtu\.?be|youtube\.com/i.test(txt))) {
+    try { await bot.deleteMessage(chatId, msg.message_id); } catch (_) {}
+    await doWarn(chatId, msg.from.id, 'Антиссылки', null, msg);
+  }
+}
 
-        // Напоминания
-        const reminders = chat.reminders || [];
+async function checkBadWords(msg) {
+  const chatId = msg.chat.id, chat = getChat(chatId);
+  if (!chat.settings.antimat) return;
+  if (await getEffectiveRank(chatId, msg.from.id) >= 30) return;
+  const txt   = (msg.text || '').toLowerCase();
+  const words = chat.settings.badwords || [];
+  if (words.some(w => txt.includes(w.toLowerCase()))) {
+    try { await bot.deleteMessage(chatId, msg.message_id); } catch (_) {}
+    await doWarn(chatId, msg.from.id, 'Антимат', null, msg);
+  }
+}
 
-        for (const reminder of reminders) {
-          if (reminder.done) continue;
-          if (Date.now() < reminder.dueAt) continue;
+// ── BIRTHDAY DETECTION ────────────────────────────────────────────
+const BD_RE = /(?:у меня\s+)?(?:др|день\s*рождения|днюха|родился|родилась)\s+(\d{1,2})[.\-/](\d{1,2})/i;
+async function checkBirthday(msg) {
+  if (!msg.text) return;
+  const m = msg.text.match(BD_RE);
+  if (!m) return;
+  const day = m[1].padStart(2,'0'), month = m[2].padStart(2,'0');
+  const u = getUser(msg.chat.id, msg.from.id, msg.from.first_name, msg.from.username);
+  u.birthday = { day, month, setAt: new Date().toISOString() };
+  saveDB();
+  await replyTo(msg, `🎂 Запомнил! Поздравлю тебя ${day}.${month} 🎉`);
+}
 
-          reminder.done = true;
-          saveDB();
+// ── REMINDER DETECTION ────────────────────────────────────────────
+const REM_RE_MIN  = /напомни\s+через\s+(\d+)\s*(?:мин|минут)/i;
+const REM_RE_HOUR = /напомни\s+через\s+(\d+)\s*(?:ч|час)/i;
+const REM_RE_TMRW = /напомни\s+завтра\s+в\s+(\d{1,2}):(\d{2})\s+(.*)/i;
+async function checkReminder(msg) {
+  if (!msg.text || !isGroup(msg)) return;
+  const chat  = getChat(msg.chat.id);
+  const txt   = msg.text;
+  let dueAt = 0, text = '';
 
-          await bot.telegram.sendMessage(
-            chatId,
-            `🔔 <b>Напоминание</b>
+  const mMin  = txt.match(REM_RE_MIN);
+  const mHour = txt.match(REM_RE_HOUR);
+  const mTmrw = txt.match(REM_RE_TMRW);
 
-${mentionById(reminder.userId, reminder.userName)}, ты просил напомнить:
+  if (mMin) {
+    dueAt = Date.now() + parseInt(mMin[1],10) * 60000;
+    text  = txt.replace(REM_RE_MIN,'').trim();
+  } else if (mHour) {
+    dueAt = Date.now() + parseInt(mHour[1],10) * 3600000;
+    text  = txt.replace(REM_RE_HOUR,'').trim();
+  } else if (mTmrw) {
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(parseInt(mTmrw[1],10), parseInt(mTmrw[2],10), 0, 0);
+    dueAt = tomorrow.getTime();
+    text  = mTmrw[3].trim();
+  } else return;
 
-📝 <b>${escapeHtml(reminder.text)}</b>`,
-            { parse_mode: 'HTML' }
-          ).catch((error) => console.error('reminder send error:', error.message));
+  if (!text) text = 'без текста';
+  if (!chat.reminders) chat.reminders = [];
+  chat.reminders.push({
+    id: Date.now(), userId: msg.from.id,
+    userName: msg.from.username || msg.from.first_name,
+    text, dueAt, createdAt: Date.now(), done: false
+  });
+  saveDB();
+  await replyTo(msg, `🔔 Напоминание создано!\n📝 ${esc(text)}\n⏰ ${new Date(dueAt).toLocaleString('ru')}`);
+}
+
+// ── SHOP ─────────────────────────────────────────────────────────
+const SHOP = {
+  vip:             { name: 'VIP-роль',               price: 5000,  desc: 'VIP-статус в профиле' },
+  premium:         { name: 'Premium-роль',            price: 10000, desc: 'Premium-статус' },
+  customtitle:     { name: 'Кастомный титул',         price: 7000,  desc: 'Установи свой титул' },
+  warnshield:      { name: 'Защита от пред.',         price: 12000, desc: 'Спасает от 1 преда' },
+  coloredprofile:  { name: 'Цветной профиль',         price: 3000,  desc: 'Украшает профиль' },
+  reputationboost: { name: 'Буст репутации',          price: 4000,  desc: '+5 репутации сразу' }
+};
+
+// ── SOCIAL ACTIONS ────────────────────────────────────────────────
+const SOCIAL = {
+  hug:       { emoji:'🤗', verb:'обнял(а)',          coupleVerb:'нежно обнял(а) свою пару' },
+  kiss:      { emoji:'😘', verb:'поцеловал(а)',       coupleVerb:'нежно поцеловал(а) свою пару' },
+  slap:      { emoji:'👋', verb:'шлёпнул(а)',         coupleVerb:'шутливо шлёпнул(а) свою пару' },
+  pat:       { emoji:'🫶', verb:'погладил(а)',        coupleVerb:'нежно погладил(а) свою пару' },
+  bite:      { emoji:'🦷', verb:'укусил(а)',          coupleVerb:'игриво укусил(а) свою пару' },
+  poke:      { emoji:'👉', verb:'ткнул(а)',           coupleVerb:'легко ткнул(а) свою пару' },
+  feed:      { emoji:'🍡', verb:'покормил(а)',        coupleVerb:'заботливо покормил(а) свою пару' },
+  tea:       { emoji:'🍵', verb:'налил(а) чай',      coupleVerb:'приготовил(а) чай паре' },
+  flower:    { emoji:'🌸', verb:'подарил(а) цветок', coupleVerb:'подарил(а) цветок своей паре' },
+  compliment:{ emoji:'💬', verb:'сделал(а) комплимент', coupleVerb:'сделал(а) комплимент своей паре' }
+};
+const COMPLIMENTS = ['Ты настоящий клад этого чата!','С тобой всегда весело!','Твоё присутствие делает чат лучше!','Ты очень позитивный человек!'];
+
+async function handleSocial(cmd, msg) {
+  const chatId = msg.chat.id;
+  const actor  = getUser(chatId, msg.from.id, msg.from.first_name, msg.from.username);
+  const act    = SOCIAL[cmd];
+  if (!act) return;
+  const now = Date.now();
+  if (!actor.cooldowns) actor.cooldowns = {};
+  if (actor.cooldowns.action && now - actor.cooldowns.action < 5000) { try { await bot.deleteMessage(chatId, msg.message_id); } catch (_) {} return; }
+  actor.cooldowns.action = now; saveDB();
+
+  let target = null;
+  if (msg.reply_to_message?.from && !msg.reply_to_message.from.is_bot) {
+    const tu = msg.reply_to_message.from;
+    target = getUser(chatId, tu.id, tu.first_name, tu.username);
+  } else if (actor.couple) {
+    target = Object.values(getChat(chatId).users).find(u => String(u.id) === String(actor.couple)) || null;
+  }
+  if (!target) { await replyTo(msg, '❌ Ответь на сообщение пользователя или создай пару: любовь (reply)'); return; }
+
+  const isCouple = actor.couple && String(actor.couple) === String(target.id);
+  let text;
+  if (cmd === 'compliment') {
+    const c = COMPLIMENTS[Math.floor(Math.random() * COMPLIMENTS.length)];
+    text = isCouple ? `${act.emoji} ${mention(actor)} ${act.coupleVerb} ${mention(target)}: «${c}»`
+                    : `${act.emoji} ${mention(actor)} ${act.verb} ${mention(target)}: «${c}»`;
+  } else {
+    text = isCouple ? `❤️ ${mention(actor)} ${act.coupleVerb} ${mention(target)}`
+                    : `${act.emoji} ${mention(actor)} ${act.verb} ${mention(target)}`;
+  }
+  await replyTo(msg, text);
+}
+
+// ── FRIDAY TEXTS ─────────────────────────────────────────────────
+const FRIDAY_TEXTS = [
+  '🎉 <b>Пятница пришла!</b>\n\nВсем хорошего настроения, отдыха и лампового общения в чате.\nНе забывайте соблюдать правила и уважать друг друга ❤️',
+  '🥳 <b>ПЯТНИЦА!</b>\n\nДожили! Самый лучший день недели.\nОтдыхайте, общайтесь и будьте в хорошем настроении 😎',
+  '🌅 <b>Пятничный вайб</b>\n\n«Пятница — это маленький Новый год!»\nХорошего вечера, чат! 🎊'
+];
+
+// ── PENDING ACTIONS (buttons state) ──────────────────────────────
+const pending = {};
+
+// ═══════════════════════════════════════════════════════════════
+//  SCHEDULERS  (setInterval every minute)
+// ═══════════════════════════════════════════════════════════════
+setInterval(async () => {
+  try {
+    const now    = new Date();
+    const todayS = now.toISOString().slice(0,10);
+    const hh     = now.getHours();
+    const mm     = now.getMinutes();
+    const day    = now.getDay(); // 0=Sun, 5=Fri, 7=Sun
+
+    for (const [chatId, chat] of Object.entries(db.chats)) {
+      try {
+        const s = chat.settings;
+
+        // ── Morning (08:00)
+        if (s.morningEnabled && hh === 8 && mm === 0 && s.lastMorningDate !== todayS) {
+          s.lastMorningDate = todayS; saveDB();
+          await tgReply(chatId,
+            '☀️ <b>Доброе утро, беседа!</b>\n\n🌤 Новый день уже начался.\nПора просыпаться, улыбнуться и залетать в чат 😄\n\n✨ Пусть сегодня будет больше хороших новостей,\nменьше суеты и больше приятного общения.\n\n━━━━━━━━━━━━━━\n💬 Просыпаемся, активничаем и делаем этот день лучше!'
+          );
         }
 
-        chat.reminders = reminders.filter((r) => !r.done);
+        // ── Night (00:00)
+        if (s.nightEnabled && hh === 0 && mm === 0 && s.lastNightDate !== todayS) {
+          s.lastNightDate = todayS; saveDB();
+          await tgReply(chatId,
+            '🌙 <b>Спокойной ночи, беседа!</b>\n\nНочь уже наступила, пора немного отдохнуть 😴\n\n✨ Пусть сон будет спокойным,\nутро — лёгким,\nа завтра будет ещё лучше, чем сегодня.\n\n━━━━━━━━━━━━━━\n💤 Не сидим всю ночь в телефоне, набираемся сил.'
+          );
+        }
 
-        // Дни рождения
-        if (now.time === cfg.birthdayTime) {
-          for (const user of Object.values(chat.users || {})) {
-            if (!user.birthday) continue;
+        // ── Friday post
+        const fp = s.fridayPost;
+        if (fp?.enabled && day === 5 && fp.lastSentDate !== todayS) {
+          const [fhh, fmm] = (fp.time || '18:00').split(':').map(Number);
+          if (hh === fhh && mm === fmm) {
+            fp.lastSentDate = todayS; saveDB();
+            const txt = fp.text || FRIDAY_TEXTS[Math.floor(Math.random() * FRIDAY_TEXTS.length)];
+            await tgReply(chatId, txt);
+          }
+        }
 
-            const md = user.birthday.day + '.' + user.birthday.month;
-            const key = now.date + ':' + user.id;
+        // ── Weekly report (Sunday 20:00)
+        if (s.weeklyReportEnabled && day === 0 && hh === 20 && mm === 0 && s.lastWeeklyDate !== todayS) {
+          s.lastWeeklyDate = todayS; saveDB();
+          const users    = Object.values(chat.users);
+          const wk       = weekKey();
+          const weekMsgs = users.reduce((s,u) => s + (u.stats?.weekly?.[wk] || 0), 0);
+          const active   = users.filter(u => (u.stats?.weekly?.[wk] || 0) > 0).length;
+          const topUser  = users.sort((a,b)=>(b.stats?.weekly?.[wk]||0)-(a.stats?.weekly?.[wk]||0))[0];
+          const topRep   = users.sort((a,b)=>(b.reputation||0)-(a.reputation||0))[0];
+          const totalWrn = users.reduce((s,u)=>s+(u.warns?.length||0),0);
+          await tgReply(chatId,
+            `📊 <b>Итоги недели</b>\n\n💬 Сообщений за неделю: ${weekMsgs}\n👥 Активных участников: ${active}\n🏆 Самый активный: ${topUser ? mention(topUser) : '—'} — ${topUser?.stats?.weekly?.[wk] || 0}\n⭐ Больше всего репутации: ${topRep ? mention(topRep) : '—'}\n⚠️ Предупреждений в базе: ${totalWrn}\n\n━━━━━━━━━━━━━━\n🚀 Новая неделя — новый топ!`
+          );
+        }
 
-            if (md === now.monthDay && user.lastBirthdayCongrats !== key) {
-              user.lastBirthdayCongrats = key;
-              saveDB();
-
-              await bot.telegram.sendMessage(
-                chatId,
-                `🎉 <b>Сегодня день рождения!</b>
-
-Поздравляем ${mentionById(user.id, user.firstName || user.username || 'пользователя')} 🥳
-
-Желаем счастья, здоровья, хорошего настроения и много крутых моментов в жизни 🎂✨`,
-                { parse_mode: 'HTML' }
-              ).catch((error) => console.error('birthday send error:', error.message));
+        // ── Birthdays (09:00)
+        if (hh === 9 && mm === 0) {
+          const dday  = String(now.getDate()).padStart(2,'0');
+          const dmon  = String(now.getMonth()+1).padStart(2,'0');
+          for (const u of Object.values(chat.users)) {
+            if (u.birthday?.day === dday && u.birthday?.month === dmon) {
+              const bdKey = `bd_${todayS}`;
+              if (!u.achievements[bdKey]) {
+                u.achievements[bdKey] = Date.now(); saveDB();
+                await tgReply(chatId,
+                  `🎉 <b>Сегодня день рождения!</b>\n\nПоздравляем ${mention(u)} 🥳\nЖелаем счастья, здоровья и хорошего настроения 🎂✨`
+                );
+              }
             }
           }
         }
 
-        // Еженедельный отчёт — воскресенье 20:00
-        if (now.weekday === 'Sun' && now.time === cfg.weeklyReportTime && cfg.lastWeeklyReportDate !== now.date) {
-          cfg.lastWeeklyReportDate = now.date;
-          saveDB();
-
-          await sendWeeklyReport(chatId).catch((error) => {
-            console.error('weekly report error:', error.message);
-          });
-        }
-      }
-
-      saveDB();
-    } catch (error) {
-      console.error('auto features scheduler error:', error);
-    }
-  }, 60 * 1000);
-}
-
-
-function getMessageActivityType(message) {
-  if (!message) return 'other';
-  if (message.text) return 'text';
-  if (message.voice) return 'voice';
-  if (message.video_note) return 'video_note';
-  if (message.photo) return 'photo';
-  if (message.video) return 'video';
-  if (message.sticker) return 'sticker';
-  if (message.document) return 'document';
-  if (message.audio) return 'audio';
-  if (message.animation) return 'animation';
-  if (message.contact) return 'contact';
-  if (message.location) return 'location';
-  return 'other';
-}
-
-async function trackAnyMessageActivity(ctx, forcedType = null) {
-  try {
-    if (!ctx.chat || !ctx.from || ctx.from.is_bot || !ctx.message) return null;
-
-    const chat = getChatDB(ctx.chat.id);
-
-    // Защита от двойного учёта одного и того же сообщения
-    if (!chat.countedMessages) chat.countedMessages = {};
-
-    const msgKey = String(ctx.message.message_id);
-
-    if (chat.countedMessages[msgKey]) {
-      return chat.users[String(ctx.from.id)] || getUserDB(chat, ctx.from);
-    }
-
-    chat.countedMessages[msgKey] = Date.now();
-
-    // Чистим старые id сообщений, чтобы база не раздувалась
-    const ids = Object.keys(chat.countedMessages);
-    if (ids.length > 1000) {
-      ids
-        .sort((a, b) => chat.countedMessages[a] - chat.countedMessages[b])
-        .slice(0, ids.length - 1000)
-        .forEach((id) => delete chat.countedMessages[id]);
-    }
-
-    // Запоминаем пользователя для созыва
-    const user = typeof rememberChatUserForCalls === 'function'
-      ? (rememberChatUserForCalls(ctx, ctx.from) || getUserDB(chat, ctx.from))
-      : getUserDB(chat, ctx.from);
-
-    const day = todayKey();
-    const type = forcedType || getMessageActivityType(ctx.message);
-
-    user.messages = Number(user.messages || 0) + 1;
-    user.xp = Number(user.xp || 0) + 1;
-
-    if (!user.messagesDay) user.messagesDay = {};
-    user.messagesDay[day] = Number(user.messagesDay[day] || 0) + 1;
-
-    if (!user.messageTypes) {
-      user.messageTypes = {
-        text: 0,
-        voice: 0,
-        video_note: 0,
-        photo: 0,
-        video: 0,
-        sticker: 0,
-        document: 0,
-        audio: 0,
-        animation: 0,
-        contact: 0,
-        location: 0,
-        other: 0
-      };
-    }
-
-    if (!Object.prototype.hasOwnProperty.call(user.messageTypes, type)) {
-      user.messageTypes[type] = 0;
-    }
-
-    user.messageTypes[type] += 1;
-
-    user.textMessages = Number(user.messageTypes.text || 0);
-    user.voiceMessages = Number(user.messageTypes.voice || 0);
-    user.circleMessages = Number(user.messageTypes.video_note || 0);
-    user.photoMessages = Number(user.messageTypes.photo || 0);
-    user.videoMessages = Number(user.messageTypes.video || 0);
-    user.stickerMessages = Number(user.messageTypes.sticker || 0);
-    user.documentMessages = Number(user.messageTypes.document || 0);
-    user.audioMessages = Number(user.messageTypes.audio || 0);
-    user.animationMessages = Number(user.messageTypes.animation || 0);
-
-    // Монеты за активность с антифармом
-    if (nowTs() - Number(user.lastMessageCoinAt || 0) > 30000) {
-      user.balance = Number(user.balance || 0) + 1;
-      user.coins = user.balance;
-      user.lastMessageCoinAt = nowTs();
-    }
-
-    user.canCall = true;
-    user.leftChat = false;
-    user.lastSeenAt = new Date().toISOString();
-
-    saveDB();
-
-    return user;
-  } catch (error) {
-    console.error('trackAnyMessageActivity error:', error);
-    return null;
-  }
-}
-
-function mainMenuKeyboard() {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback('🛡 Модерация', 'help:mod'), Markup.button.callback('👑 Ранги', 'help:ranks')],
-    [Markup.button.callback('👤 Профиль', 'help:profile'), Markup.button.callback('📜 Правила', 'help:rules')],
-    [Markup.button.callback('⚙️ Настройки', 'help:settings'), Markup.button.callback('🎁 Магазин', 'help:shop')]
-  ]);
-}
-function settingsKeyboard(chat) {
-  const s = chat.settings;
-  return Markup.inlineKeyboard([
-    [Markup.button.callback(`🛡 Антиспам: ${s.antispam ? 'ON' : 'OFF'}`, 'set:antispam')],
-    [Markup.button.callback(`🔗 Ссылки: ${s.antilinks ? 'ON' : 'OFF'}`, 'set:antilinks')],
-    [Markup.button.callback(`🤬 Антимат: ${s.antimat ? 'ON' : 'OFF'}`, 'set:antimat')],
-    [Markup.button.callback(`👋 Приветствие: ${s.welcome ? 'ON' : 'OFF'}`, 'set:welcome')],
-    [Markup.button.callback(`👋 Прощание: ${s.goodbye ? 'ON' : 'OFF'}`, 'set:goodbye')]
-  ]);
-}
-function muteKeyboard(targetId, actorId) {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback('5 минут', `mute:${actorId}:${targetId}:5`), Markup.button.callback('10 минут', `mute:${actorId}:${targetId}:10`)],
-    [Markup.button.callback('30 минут', `mute:${actorId}:${targetId}:30`), Markup.button.callback('60 минут', `mute:${actorId}:${targetId}:60`)],
-    [Markup.button.callback('❌ Отмена', `cancel:${actorId}`)]
-  ]);
-}
-function reasonKeyboard(action, actorId, targetId, minutes = 0) {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback('Мат', `${action}r:${actorId}:${targetId}:${minutes}:Мат`), Markup.button.callback('Флуд', `${action}r:${actorId}:${targetId}:${minutes}:Флуд`)],
-    [Markup.button.callback('Спам', `${action}r:${actorId}:${targetId}:${minutes}:Спам`), Markup.button.callback('Оскорбление', `${action}r:${actorId}:${targetId}:${minutes}:Оскорбление`)],
-    [Markup.button.callback('Реклама', `${action}r:${actorId}:${targetId}:${minutes}:Реклама`), Markup.button.callback('Провокация', `${action}r:${actorId}:${targetId}:${minutes}:Провокация`)],
-    [Markup.button.callback('❌ Отмена', `cancel:${actorId}`)]
-  ]);
-}
-function actionsKeyboard(targetId, actorId) {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback('🔇 Мут', `act:mute:${actorId}:${targetId}`), Markup.button.callback('🚫 Бан', `act:ban:${actorId}:${targetId}`)],
-    [Markup.button.callback('👢 Кик', `act:kick:${actorId}:${targetId}`), Markup.button.callback('⚠️ Пред', `act:warn:${actorId}:${targetId}`)],
-    [Markup.button.callback('📂 История', `act:history:${actorId}:${targetId}`), Markup.button.callback('🗑 Удалить', `act:del:${actorId}:${targetId}`)],
-    [Markup.button.callback('❌ Отмена', `cancel:${actorId}`)]
-  ]);
-}
-
-
-async function handleDeveloperCoins(ctx, args) {
-  if (!(await requireGroup(ctx))) return;
-
-  if (!OWNER_ID || Number(ctx.from.id) !== Number(OWNER_ID)) {
-    return ctx.reply('❌ Эта команда доступна только разработчику бота.');
-  }
-
-  const target = resolveTarget(ctx, args);
-
-  if (!target) {
-    return ctx.reply(
-      '❌ Использование:\n\nмонеты ID сумма\n/coins ID сумма\n\nИли по reply:\nмонеты сумма\n/coins сумма'
-    );
-  }
-
-  const amount = Number(target.rest[0]);
-
-  if (!Number.isFinite(amount) || amount === 0) {
-    return ctx.reply('❌ Укажи сумму монет. Например: монеты 1000');
-  }
-
-  const chat = getChatDB(ctx.chat.id);
-
-  let user;
-
-  if (target.user) {
-    user = getUserDB(chat, target.user);
-  } else {
-    user = chat.users[String(target.id)] || getUserDB(chat, {
-      id: target.id,
-      first_name: `ID ${target.id}`
-    });
-  }
-
-  user.balance = Number(user.balance || 0) + amount;
-  user.coins = user.balance;
-
-  if (!user.history) user.history = [];
-
-  user.history.unshift({
-    type: amount > 0 ? 'dev_coins_add' : 'dev_coins_remove',
-    amount,
-    adminId: ctx.from.id,
-    date: new Date().toISOString()
-  });
-
-  user.history = user.history.slice(0, 50);
-
-  saveDB();
-
-  const actionText = amount > 0 ? 'выданы' : 'сняты';
-  const amountText = amount > 0 ? '+' + amount : String(amount);
-
-  return ctx.reply(
-    `🪙 <b>Монеты ${actionText}</b>
-
-👤 Пользователь: ${mentionById(target.id, user.firstName || user.username || `ID ${target.id}`)}
-🆔 ID: <code>${target.id}</code>
-💰 Изменение: <b>${amountText}</b>
-🏦 Новый баланс: <b>${user.balance}</b> монет
-
-👨‍💻 Выдал разработчик: ${mentionUser(ctx.from)}`,
-    { parse_mode: 'HTML' }
-  );
-}
-
-async function handleCommand(ctx, parsed) {
-  const { command, raw, args, argText } = parsed;
-  const chat = getChatDB(ctx.chat.id);
-  if (isGroup(ctx)) getUserDB(chat, ctx.from);
-
-  if (command === 'setup') {
-    if (!(await requireGroup(ctx))) return;
-
-    const isTgAdmin = await isTelegramAdmin(ctx, ctx.from.id);
-    const currentRank = await getUserAdminRank(ctx, ctx.from.id);
-
-    if (!isTgAdmin && currentRank < 80) {
-      return ctx.reply('❌ Настроить бота может только администратор этой беседы.');
-    }
-
-    const chatTitle = ctx.chat.title || 'эта беседа';
-    const chat = getChatDB(ctx.chat.id);
-    const user = rememberChatUserForCalls(ctx, ctx.from) || getUserDB(chat, ctx.from);
-
-    chat.title = chatTitle;
-    chat.type = ctx.chat.type;
-    chat.updatedAt = new Date().toISOString();
-
-    const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id).catch(() => null);
-
-    if (member?.status === 'creator' || (OWNER_ID && ctx.from.id === OWNER_ID)) {
-      user.adminRank = 100;
-      chat.admins[String(ctx.from.id)] = 100;
-    } else if ((user.adminRank || 0) < 60) {
-      user.adminRank = 60;
-      chat.admins[String(ctx.from.id)] = 60;
-    }
-
-    if (!chat.settings.rules || chat.settings.rules === DEFAULT_RULES) {
-      chat.settings.rules = `📜 Правила беседы «${chatTitle}»
-
-1. Уважай участников.
-2. Не спамь и не флуди.
-3. Не рекламируй без разрешения администрации.
-4. Не провоцируй конфликты.
-5. Не отправляй запрещённый контент.
-6. Уважай администрацию.
-7. Не обходи наказания.
-
-⚠️ За нарушение: предупреждение, мут, кик или бан.`;
-    }
-
-    if (!chat.settings.welcomeText) {
-      chat.settings.welcomeText = '👋 Добро пожаловать, {user}!\n\nТы попал в «{chat}». Перед общением прочитай /правила.';
-    }
-
-    saveDB();
-
-    return ctx.reply(
-      `✅ <b>Бот настроен для этой беседы</b>
-
-🏠 Беседа: <b>${escapeHtml(chatTitle)}</b>
-🆔 Chat ID: <code>${ctx.chat.id}</code>
-👤 Настроил: ${mentionUser(ctx.from)}
-👑 Твой ранг: <b>${rankInfo(user.adminRank).title}</b>
-
-Теперь у этой беседы свои:
-• правила;
-• админ-ранги;
-• настройки;
-• топы;
-• предупреждения;
-• созывы;
-• логи.
-
-Команды:
-• /правила
-• /настройки
-• /ранги
-• /помощь`,
-      { parse_mode: 'HTML' }
-    );
-  }
-
-  if (command === 'help') {
-    return ctx.reply(`🤖 <b>FulTalchik_botik — меню команд</b>\n\n🌐 Бот работает отдельно для каждой беседы.\nДля первичной настройки напиши: /настроить\n\nВыбери раздел ниже или используй команды:\n/help /помощь\n/rules /правила\n/profile /профиль\n/shop /магазин`, { parse_mode: 'HTML', ...mainMenuKeyboard() });
-  }
-  if (command === 'rules') return ctx.reply(escapeHtml(chat.settings.rules), { parse_mode: 'HTML' });
-  if (command === 'setrules') {
-    if (!(await requireGroup(ctx)) || !(await requireRank(ctx, 80))) return;
-    if (!argText) return ctx.reply('❌ Напиши текст правил: /setrules текст');
-    chat.settings.rules = argText;
-    saveDB();
-    await ctx.reply('✅ Правила обновлены.');
-    return logAction(ctx, `📜 ${mentionUser(ctx.from)} обновил правила чата.`);
-  }
-  if (command === 'profile') {
-    const target = resolveTarget(ctx, args, { self: true });
-
-    const user = target.user
-      ? getUserDB(chat, target.user)
-      : chat.users[String(target.id)] || getUserDB(chat, {
-          id: target.id,
-          first_name: `ID ${target.id}`
-        });
-
-    const level = levelFromXp(user.xp);
-    const status = user.inventory?.premium
-      ? '💎 Premium'
-      : user.inventory?.vip
-        ? '⭐ VIP'
-        : 'обычный';
-
-    const username = user.username ? '@' + escapeHtml(user.username) : 'нет';
-    const nick = escapeHtml(user.firstName || user.first_name || 'Пользователь');
-    const title = user.title ? escapeHtml(user.title) : 'нет';
-    const adminRank = rankInfo(user.adminRank).title;
-    const warnsCount = user.warns?.length || 0;
-
-    return ctx.reply(
-`👤 <b>Профиль пользователя</b>
-
-<b>Основное:</b>
-👤 Ник: <b>${nick}</b>
-🆔 ID: <code>${user.id}</code>
-🔗 Username: <b>${username}</b>
-
-<b>Активность:</b>
-💬 Сообщений всего: <b>${user.messages}</b>\n🎙 Голосовых: <b>${user.voiceMessages || 0}</b>\n⭕ Кружков: <b>${user.circleMessages || 0}</b>\n🖼 Фото: <b>${user.photoMessages || 0}</b>\n🎬 Видео: <b>${user.videoMessages || 0}</b>\n😄 Стикеров: <b>${user.stickerMessages || 0}</b>\n🎙 Голосовых: <b>${user.voiceMessages || 0}</b>\n⭕ Кружков: <b>${user.circleMessages || 0}</b>\n🖼 Фото: <b>${user.photoMessages || 0}</b>\n🎬 Видео: <b>${user.videoMessages || 0}</b>\n😄 Стикеров: <b>${user.stickerMessages || 0}</b>
-🎚 Уровень: <b>${level}</b>
-🏆 Ранг активности: <b>${levelTitle(level)}</b>
-
-<b>Статистика:</b>
-⭐ Репутация: <b>${user.reputation}</b>
-⚠️ Предупреждения: <b>${warnsCount}/5</b>
-🪙 Баланс: <b>${user.balance}</b> монет
-
-📊 <b>Типы активности:</b>
-✍️ Текст: <b>${user.textMessages || user.messageTypes?.text || 0}</b>
-🎙 Голосовые: <b>${user.voiceMessages || 0}</b>
-⭕ Кружки: <b>${user.circleMessages || 0}</b>
-🖼 Фото: <b>${user.photoMessages || 0}</b>
-🎬 Видео: <b>${user.videoMessages || 0}</b>
-😄 Стикеры: <b>${user.stickerMessages || 0}</b>
-
-<b>Статус:</b>
-🏷 Титул: <b>${title}</b>
-👑 Админ-ранг: <b>${adminRank}</b>
-🎁 Статус: <b>${status}</b>`,
-      { parse_mode: 'HTML' }
-    );
-  }
-
-  if (command === 'id') return ctx.reply(`🆔 Твой ID: <code>${ctx.from.id}</code>`, { parse_mode: 'HTML' });
-  if (command === 'top') {
-    const period = (args[0] || 'all').toLowerCase();
-
-    let mode = 'all';
-
-    if (['day', 'день', 'today', 'сегодня'].includes(period)) {
-      mode = 'day';
-    }
-
-    if (['week', 'неделя', 'weeks', 'недели'].includes(period)) {
-      mode = 'week';
-    }
-
-    if (['month', 'месяц', 'months', 'месяца'].includes(period)) {
-      mode = 'month';
-    }
-
-    if (['all', 'все', 'всё'].includes(period)) {
-      mode = 'all';
-    }
-
-    const now = new Date();
-
-    function sameDay(dateKey) {
-      return dateKey === todayKey();
-    }
-
-    function sameMonth(dateKey) {
-      return dateKey.slice(0, 7) === now.toISOString().slice(0, 7);
-    }
-
-    function sameWeek(dateKey) {
-      const date = new Date(dateKey + 'T00:00:00');
-      const current = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-      const day = current.getDay() || 7;
-
-      const monday = new Date(current);
-      monday.setDate(current.getDate() - day + 1);
-      monday.setHours(0, 0, 0, 0);
-
-      const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 6);
-      sunday.setHours(23, 59, 59, 999);
-
-      return date >= monday && date <= sunday;
-    }
-
-    function getScore(user) {
-      if (mode === 'all') {
-        return user.messages || 0;
-      }
-
-      const days = user.messagesDay || {};
-      let total = 0;
-
-      for (const [dateKey, count] of Object.entries(days)) {
-        if (mode === 'day' && sameDay(dateKey)) total += count;
-        if (mode === 'week' && sameWeek(dateKey)) total += count;
-        if (mode === 'month' && sameMonth(dateKey)) total += count;
-      }
-
-      return total;
-    }
-
-    function getTopName(user) {
-      if (user.username) {
-        return '@' + escapeHtml(user.username);
-      }
-
-      return escapeHtml(user.firstName || user.first_name || 'Участник');
-    }
-
-    function medal(index) {
-      if (index === 0) return '🥇';
-      if (index === 1) return '🥈';
-      if (index === 2) return '🥉';
-      return '▫️';
-    }
-
-    const titles = {
-      day: '🏆 Топ дня',
-      week: '🏆 Топ недели',
-      month: '🏆 Топ месяца',
-      all: '🏆 Топ за всё время'
-    };
-
-    const users = Object.values(chat.users || {})
-      .map((user) => ({
-        ...user,
-        score: getScore(user)
-      }))
-      .filter((user) => user.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10);
-
-    if (!users.length) {
-      return ctx.reply(titles[mode] + '\n\nПока нет статистики для этого периода.');
-    }
-
-    const lines = users.map((user, index) => {
-      return medal(index) + ' ' + (index + 1) + '. ' + getTopName(user) + ' — <b>' + user.score + '</b>';
-    });
-
-    const text = titles[mode] + '\n\n' + lines.join('\n');
-
-    return ctx.reply(text, {
-      parse_mode: 'HTML'
-    });
-  }
-
-  if (command === 'level') {
-    const u = getUserDB(chat, ctx.from);
-    const level = levelFromXp(u.xp);
-    return ctx.reply(`🎚 <b>Твой уровень:</b> ${level}\n🏷 Ранг активности: <b>${levelTitle(level)}</b>\nXP: <b>${u.xp}</b>`, { parse_mode: 'HTML' });
-  }
-  if (command === 'devcoins') {
-    return handleDeveloperCoins(ctx, args);
-  }
-
-  if (command === 'balance') {
-    const u = getUserDB(chat, ctx.from);
-    return ctx.reply(`🪙 У тебя <b>${u.balance}</b> монет.`, { parse_mode: 'HTML' });
-  }
-  if (command === 'daily') {
-    const u = getUserDB(chat, ctx.from);
-    const last = u.cooldowns.daily || 0;
-    if (nowTs() - last < 24 * 60 * 60 * 1000) return ctx.reply('⏳ Ты уже забирал daily. Приходи позже.');
-    u.cooldowns.daily = nowTs();
-    u.balance += 250;
-    saveDB();
-    return ctx.reply(`🎁 Daily получен!\n\n🪙 +250 монет\n💰 Баланс: <b>${u.balance}</b>`, { parse_mode: 'HTML' });
-  }
-  if (command === 'give') {
-    const target = resolveTarget(ctx, args);
-    if (!target) return ctx.reply('❌ Использование: /give ID сумма или reply → /give сумма');
-    const amount = Number(target.rest[0]);
-    if (!amount || amount <= 0) return ctx.reply('❌ Укажи сумму.');
-    const from = getUserDB(chat, ctx.from);
-    const to = target.user ? getUserDB(chat, target.user) : chat.users[String(target.id)] || getUserDB(chat, { id: target.id, first_name: `ID ${target.id}` });
-    if (from.balance < amount) return ctx.reply('❌ Недостаточно монет.');
-    from.balance -= amount; to.balance += amount; saveDB();
-    return ctx.reply(`🎁 ${mentionUser(ctx.from)} передал ${mentionById(target.id, usernameText(to))} <b>${amount}</b> монет.`, { parse_mode: 'HTML' });
-  }
-  if (command === 'shop') {
-    return ctx.reply(`🎁 <b>Магазин ролей</b>\n\n⭐ VIP-роль — 5000 монет → /buy vip\n💎 Premium-роль — 10000 монет → /buy premium\n🏷 Кастомный титул — 7000 монет → /buy title\n🛡 Защита от 1 преда — 12000 монет → /buy shield\n🎨 Цветной профиль — 3000 монет → /buy color\n⭐ Буст репутации +5 — 4000 монет → /buy repboost`, { parse_mode: 'HTML' });
-  }
-  if (command === 'buy') {
-    const item = (args[0] || '').toLowerCase();
-    const prices = { vip: 5000, premium: 10000, title: 7000, shield: 12000, color: 3000, repboost: 4000 };
-    if (!prices[item]) return ctx.reply('❌ Товар не найден. Открой /shop');
-    const u = getUserDB(chat, ctx.from);
-    if (u.balance < prices[item]) return ctx.reply(`❌ Недостаточно монет. Нужно: ${prices[item]}`);
-    u.balance -= prices[item];
-    if (item === 'vip') u.inventory.vip = true;
-    if (item === 'premium') u.inventory.premium = true;
-    if (item === 'title') u.inventory.customTitle = true;
-    if (item === 'shield') u.inventory.warnShield = (u.inventory.warnShield || 0) + 1;
-    if (item === 'color') u.inventory.coloredProfile = true;
-    if (item === 'repboost') u.reputation += 5;
-    saveDB();
-    return ctx.reply(`✅ Покупка успешна: <b>${escapeHtml(item)}</b>\n💰 Остаток: <b>${u.balance}</b>`, { parse_mode: 'HTML' });
-  }
-  if (command === 'title') {
-    const u = getUserDB(chat, ctx.from);
-    if (!u.inventory.customTitle) return ctx.reply('❌ Сначала купи кастомный титул: /buy title');
-    if (!argText) return ctx.reply('❌ Напиши титул: /title Легенда чата');
-    u.title = argText.slice(0, 40); saveDB();
-    return ctx.reply(`🏷 Титул установлен: <b>${escapeHtml(u.title)}</b>`, { parse_mode: 'HTML' });
-  }
-  if (command === 'removetitle') { const u = getUserDB(chat, ctx.from); u.title = null; saveDB(); return ctx.reply('✅ Титул снят.'); }
-  if (command === 'rep' || command === 'minusrep') {
-    const target = resolveTarget(ctx, args);
-    if (!target || target.id === ctx.from.id) return ctx.reply('❌ Используй reply или ID, себе репутацию менять нельзя.');
-    const from = getUserDB(chat, ctx.from);
-    const key = `${target.id}:${command}`;
-    if (nowTs() - (from.cooldowns.rep[key] || 0) < 12 * 60 * 60 * 1000) return ctx.reply('⏳ Этому пользователю ты уже менял репутацию недавно.');
-    const to = target.user ? getUserDB(chat, target.user) : chat.users[String(target.id)] || getUserDB(chat, { id: target.id, first_name: `ID ${target.id}` });
-    to.reputation += command === 'rep' ? 1 : -1;
-    from.cooldowns.rep[key] = nowTs(); saveDB();
-    return ctx.reply(`${command === 'rep' ? '⭐ Репутация повышена' : '➖ Репутация понижена'}\n\n👤 Пользователь: ${mentionById(target.id, usernameText(to))}\n⭐ Репутация: <b>${to.reputation}</b>`, { parse_mode: 'HTML' });
-  }
-  if (command === 'myrep') { const u = getUserDB(chat, ctx.from); return ctx.reply(`⭐ Твоя репутация: <b>${u.reputation}</b>`, { parse_mode: 'HTML' }); }
-
-
-  if (command === 'basedb') {
-    if (!(await requireGroup(ctx))) return;
-
-    const users = getCallableUsersFromDB(chat, 'all');
-    const admins = getCallableUsersFromDB(chat, 'admins');
-    const owners = getCallableUsersFromDB(chat, 'owners');
-
-    return ctx.reply(
-      `📦 <b>База этой беседы</b>\n\n👥 Всего для созыва: <b>${users.length}</b>\n🛡 Админов: <b>${admins.length}</b>\n👑 Владельцев: <b>${owners.length}</b>\n\nЕсли человек написал хоть 1 сообщение — он автоматически сохраняется в БД и его можно созывать даже оффлайн.`,
-      { parse_mode: 'HTML' }
-    );
-  }
-
-  if (command === 'call') {
-    if (!(await requireGroup(ctx))) return;
-
-    const modeRaw = (args[0] || '').toLowerCase();
-
-    if (['all', 'все', 'всех'].includes(modeRaw)) {
-      return sendCallByMode(ctx, 'all');
-    }
-
-    if (['admins', 'админы', 'админов'].includes(modeRaw)) {
-      return sendCallByMode(ctx, 'admins');
-    }
-
-    if (['owners', 'владельцы', 'владельцев'].includes(modeRaw)) {
-      return sendCallByMode(ctx, 'owners');
-    }
-
-    if (!(await requireRank(ctx, 40))) return;
-
-    return ctx.reply('📢 <b>Выбери тип созыва:</b>', {
-      parse_mode: 'HTML',
-      ...Markup.inlineKeyboard([
-        [
-          Markup.button.callback('👥 Все', `call:all:${ctx.from.id}`),
-          Markup.button.callback('🛡 Админы', `call:admins:${ctx.from.id}`)
-        ],
-        [
-          Markup.button.callback('👑 Владельцы', `call:owners:${ctx.from.id}`),
-          Markup.button.callback('❌ Отмена', `call:cancel:${ctx.from.id}`)
-        ]
-      ])
-    });
-  }
-
-  if (command === 'mute') {
-    if (!(await requireRank(ctx, 30))) return;
-    const target = resolveTarget(ctx, args);
-    if (!target) return ctx.reply('❌ Использование: /мут ID минуты причина\nИли reply → /мут 60 причина');
-    if (target.source === 'reply' && target.rest.length === 0) return ctx.reply('🔇 Выберите срок мута:', muteKeyboard(target.id, ctx.from.id));
-    const minutes = Number(target.rest[0]) || 60;
-    const reason = target.rest.slice(Number(target.rest[0]) ? 1 : 0).join(' ') || 'без причины';
-    return muteUser(ctx, target.id, minutes, reason);
-  }
-  if (command === 'unmute') { if (!(await requireRank(ctx, 30))) return; const t = resolveTarget(ctx,args); if(!t) return ctx.reply('❌ /унмут ID или reply → /унмут'); return unmuteUser(ctx,t.id); }
-  if (command === 'ban') { if (!(await requireRank(ctx, 70))) return; const t = resolveTarget(ctx,args); if(!t) return ctx.reply('❌ /бан ID причина или reply → /бан причина'); return banUser(ctx,t.id,t.rest.join(' ') || 'без причины'); }
-  if (command === 'unban') { if (!(await requireRank(ctx, 70))) return; const t = resolveTarget(ctx,args); if(!t) return ctx.reply('❌ /разбан ID'); await ctx.telegram.unbanChatMember(ctx.chat.id, t.id); await ctx.reply(`✅ Пользователь <code>${t.id}</code> разбанен.`, { parse_mode: 'HTML' }); return logAction(ctx, `✅ ${mentionUser(ctx.from)} разбанил ID ${t.id}`); }
-  if (command === 'kick') { if (!(await requireRank(ctx, 50))) return; const t = resolveTarget(ctx,args); if(!t) return ctx.reply('❌ /кик ID причина или reply → /кик причина'); return kickUser(ctx,t.id,t.rest.join(' ') || 'без причины'); }
-  if (command === 'warn') { if (!(await requireRank(ctx, 30))) return; const t = resolveTarget(ctx,args); if(!t) return ctx.reply('❌ /пред ID причина или reply → /пред причина'); return warnUser(ctx,t.id,t.rest.join(' ') || 'без причины'); }
-  if (command === 'unwarn') { if (!(await requireRank(ctx, 30))) return; const t = resolveTarget(ctx,args); if(!t) return ctx.reply('❌ /унпред ID или reply → /унпред'); const u = chat.users[String(t.id)]; if(!u || !u.warns?.length) return ctx.reply('✅ У пользователя нет предупреждений.'); u.warns.pop(); u.warnings = u.warns.length; pushHistory(chat,t.id,{type:'unwarn',adminId:ctx.from.id}); saveDB(); return ctx.reply(`✅ Предупреждение снято. Осталось: <b>${u.warns.length}</b>`, { parse_mode: 'HTML' }); }
-  if (command === 'warns') { if (!(await requireRank(ctx, 10))) return; const t = resolveTarget(ctx,args,{self:true}); const u = chat.users[String(t.id)]; const warns = u?.warns || []; const list = warns.slice(-5).map((w,i)=>`${i+1}. ${escapeHtml(w.reason)} — ${new Date(w.date).toLocaleString('ru-RU')}`).join('\n') || 'нет'; return ctx.reply(`⚠️ <b>Предупреждения</b>\n\nID: <code>${t.id}</code>\nВсего: <b>${warns.length}/5</b>\n\n${list}`, { parse_mode: 'HTML' }); }
-  if (command === 'history') { if (!(await requireRank(ctx, 30))) return; const t = resolveTarget(ctx,args,{self:true}); const u = chat.users[String(t.id)]; const h = u?.history || []; const list = h.slice(0,10).map((x,i)=>`${i+1}. ${x.type} — ${escapeHtml(x.reason || '')} ${x.minutes ? `(${x.minutes} мин.)` : ''}`).join('\n') || 'История пустая.'; return ctx.reply(`📂 <b>История пользователя</b>\n\nID: <code>${t.id}</code>\n⚠️ Предов: <b>${u?.warns?.length || 0}</b>\n⭐ Репутация: <b>${u?.reputation || 0}</b>\n💬 Сообщений: <b>${u?.messages || 0}</b>\n\n${list}`, { parse_mode: 'HTML' }); }
-  if (command === 'actions') { if (!(await requireRank(ctx, 30))) return; const reply = ctx.message?.reply_to_message?.from; if(!reply) return ctx.reply('❌ Ответь на сообщение пользователя и напиши /действия'); return ctx.reply('👤 Действия с пользователем:', actionsKeyboard(reply.id, ctx.from.id)); }
-  if (command === 'del') { if (!(await requireRank(ctx, 20))) return; const reply = ctx.message?.reply_to_message; if(!reply) return ctx.reply('❌ Ответь на сообщение, которое надо удалить.'); await ctx.telegram.deleteMessage(ctx.chat.id, reply.message_id).catch(()=>{}); await ctx.telegram.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(()=>{}); return; }
-
-  if (command === 'rank') { const t = resolveTarget(ctx,args,{self:true}); const r = await getUserAdminRank(ctx, t.id); return ctx.reply(`👑 Ранг: <b>${rankInfo(r).title}</b>\n📊 Уровень: <b>${r}</b>\n📝 ${rankInfo(r).note}`, { parse_mode: 'HTML' }); }
-  if (command === 'ranks') {
-    const list = Object.entries(ADMIN_RANKS).sort((a,b)=>b[0]-a[0]).map(([lvl,r])=>`<b>${lvl}</b> — ${r.title}\n${r.note}`).join('\n\n');
-    return ctx.reply(`👑 <b>Ранги администрации</b>\n\n${list}\n\n<b>Команды выдачи:</b>\n/владелец — Владелец\n/зам — Заместитель владельца\n/га — Главный администратор\n/куратор — Куратор администрации\n/са — Старший администратор\n/админ — Администратор\n/ма — Младший администратор\n/см — Старший модератор\n/модер — Модератор\n/помощник — Помощник\n/стажер — Стажёр\n/юзер — снять ранг\n\n<b>Пример:</b>\n/админ 123456789\nили reply → /модер`, { parse_mode: 'HTML' });
-  }
-  if (command === 'admins') {
-    const admins = Object.entries(chat.admins).filter(([,r])=>Number(r)>0).sort((a,b)=>b[1]-a[1]);
-    const list = admins.map(([id,r],i)=>`${i+1}. ${mentionById(id, chat.users[id]?.firstName || `ID ${id}`)} — <b>${rankInfo(r).title}</b>`).join('\n') || 'Администрация не назначена.';
-    return ctx.reply(`👑 <b>Администрация чата</b>\n\n${list}`, { parse_mode: 'HTML' });
-  }
-  if (command === 'setrank') { if (!(await requireRank(ctx, 20))) return; const t = resolveTarget(ctx,args); const newRank = Number(t?.rest?.[0]); if(!t || Number.isNaN(newRank)) return ctx.reply('❌ /setrank ID ранг или reply → /setrank ранг'); return setRank(ctx,t.id,newRank); }
-  if (command === 'delrank') { if (!(await requireRank(ctx, 20))) return; const t = resolveTarget(ctx,args); if(!t) return ctx.reply('❌ /delrank ID или reply → /delrank'); return setRank(ctx,t.id,0); }
-  if (command === 'rankShortcut') { if (!(await requireRank(ctx, 20))) return; const newRank = RANK_COMMANDS[raw]; const t = resolveTarget(ctx,args); if(!t) return ctx.reply(`❌ Использование: /${raw} ID или reply → /${raw}`); if (newRank === 100) { const actorRank = await getUserAdminRank(ctx, ctx.from.id); if (actorRank < 100) return ctx.reply('❌ Владельца может назначать только владелец/creator.'); } return setRank(ctx,t.id,newRank); }
-  if (command === 'transferowner') { if (!(await requireRank(ctx,100))) return; const t = resolveTarget(ctx,args); if(!t) return ctx.reply('❌ /transferowner ID или reply'); pendingOwnerTransfers.set(String(ctx.chat.id), { from: ctx.from.id, to: t.id, ts: nowTs() }); return ctx.reply(`⚠️ Подтверди передачу владельца командой /confirmowner в течение 2 минут.`); }
-  if (command === 'confirmowner') { if (!(await requireRank(ctx,100))) return; const p = pendingOwnerTransfers.get(String(ctx.chat.id)); if(!p || p.from !== ctx.from.id || nowTs()-p.ts>120000) return ctx.reply('❌ Нет активной передачи владельца.'); await setRank(ctx,p.to,100); pendingOwnerTransfers.delete(String(ctx.chat.id)); return; }
-
-  if (command === 'settings') { if (!(await requireRank(ctx,80))) return; return ctx.reply('⚙️ Настройки чата', settingsKeyboard(chat)); }
-  if (command === 'setlog') { if (!(await requireRank(ctx,80))) return; chat.settings.logChatId = ctx.chat.id; saveDB(); return ctx.reply('✅ Этот чат установлен как лог-чат.'); }
-  if (command === 'logs') { if (!(await requireRank(ctx,80))) return; const list = chat.logs.slice(0,10).map((l,i)=>`${i+1}. ${escapeHtml(l.text)}`).join('\n') || 'Логов пока нет.'; return ctx.reply(`📢 <b>Последние логи</b>\n\n${list}`, { parse_mode: 'HTML' }); }
-  if (['antispam','antilinks','antimat','welcome','goodbye'].includes(command)) { if (!(await requireRank(ctx,80))) return; const value = args[0]?.toLowerCase(); if(!['on','off','вкл','выкл'].includes(value)) return ctx.reply(`❌ Использование: /${raw} on или /${raw} off`); chat.settings[command] = ['on','вкл'].includes(value); saveDB(); return ctx.reply(`✅ ${command}: ${chat.settings[command] ? 'ON' : 'OFF'}`); }
-  if (command === 'setwelcome') { if (!(await requireRank(ctx,80))) return; chat.settings.welcomeText = argText; saveDB(); return ctx.reply('✅ Приветствие обновлено.'); }
-  if (command === 'setgoodbye') { if (!(await requireRank(ctx,80))) return; chat.settings.goodbyeText = argText; saveDB(); return ctx.reply('✅ Прощание обновлено.'); }
-  if (command === 'badwords') { if (!(await requireRank(ctx,80))) return; return ctx.reply(`🤬 Матлист:\n${(chat.settings.badwords || []).join(', ') || 'пусто'}`); }
-  if (command === 'addbadword') { if (!(await requireRank(ctx,80))) return; chat.settings.badwords ||= []; if(argText) chat.settings.badwords.push(argText.toLowerCase()); saveDB(); return ctx.reply('✅ Слово добавлено.'); }
-  if (command === 'delbadword') { if (!(await requireRank(ctx,80))) return; chat.settings.badwords = (chat.settings.badwords || []).filter(w=>w!==argText.toLowerCase()); saveDB(); return ctx.reply('✅ Слово удалено.'); }
-  if (command === 'punishments') return ctx.reply('📕 <b>Система наказаний</b>\n\n1 пред — предупреждение\n2 преда — мут 30 минут\n3 преда — мут 2 часа\n4 преда — кик\n5 предов — бан\n\nЗа рекламу — мут/бан по решению администрации.', { parse_mode: 'HTML' });
-}
-
-
-bot.use(async (ctx, next) => {
-  try {
-    if (ctx.chat) {
-      const chat = getChatDB(ctx.chat.id);
-
-      chat.title = ctx.chat.title || chat.title || 'Личная переписка';
-      chat.type = ctx.chat.type || chat.type || 'unknown';
-      chat.updatedAt = new Date().toISOString();
-
-      if (!chat.settings) chat.settings = {};
-      if (!chat.settings.rules) chat.settings.rules = DEFAULT_RULES;
-      if (chat.settings.welcomeText === undefined) {
-        chat.settings.welcomeText = '👋 Добро пожаловать, {user}!\n\nТы попал в «{chat}». Перед общением прочитай /правила.';
-      }
-
-      saveDB();
-    }
-  } catch (error) {
-    console.error('sync chat info error:', error);
-  }
-
-  return next();
-});
-
-bot.start(async (ctx) => ctx.reply(`🤖 Привет, ${escapeHtml(ctx.from.first_name || 'друг')}!\n\nЯ FulTalchik_botik — универсальный бот для Telegram-бесед. Добавь меня в группу и напиши /настроить.`));
-
-bot.on('new_chat_members', async (ctx) => {
-  try {
-    const chat = getChatDB(ctx.chat.id);
-    if (!chat.settings.welcome) return;
-    for (const member of ctx.message.new_chat_members || []) {
-      if (member.is_bot) continue;
-      const u = rememberChatUserForCalls(ctx, member) || getUserDB(chat, member); u.canCall = true; u.leftChat = false; u.balance += 25; saveDB();
-      const text = chat.settings.welcomeText || '👋 Добро пожаловать, {user}!\n\nТы попал в «Клуб случайных людей». Перед общением прочитай /правила.';
-      await ctx.reply(text.replace('{user}', mentionUser(member)).replace('{chat}', escapeHtml(ctx.chat.title || chat.title || 'эта беседа')), { parse_mode: 'HTML' });
-    }
-  } catch (e) { console.error('welcome error:', e); }
-});
-
-bot.on('left_chat_member', async (ctx) => {
-  try {
-    const chat = getChatDB(ctx.chat.id);
-    if (!chat.settings.goodbye) return;
-    const member = ctx.message.left_chat_member;
-    markUserLeftChat(ctx, member);
-    const text = chat.settings.goodbyeText || '👋 {user} покинул чат.';
-    await ctx.reply(text.replace('{user}', mentionUser(member)), { parse_mode: 'HTML' });
-  } catch (e) { console.error('goodbye error:', e); }
-});
-
-
-async function sendCallByModeButton(ctx, mode) {
-  const chatId = ctx.chat.id;
-  const chat = getChatDB(chatId);
-
-  let minRank = 40;
-
-  if (mode === 'all') minRank = 60;
-  if (mode === 'admins') minRank = 40;
-  if (mode === 'owners') minRank = 80;
-
-  const userRank = await getUserAdminRank(ctx, ctx.from.id);
-
-  if (userRank < minRank) {
-    return ctx.telegram.sendMessage(
-      chatId,
-      `❌ Недостаточно прав.\n\nТвой ранг: ${rankInfo(userRank).title}\nНужный ранг: ${rankInfo(minRank).title}`,
-      { parse_mode: 'HTML' }
-    );
-  }
-
-  const now = nowTs();
-  const lastCall = chat.lastCallAt || 0;
-  const cooldown = 10 * 60 * 1000;
-
-  if (now - lastCall < cooldown) {
-    const left = Math.ceil((cooldown - (now - lastCall)) / 60000);
-
-    return ctx.telegram.sendMessage(
-      chatId,
-      `⏳ Созыв уже был недавно. Подожди ещё ${left} мин.`
-    );
-  }
-
-  // Берём людей из БД:
-  // написал сообщение / вошёл в чат / добавлен через запомнить / админ после обновитьадминов
-  let users = getCallableUsersFromDB(chat, mode);
-
-  if (!users.length) {
-    return ctx.telegram.sendMessage(
-      chatId,
-      '❌ Некого созывать.\n\nБот ещё не знает участников этой категории.\n\nЧтобы бот запомнил человека:\n• человек должен написать любое сообщение;\n• или ответь на его сообщение: запомнить;\n• или добавь по ID: запомнить 123456789 Имя;\n• для админов: обновитьадминов'
-    );
-  }
-
-  chat.lastCallAt = now;
-  saveDB();
-
-  const title =
-    mode === 'all'
-      ? '👥 Все участники из базы'
-      : mode === 'admins'
-        ? '🛡 Администрация из базы'
-        : '👑 Владельцы из базы';
-
-  await ctx.telegram.sendMessage(
-    chatId,
-    `📢 <b>Созыв: ${title}</b>\n\n👮 Созвал: ${mentionUser(ctx.from)}\n👥 Найдено в БД: <b>${users.length}</b>`,
-    { parse_mode: 'HTML' }
-  );
-
-  for (let i = 0; i < users.length; i += 25) {
-    const chunk = users.slice(i, i + 25);
-
-    const mentions = chunk
-      .map((u) => {
-        const name = u.firstName || u.username || `ID ${u.id}`;
-        return mentionById(u.id, name);
-      })
-      .join(' ');
-
-    await ctx.telegram.sendMessage(chatId, mentions, { parse_mode: 'HTML' });
-  }
-}
-
-bot.action(/^call:(all|admins|owners|cancel):(\d+)$/, async (ctx) => {
-  try {
-    const mode = ctx.match[1];
-    const actorId = Number(ctx.match[2]);
-
-    if (ctx.from.id !== actorId) {
-      return ctx.answerCbQuery('❌ Эта кнопка не для тебя.');
-    }
-
-    await ctx.answerCbQuery();
-
-    if (mode === 'cancel') {
-      return ctx.editMessageText('❌ Созыв отменён.').catch(() => {});
-    }
-
-    await ctx.editMessageText('⏳ Выполняю созыв...').catch(() => {});
-
-    return sendCallByModeButton(ctx, mode);
-  } catch (error) {
-    console.error('call button error:', error);
-    return ctx.answerCbQuery('Ошибка при созыве.').catch(() => {});
-  }
-});
-
-
-bot.on('callback_query', async (ctx) => {
-  try {
-    const data = ctx.callbackQuery.data || '';
-    const parts = data.split(':');
-    if (parts[0] === 'cancel') {
-      if (Number(parts[1]) !== ctx.from.id) return ctx.answerCbQuery('❌ Эта кнопка не для тебя.');
-      await ctx.editMessageText('❌ Действие отменено.').catch(()=>{});
-      return ctx.answerCbQuery();
-    }
-    if (data.startsWith('help:')) {
-      const section = parts[1];
-      const texts = {
-        mod: '🛡 <b>Модерация</b>\n/mute /мут\n/unmute /унмут\n/ban /бан\n/unban /разбан\n/kick /кик\n/warn /пред\n/unwarn /унпред\n/actions /действия',
-        ranks: `👑 <b>Ранги администрации</b>
-
-<b>Основные команды:</b>
-/ranks /ранги — список рангов
-/rank /ранг — посмотреть ранг
-/setrank /выдатьранг — выдать ранг по уровню
-/delrank /снятьранг — снять ранг
-/admins /админы — список администрации
-
-<b>Команды выдачи рангов:</b>
-/владелец — 👑 Владелец
-/зам — 🛡 Заместитель владельца
-/га — 💎 Главный администратор
-/куратор — 🔥 Куратор администрации
-/са — ⚡ Старший администратор
-/админ — 🧩 Администратор
-/ма — 🛠 Младший администратор
-/см — 👮 Старший модератор
-/модер — 🧹 Модератор
-/помощник — 🤝 Помощник
-/стажер — 🌱 Стажёр
-/юзер — 👤 Снять ранг
-
-<b>Примеры:</b>
-/админ 123456789
-/модер 123456789
-reply → /помощник
-reply → /юзер`,
-        profile: '👤 <b>Профиль</b>\n/profile /профиль\n/top /топ\n/level /уровень\n/balance /баланс\n/rep /реп\n/myrep /мояреп',
-        rules: '📜 <b>Правила</b>\n/rules /правила\n/setrules /установитьправила',
-        settings: '⚙️ <b>Настройки</b>\n/settings /настройки\n/antispam /антиспам\n/antilinks /ссылки\n/antimat /антимат\n/setlog /сетлог',
-        shop: '👨‍💻 <b>Разработчик</b>\n/coins ID сумма — выдать/снять монеты\nмонеты ID сумма — без слеша\nreply → монеты сумма\n\n🎁 <b>Магазин</b>\n/shop /магазин\n/buy /купить\n/title /титул\n/daily /ежедневно'
-      };
-      await ctx.editMessageText(texts[section] || 'Раздел не найден.', { parse_mode: 'HTML', ...mainMenuKeyboard() }).catch(()=>{});
-      return ctx.answerCbQuery();
-    }
-    if (parts[0] === 'set') {
-      if (!(await requireRank(ctx, 80))) return ctx.answerCbQuery('Недостаточно прав');
-      const chat = getChatDB(ctx.chat.id);
-      const key = parts[1];
-      chat.settings[key] = !chat.settings[key]; saveDB();
-      await ctx.editMessageText('⚙️ Настройки чата', settingsKeyboard(chat)).catch(()=>{});
-      return ctx.answerCbQuery('Готово');
-    }
-    if (parts[0] === 'call') {
-      const mode = parts[1];
-      const actorId = Number(parts[2]);
-      if (ctx.from.id !== actorId) return ctx.answerCbQuery('❌ Эта кнопка не для тебя.');
-      await ctx.answerCbQuery();
-      if (mode === 'cancel') {
-        await ctx.editMessageText('❌ Созыв отменён.').catch(()=>{});
-        return;
-      }
-      const fakeCtx = { ...ctx, message: { text: `/call ${mode}` }, chat: ctx.callbackQuery.message.chat };
-      await handleCommand(fakeCtx, { command: 'call', raw: 'call', args: [mode], argText: mode });
-      return;
-    }
-    if (parts[0] === 'mute') {
-      const actorId = Number(parts[1]), targetId = Number(parts[2]), minutes = Number(parts[3]);
-      if (ctx.from.id !== actorId) return ctx.answerCbQuery('❌ Эта кнопка не для тебя.');
-      await ctx.editMessageText('📌 Выберите причину:', reasonKeyboard('mute', actorId, targetId, minutes)).catch(()=>{});
-      return ctx.answerCbQuery();
-    }
-    if (parts[0] === 'muter') {
-      const actorId = Number(parts[1]), targetId = Number(parts[2]), minutes = Number(parts[3]);
-      const reason = parts.slice(4).join(':') || 'без причины';
-      if (ctx.from.id !== actorId) return ctx.answerCbQuery('❌ Эта кнопка не для тебя.');
-      await ctx.deleteMessage().catch(()=>{});
-      await muteUser(ctx, targetId, minutes, reason);
-      return ctx.answerCbQuery('Мут выдан');
-    }
-    if (parts[0] === 'act') {
-      const action = parts[1], actorId = Number(parts[2]), targetId = Number(parts[3]);
-      if (ctx.from.id !== actorId) return ctx.answerCbQuery('❌ Эта кнопка не для тебя.');
-      if (action === 'mute') { await ctx.editMessageText('🔇 Выберите срок мута:', muteKeyboard(targetId, actorId)).catch(()=>{}); return ctx.answerCbQuery(); }
-      if (action === 'ban') { await ctx.editMessageText('📌 Выберите причину:', reasonKeyboard('ban', actorId, targetId, 0)).catch(()=>{}); return ctx.answerCbQuery(); }
-      if (action === 'kick') { await kickUser(ctx, targetId, 'быстрое действие'); return ctx.answerCbQuery('Кик'); }
-      if (action === 'warn') { await warnUser(ctx, targetId, 'быстрое действие'); return ctx.answerCbQuery('Пред'); }
-      if (action === 'history') { const hctx = { ...ctx, message: { text: `/history ${targetId}` } }; await handleCommand(hctx, { command: 'history', raw: 'history', args: [String(targetId)], argText: String(targetId) }); return ctx.answerCbQuery(); }
-      if (action === 'del') { return ctx.answerCbQuery('Удаление работает через reply → /del'); }
-    }
-    if (parts[0] === 'banr') {
-      const actorId = Number(parts[1]), targetId = Number(parts[2]);
-      const reason = parts.slice(4).join(':') || 'без причины';
-      if (ctx.from.id !== actorId) return ctx.answerCbQuery('❌ Эта кнопка не для тебя.');
-      await banUser(ctx, targetId, reason); return ctx.answerCbQuery('Бан выдан');
-    }
-  } catch (error) {
-    console.error('callback error:', error);
-    await ctx.answerCbQuery('Ошибка').catch(()=>{});
-  }
-});
-
-
-async function trackNonTextMessageActivity(ctx, messageType) {
-  try {
-    if (!ctx.chat || !ctx.from || ctx.from.is_bot) return;
-
-    const chat = getChatDB(ctx.chat.id);
-
-    // Запоминаем пользователя в БД для созыва
-    const user = typeof rememberChatUserForCalls === 'function'
-      ? (rememberChatUserForCalls(ctx, ctx.from) || getUserDB(chat, ctx.from))
-      : getUserDB(chat, ctx.from);
-
-    const day = todayKey();
-
-    user.messages = (user.messages || 0) + 1;
-    user.xp = (user.xp || 0) + 1;
-
-    if (!user.messagesDay) user.messagesDay = {};
-    user.messagesDay[day] = (user.messagesDay[day] || 0) + 1;
-
-    if (!user.messageTypes) {
-      user.messageTypes = {
-        text: 0,
-        voice: 0,
-        video_note: 0,
-        photo: 0,
-        video: 0,
-        sticker: 0,
-        document: 0,
-        audio: 0,
-        animation: 0,
-        other: 0
-      };
-    }
-
-    if (!Object.prototype.hasOwnProperty.call(user.messageTypes, messageType)) {
-      user.messageTypes[messageType] = 0;
-    }
-
-    user.messageTypes[messageType] += 1;
-
-    // Красивые отдельные счётчики
-    if (messageType === 'voice') user.voiceMessages = (user.voiceMessages || 0) + 1;
-    if (messageType === 'video_note') user.circleMessages = (user.circleMessages || 0) + 1;
-    if (messageType === 'photo') user.photoMessages = (user.photoMessages || 0) + 1;
-    if (messageType === 'video') user.videoMessages = (user.videoMessages || 0) + 1;
-    if (messageType === 'sticker') user.stickerMessages = (user.stickerMessages || 0) + 1;
-    if (messageType === 'document') user.documentMessages = (user.documentMessages || 0) + 1;
-    if (messageType === 'audio') user.audioMessages = (user.audioMessages || 0) + 1;
-    if (messageType === 'animation') user.animationMessages = (user.animationMessages || 0) + 1;
-
-    // Монеты за активность, но с антифармом как у текста
-    if (nowTs() - (user.lastMessageCoinAt || 0) > 30000) {
-      user.balance = (user.balance || 0) + 1;
-      user.coins = user.balance;
-      user.lastMessageCoinAt = nowTs();
-    }
-
-    user.lastSeenAt = new Date().toISOString();
-
-    saveDB();
-
-    // Проверяем ачивки после любого типа активности
-    if (typeof checkAutoAchievements === 'function') {
-      await checkAutoAchievements(ctx, user);
-    }
-  } catch (error) {
-    console.error('trackNonTextMessageActivity error:', error);
-  }
-}
-
-// Учитываем не только текст, но и голосовые/медиа/стикеры
-bot.on('voice', async (ctx) => trackNonTextMessageActivity(ctx, 'voice'));
-bot.on('video_note', async (ctx) => trackNonTextMessageActivity(ctx, 'video_note'));
-bot.on('photo', async (ctx) => trackNonTextMessageActivity(ctx, 'photo'));
-bot.on('video', async (ctx) => trackNonTextMessageActivity(ctx, 'video'));
-bot.on('sticker', async (ctx) => trackNonTextMessageActivity(ctx, 'sticker'));
-bot.on('document', async (ctx) => trackNonTextMessageActivity(ctx, 'document'));
-bot.on('audio', async (ctx) => trackNonTextMessageActivity(ctx, 'audio'));
-bot.on('animation', async (ctx) => trackNonTextMessageActivity(ctx, 'animation'));
-
-
-
-bot.on('message', async (ctx, next) => {
-  try {
-    // Текстовые сообщения обрабатываются ниже в bot.on('text')
-    if (ctx.message?.text) return next();
-
-    if (isGroup(ctx)) {
-      await trackAnyMessageActivity(ctx);
-    }
-
-    return next();
-  } catch (error) {
-    console.error('message activity handler error:', error);
-    return next();
-  }
-});
-
-bot.on('text', async (ctx, next) => {
-  try {
-    const text = ctx.message.text || '';
-    const parsed = parseCommand(ctx);
-    if (isGroup(ctx)) {
-      const chat = getChatDB(ctx.chat.id);
-      const user = getUserDB(chat, ctx.from);
-      const day = todayKey();
-      ensurePeriodStats(user); const week = weekKey(); const month = monthKey(); user.messages += 1; user.xp += 1; user.messagesDay[day] = (user.messagesDay[day] || 0) + 1; user.messagesWeek[week] = (user.messagesWeek[week] || 0) + 1; user.messagesMonth[month] = (user.messagesMonth[month] || 0) + 1;
-      if (nowTs() - (user.lastMessageCoinAt || 0) > 30000) { user.balance += 1; user.lastMessageCoinAt = nowTs(); }
-      saveDB();
-      const rank = await getUserAdminRank(ctx, ctx.from.id);
-      if (!parsed && rank < 30) {
-        if (chat.settings.antilinks && hasLink(text) && !isAllowedVideoLink(text)) {
-          await ctx.deleteMessage().catch(()=>{});
-          await warnUser(ctx, ctx.from.id, 'запрещённая ссылка');
-          return;
-        }
-        if (chat.settings.antimat) {
-          const words = chat.settings.badwords || ['мат', 'оскорбление'];
-          if (words.some(w => w && text.toLowerCase().includes(w.toLowerCase()))) {
-            await ctx.deleteMessage().catch(()=>{});
-            await warnUser(ctx, ctx.from.id, 'запрещённое слово');
-            return;
+        // ── Reminders
+        if (chat.reminders?.length) {
+          const nowMs = Date.now();
+          for (const r of chat.reminders) {
+            if (!r.done && r.dueAt <= nowMs) {
+              r.done = true; saveDB();
+              const name = r.userName ? `@${r.userName}` : 'пользователь';
+              await tgReply(chatId,
+                `🔔 <b>Напоминание</b>\n\n${name}, ты просил напомнить:\n\n📝 ${esc(r.text)}`
+              );
+            }
           }
         }
-        if (chat.settings.antispam) {
-          const key = String(ctx.from.id);
-          const now = nowTs();
-          chat.antispam[key] ||= [];
-          chat.antispam[key] = chat.antispam[key].filter(t => now - t < 10000);
-          chat.antispam[key].push(now); saveDB();
-          if (chat.antispam[key].length >= 10) { await muteUser(ctx, ctx.from.id, 30, 'антиспам'); return; }
-          if (chat.antispam[key].length >= 5) { await muteUser(ctx, ctx.from.id, 5, 'антиспам'); return; }
-        }
-      }
+      } catch (_) {}
     }
-    if (!parsed && isGroup(ctx)) {
-      const autoChat = getChatDB(ctx.chat.id);
-      const autoUser = getUserDB(autoChat, ctx.from);
-      await processAutoFeaturesForMessage(ctx, text, autoUser);
+  } catch (e) { console.error('Scheduler error:', e.message); }
+}, 60000);
+
+// ═══════════════════════════════════════════════════════════════
+//  MESSAGE HANDLER  (activity tracking, automod, commands)
+// ═══════════════════════════════════════════════════════════════
+bot.on('message', async (msg) => {
+  try {
+    if (!msg.from || msg.from.is_bot) return;
+    if (!isGroup(msg)) return;
+
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+
+    // always register user
+    const u = getUser(chatId, userId, msg.from.first_name, msg.from.username);
+    getChat(chatId, msg.chat.title, msg.chat.type);
+
+    // detect message type
+    const msgType =
+      msg.voice         ? 'voice'    :
+      msg.video_note    ? 'circle'   :
+      msg.photo         ? 'photo'    :
+      msg.video         ? 'video'    :
+      msg.sticker       ? 'sticker'  :
+      msg.document      ? 'document' :
+      msg.audio         ? 'audio'    :
+      msg.animation     ? 'animation':
+      msg.text          ? 'text'     : 'other';
+
+    // parse command BEFORE counting (commands don't add stats)
+    const parsed = parseCommand(msg.text || '');
+    const isCmd  = !!parsed;
+
+    if (!isCmd) {
+      // activity
+      u.messages = (u.messages || 0) + 1;
+      u.xp       = (u.xp       || 0) + 1;
+      if (!u.msgTypes) u.msgTypes = {};
+      u.msgTypes[msgType] = (u.msgTypes[msgType] || 0) + 1;
+      // period stats
+      if (!u.stats) u.stats = { daily:{}, weekly:{}, monthly:{} };
+      const dk = todayKey(), wk = weekKey(), mk = monthKey();
+      u.stats.daily[dk]   = (u.stats.daily[dk]   || 0) + 1;
+      u.stats.weekly[wk]  = (u.stats.weekly[wk]  || 0) + 1;
+      u.stats.monthly[mk] = (u.stats.monthly[mk] || 0) + 1;
+      // coins (anti-farm: 1 per second)
+      const now = Date.now();
+      if (!u._lc || now - u._lc > 1000) { u.balance = (u.balance || 0) + 1; u._lc = now; }
+      saveDB();
+      await checkAchievements(chatId, userId);
     }
 
-    if (parsed) return handleCommand(ctx, parsed);
-    if (isVideoLink(text)) {
-      const url = normalizeUrl(text);
-      let msg, file;
-      try {
-        msg = await ctx.reply('⏳ Скачиваю видео...');
-        file = await downloadVideo(url);
-        await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(()=>{});
-        await ctx.replyWithVideo({ source: file }, { caption: `👉 Скачано через @${BOT_USERNAME}`, supports_streaming: true });
-      } catch (error) {
-        await ctx.telegram.deleteMessage(ctx.chat.id, msg?.message_id).catch(()=>{});
-        await ctx.reply(`❌ Не получилось скачать видео.\n\n<code>${escapeHtml(String(error.message || error).slice(0, 800))}</code>`, { parse_mode: 'HTML' });
-      } finally { if (file && fs.existsSync(file)) fs.unlinkSync(file); }
+    // automod
+    if (msg.text || msg.sticker || msg.voice) await checkSpam(msg);
+    if (msg.text || msg.caption)              await checkLinks(msg);
+    if (msg.text || msg.caption)              await checkBadWords(msg);
+
+    // passive detections (birthday, reminder)
+    if (msg.text) {
+      await checkBirthday(msg);
+      await checkReminder(msg);
     }
-  } catch (error) {
-    console.error('text handler error:', error);
-    await ctx.reply('❌ Произошла ошибка, но бот продолжает работать.').catch(()=>{});
-  }
+
+    // video downloader from old bot: TikTok / YouTube / Instagram
+    if (!isCmd && msg.text && isVideoLink(msg.text)) {
+      await handleVideoDownload(msg);
+      return;
+    }
+
+    // command routing
+    if (isCmd) await handleCommand(parsed.command, msg, parsed.args, parsed.argText);
+  } catch (e) { console.error('message handler:', e.message); }
 });
 
-process.on('unhandledRejection', (reason) => console.error('unhandledRejection:', reason));
-process.on('uncaughtException', (error) => console.error('uncaughtException:', error));
-
-bot.catch((error) => console.error('Глобальная ошибка Telegraf:', error));
-
-startFridayScheduler();
-
-startAutoFeaturesScheduler();
-
-
-function cleanupOldSmallAchievements() {
+// welcome / goodbye
+bot.on('new_chat_members', async (msg) => {
   try {
-    const db = loadDB();
-
-    for (const chat of Object.values(db.chats || {})) {
-      for (const user of Object.values(chat.users || {})) {
-        if (!Array.isArray(user.achievements)) continue;
-
-        user.achievements = user.achievements.filter((id) => {
-          return !["first_message", "birthday_set"].includes(id);
-        });
-
-        user.achievements = Array.from(new Set(user.achievements));
-      }
+    const chatId = msg.chat.id, chat = getChat(chatId);
+    if (!chat.settings.welcome) return;
+    for (const m of msg.new_chat_members) {
+      if (m.is_bot) continue;
+      getUser(chatId, m.id, m.first_name, m.username);
+      const name = m.username ? `@${m.username}` : m.first_name;
+      const txt  = chat.settings.welcomeText
+        ? chat.settings.welcomeText.replace('{name}', name)
+        : `👋 <b>Добро пожаловать, ${esc(name)}!</b>\n\nТы попал в «${esc(chat.title || 'наш чат')}».\nПеред общением прочитай /правила.\n\nПриятного общения ❤️`;
+      await tgReply(chatId, txt);
+      await sendLog(chatId, `➕ Вошёл: ${name} (${m.id})`);
     }
+  } catch (e) { console.error('new_chat_members:', e.message); }
+});
 
-    saveDB();
-  } catch (error) {
-    console.error("cleanupOldSmallAchievements error:", error);
+bot.on('left_chat_member', async (msg) => {
+  try {
+    const chatId = msg.chat.id, chat = getChat(chatId);
+    const m = msg.left_chat_member;
+    if (m.is_bot) return;
+    // mark as left
+    const u = getUser(chatId, m.id, m.first_name, m.username);
+    u.leftChat = true; u.canCall = false; saveDB();
+    if (!chat.settings.goodbye) return;
+    const name = m.username ? `@${m.username}` : m.first_name;
+    const txt  = chat.settings.goodbyeText
+      ? chat.settings.goodbyeText.replace('{name}', name)
+      : `👋 <b>${esc(name)}</b> покинул чат.`;
+    await tgReply(chatId, txt);
+    await sendLog(chatId, `➖ Вышел: ${name} (${m.id})`);
+  } catch (e) { console.error('left_chat_member:', e.message); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  MAIN COMMAND HANDLER
+// ═══════════════════════════════════════════════════════════════
+async function handleCommand(cmd, msg, args, argText) {
+  const chatId = msg.chat.id;
+  try { switch (cmd) {
+
+  // ── SETUP ──────────────────────────────────────────────────
+  case 'setup': {
+    if (!await guardGroup(msg)) return;
+    const chat = getChat(chatId, msg.chat.title, msg.chat.type);
+    chat.title = msg.chat.title; chat.type = msg.chat.type;
+    // auto-assign owner
+    try {
+      const mem = await bot.getChatMember(chatId, msg.from.id);
+      const u   = getUser(chatId, msg.from.id, msg.from.first_name, msg.from.username);
+      if (mem.status === 'creator' || msg.from.id === OWNER_ID) {
+        u.adminRank = 100;
+      } else if (['administrator'].includes(mem.status) && u.adminRank < 60) {
+        u.adminRank = 60;
+      }
+      saveDB();
+    } catch (_) {}
+    await replyTo(msg,
+      `✅ <b>Бот настроен для этой беседы!</b>\n\n📛 Название: ${esc(chat.title)}\n🆔 ID чата: <code>${chatId}</code>\n\n📌 Команды работают со слешем и без:\n• профиль / /профиль\n• топ день / /топ день\n• мут 123 10 флуд / /мут 123 10 флуд\n\n🛡 Владелец назначен автоматически.\n📜 Правила: /правила\n⚙️ Настройки: /настройки`
+    );
+    break;
   }
+
+  // ── HELP ───────────────────────────────────────────────────
+  case 'help': {
+    const kb = { inline_keyboard: [
+      [{ text:'🛡 Модерация',   callback_data:'help:moder'   }, { text:'👑 Ранги',     callback_data:'help:ranks'   }],
+      [{ text:'👤 Профиль',    callback_data:'help:profile'  }, { text:'📜 Правила',   callback_data:'help:rules'   }],
+      [{ text:'⚙️ Настройки',  callback_data:'help:settings' }, { text:'🎁 Магазин',   callback_data:'help:shop'    }],
+      [{ text:'📢 Созыв',      callback_data:'help:call'     }, { text:'❤️ Отношения', callback_data:'help:social'  }],
+      [{ text:'🏆 Топы',       callback_data:'help:tops'     }, { text:'🎉 Пятница',   callback_data:'help:friday'  }],
+      [{ text:'🌍 Глоб.ранги', callback_data:'help:global'   }, { text:'💰 Монеты',    callback_data:'help:coins'   }]
+    ]};
+    await replyTo(msg,
+      `🤖 <b>FulTalchik_Botik</b> — меню команд\n\n⚙️ Все команды работают <b>со слешем и без</b>:\n• <code>/топ день</code> = <code>топ день</code>\n• <code>/мут 123 10 флуд</code> = <code>мут 123 10 флуд</code>\n\nВыбери раздел:`,
+      { reply_markup: kb }
+    );
+    break;
+  }
+
+  // ── RULES ──────────────────────────────────────────────────
+  case 'rules': {
+    const chat = getChat(chatId);
+    await replyTo(msg, `📜 <b>Правила чата</b>\n\n${esc(chat.settings.rules)}\n\n⚠️ <i>За нарушение: предупреждение, мут, кик или бан.</i>`);
+    break;
+  }
+  case 'setrules': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 80)) return;
+    if (!argText) { await replyTo(msg,'❌ Укажи текст правил.'); return; }
+    getChat(chatId).settings.rules = argText; saveDB();
+    await replyTo(msg,'✅ Правила обновлены.');
+    await sendLog(chatId, `📜 Правила изменены: ${msg.from.first_name}`);
+    break;
+  }
+
+  // ── MUTE ───────────────────────────────────────────────────
+  case 'mute': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 30)) return;
+    if (msg.reply_to_message && args.length === 0) {
+      const tid = msg.reply_to_message.from.id;
+      const k   = `mute:${chatId}:${msg.message_id}`;
+      pending[k] = { actorId: msg.from.id, chatId, targetId: tid };
+      const kb = { inline_keyboard: [
+        [{ text:'5 мин.',  callback_data:`mt:${k}:5`  }, { text:'10 мин.', callback_data:`mt:${k}:10` }],
+        [{ text:'30 мин.', callback_data:`mt:${k}:30` }, { text:'60 мин.', callback_data:`mt:${k}:60` }],
+        [{ text:'❌ Отмена', callback_data:`mt:${k}:cancel` }]
+      ]};
+      await replyTo(msg, '🔇 <b>Выбери срок мута:</b>', { reply_markup: kb }); return;
+    }
+    const t = await guardTarget(msg, args, chatId); if (!t) return;
+    if (!await guardCanPunish(msg, t.id)) return;
+    const actorRank = await getEffectiveRank(chatId, msg.from.id);
+    let minutes = 60;
+    if (t.args[0] && /^\d+$/.test(t.args[0])) { minutes = parseInt(t.args[0],10); t.args.shift(); }
+    const reason = t.args.join(' ') || 'Не указана';
+    const limit  = getMuteLimit(actorRank);
+    if (minutes > limit && limit !== Infinity) {
+      await replyTo(msg, `❌ Превышен лимит мута\nТвой лимит: ${limit} мин.\nТы указал: ${minutes} мин.`); return;
+    }
+    try {
+      const target = getUser(chatId, t.id, t.firstName, t.username);
+      await doMute(chatId, t.id, minutes, reason, msg.from.first_name);
+      await replyTo(msg, `🔇 <b>Мут выдан</b>\n\n👤 ${mention(target)}\n🆔 <code>${t.id}</code>\n⏱ ${fmtDur(minutes)}\n📌 ${esc(reason)}\n👮 ${esc(msg.from.first_name)}\n\n✅ Снимется автоматически.`);
+    } catch (e) { await replyTo(msg, `❌ ${e.message}`); }
+    break;
+  }
+
+  case 'unmute': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 30)) return;
+    const t = await guardTarget(msg, args, chatId); if (!t) return;
+    try {
+      await doUnmute(chatId, t.id, msg.from.first_name);
+      await replyTo(msg, `🔊 <b>Мут снят</b>\n👤 ${mention(getUser(chatId,t.id))}\n🆔 <code>${t.id}</code>\n👮 ${esc(msg.from.first_name)}\n\n✅ Пользователь снова может писать.`);
+    } catch (e) { await replyTo(msg, `❌ ${e.message}`); }
+    break;
+  }
+
+  case 'ban': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 70)) return;
+    const t = await guardTarget(msg, args, chatId); if (!t) return;
+    if (!await guardCanPunish(msg, t.id)) return;
+    try {
+      await doBan(chatId, t.id, t.args.join(' ') || 'Не указана', msg.from.first_name);
+      await replyTo(msg, `🚫 <b>Забанен</b>\n👤 ${mention(getUser(chatId,t.id))}\n🆔 <code>${t.id}</code>\n📌 ${esc(t.args.join(' ') || 'Не указана')}\n👮 ${esc(msg.from.first_name)}`);
+    } catch (e) { await replyTo(msg, `❌ ${e.message}`); }
+    break;
+  }
+
+  case 'unban': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 70)) return;
+    const uid = args[0]; if (!uid || !/^\d+$/.test(uid)) { await replyTo(msg,'❌ Укажи ID.'); return; }
+    try {
+      await doUnban(chatId, parseInt(uid,10), msg.from.first_name);
+      await replyTo(msg, `✅ <b>Разбанен</b>\n🆔 <code>${uid}</code>\n👮 ${esc(msg.from.first_name)}`);
+    } catch (e) { await replyTo(msg, `❌ ${e.message}`); }
+    break;
+  }
+
+  case 'kick': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 60)) return;
+    const t = await guardTarget(msg, args, chatId); if (!t) return;
+    if (!await guardCanPunish(msg, t.id)) return;
+    try {
+      await doKick(chatId, t.id, t.args.join(' ') || 'Не указана', msg.from.first_name);
+      await replyTo(msg, `👢 <b>Кикнут</b>\n👤 ${mention(getUser(chatId,t.id))}\n🆔 <code>${t.id}</code>\n📌 ${esc(t.args.join(' ') || 'Не указана')}\n👮 ${esc(msg.from.first_name)}`);
+    } catch (e) { await replyTo(msg, `❌ ${e.message}`); }
+    break;
+  }
+
+  case 'warn': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 30)) return;
+    const t = await guardTarget(msg, args, chatId); if (!t) return;
+    if (!await guardCanPunish(msg, t.id)) return;
+    await doWarn(chatId, t.id, t.args.join(' ') || 'Не указана', msg.from.first_name, msg);
+    break;
+  }
+
+  case 'unwarn': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 30)) return;
+    const t = await guardTarget(msg, args, chatId); if (!t) return;
+    const u = getUser(chatId, t.id);
+    if (!u.warns?.length) { await replyTo(msg,'✅ Нет предупреждений.'); return; }
+    u.warns.pop(); saveDB();
+    addHistory(chatId, t.id, { type:'unwarn', by: msg.from.first_name });
+    await replyTo(msg, `✅ <b>Пред снят</b>\n👤 ${mention(u)}\n📊 ${u.warns.length}/5\n👮 ${esc(msg.from.first_name)}`);
+    break;
+  }
+
+  case 'warns': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 10)) return;
+    const t  = await resolveTarget(msg, args, chatId);
+    const u  = getUser(chatId, t ? t.id : msg.from.id);
+    const ws = u.warns || [];
+    if (!ws.length) { await replyTo(msg,`⚠️ У ${mention(u)} нет предупреждений.`); return; }
+    const list = ws.map((w,i)=>`${i+1}. 📌 ${esc(w.reason)} — 👮 ${esc(w.by)} (${new Date(w.time).toLocaleDateString('ru')})`).join('\n');
+    await replyTo(msg, `⚠️ <b>Предупреждения</b> ${mention(u)}\n\n${list}\n\n📊 Всего: ${ws.length}/5`);
+    break;
+  }
+
+  case 'del': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 20)) return;
+    if (!msg.reply_to_message) { await replyTo(msg,'❌ Ответь на сообщение.'); return; }
+    try { await bot.deleteMessage(chatId, msg.reply_to_message.message_id); await bot.deleteMessage(chatId, msg.message_id); }
+    catch (e) { await replyTo(msg, `❌ ${e.message}`); }
+    break;
+  }
+
+  // ── RANK ASSIGN ────────────────────────────────────────────
+  case 'setrank': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 20)) return;
+    const t = await guardTarget(msg, args, chatId); if (!t) return;
+    const nr = parseInt(t.args[0],10);
+    if (isNaN(nr) || !RANKS[nr]) { await replyTo(msg,`❌ Неверный ранг. Допустимые: ${Object.keys(RANKS).join(', ')}`); return; }
+    const ar = await getEffectiveRank(chatId, msg.from.id);
+    if (nr >= ar) { await replyTo(msg,`❌ Нельзя выдать ранг ≥ своему (${ar}).`); return; }
+    const u = getUser(chatId, t.id, t.firstName, t.username); u.adminRank = nr; saveDB();
+    const ri = getRankInfo(nr);
+    await replyTo(msg, `${ri.emoji} <b>Ранг выдан</b>\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n🎚 ${ri.name} (${nr})\n👮 ${esc(msg.from.first_name)}`);
+    await sendLog(chatId, `🎚 Ранг ${ri.name}(${nr}) → ${mention(u)} | ${msg.from.first_name}`);
+    break;
+  }
+  case 'delrank': {
+    if (!await guardGroup(msg)) return;
+    const t  = await guardTarget(msg, args, chatId); if (!t) return;
+    const ar = await getEffectiveRank(chatId, msg.from.id);
+    const tr = await getEffectiveRank(chatId, t.id);
+    if (tr >= ar) { await replyTo(msg,'❌ Нельзя снять ранг у равного или выше.'); return; }
+    const u = getUser(chatId, t.id); u.adminRank = 0; saveDB();
+    await replyTo(msg, `👤 <b>Ранг снят</b>\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n👮 ${esc(msg.from.first_name)}`);
+    break;
+  }
+  case 'owner':       await quickRank(msg, args, 100, chatId); break;
+  case 'deputy':      await quickRank(msg, args,  95, chatId); break;
+  case 'headadmin':   await quickRank(msg, args,  90, chatId); break;
+  case 'curator':     await quickRank(msg, args,  80, chatId); break;
+  case 'senioradmin': await quickRank(msg, args,  70, chatId); break;
+  case 'admin':       await quickRank(msg, args,  60, chatId); break;
+  case 'junioradmin': await quickRank(msg, args,  50, chatId); break;
+  case 'seniormoder': await quickRank(msg, args,  40, chatId); break;
+  case 'moder':       await quickRank(msg, args,  30, chatId); break;
+  case 'helper':      await quickRank(msg, args,  20, chatId); break;
+  case 'trainee':     await quickRank(msg, args,  10, chatId); break;
+  case 'user':        await quickRank(msg, args,   0, chatId); break;
+  case 'transferowner': {
+    if (!await guardGroup(msg)) return;
+    if (await getEffectiveRank(chatId, msg.from.id) < 100) { await replyTo(msg,'❌ Только владелец.'); return; }
+    const t = await guardTarget(msg, args, chatId); if (!t) return;
+    getChat(chatId).pendingOwnerTransfer = { from: msg.from.id, to: t.id }; saveDB();
+    await replyTo(msg, `⚠️ Передача прав → <code>${t.id}</code>\n\nПодтверди: /confirmowner`);
+    break;
+  }
+  case 'confirmowner': {
+    if (!await guardGroup(msg)) return;
+    const chat = getChat(chatId); const p = chat.pendingOwnerTransfer;
+    if (!p || p.from !== msg.from.id) { await replyTo(msg,'❌ Нет ожидающей передачи.'); return; }
+    getUser(chatId, p.from).adminRank = 0;
+    getUser(chatId, p.to).adminRank   = 100;
+    chat.pendingOwnerTransfer = null; saveDB();
+    await replyTo(msg, `👑 Права владельца переданы <code>${p.to}</code>.`);
+    break;
+  }
+
+  // ── GLOBAL RANKS ───────────────────────────────────────────
+  case 'gsetrank': {
+    if (!await guardRank(msg, 100)) return;
+    const uid2 = args[0], rk2 = parseInt(args[1],10);
+    if (!uid2 || isNaN(rk2)) { await replyTo(msg,'❌ gsetrank ID ранг'); return; }
+    db.globalAdmins[uid2] = { id: parseInt(uid2,10), rank: rk2, assignedBy: msg.from.id, assignedAt: new Date().toISOString() };
+    saveDB();
+    const ri2 = getRankInfo(rk2);
+    await replyTo(msg, `🌍 <b>Глоб. ранг выдан</b>\n🆔 <code>${uid2}</code>\n🎚 ${ri2.emoji} ${ri2.name} (${rk2})`);
+    break;
+  }
+  case 'gdelrank': {
+    if (!await guardRank(msg, 100)) return;
+    const uid3 = args[0]; if (!uid3) { await replyTo(msg,'❌ gdelrank ID'); return; }
+    delete db.globalAdmins[uid3]; saveDB();
+    await replyTo(msg, `✅ Глобальный ранг снят: <code>${uid3}</code>.`);
+    break;
+  }
+  case 'globaladmins': {
+    const ga = Object.values(db.globalAdmins);
+    if (!ga.length) { await replyTo(msg,'🌍 Нет глобальных администраторов.'); return; }
+    const lines = ga.map(g => { const ri=getRankInfo(g.rank); return `${ri.emoji} ${ri.name} — <code>${g.id}</code>`; }).join('\n');
+    await replyTo(msg, `🌍 <b>Глобальная администрация</b>\n\n${lines}`);
+    break;
+  }
+
+  // ── RANK INFO ──────────────────────────────────────────────
+  case 'rank': {
+    const t     = await resolveTarget(msg, args, chatId);
+    const uid   = t ? t.id : msg.from.id;
+    const local  = getUser(chatId, uid).adminRank || 0;
+    const glob   = db.globalAdmins[String(uid)]?.rank || 0;
+    const eff    = await getEffectiveRank(chatId, uid);
+    const riL = getRankInfo(local), riG = getRankInfo(glob), riE = getRankInfo(eff);
+    const u4  = getUser(chatId, uid);
+    await replyTo(msg, `${riE.emoji} <b>Ранг</b> ${mention(u4)}\n\n🏠 Локальный: ${riL.emoji} ${riL.name} (${local})\n🌍 Глобальный: ${riG.emoji} ${riG.name} (${glob})\n✅ Активный: ${riE.emoji} ${riE.name} (${eff})`);
+    break;
+  }
+  case 'ranks': {
+    let text = '👑 <b>Список рангов</b>\n\n';
+    Object.entries(RANKS).sort((a,b)=>Number(b[0])-Number(a[0])).forEach(([lvl,r]) => {
+      text += `${r.emoji} <b>${r.name}</b> — уровень ${lvl}\n   <i>${r.note}</i>\n`;
+    });
+    await replyTo(msg, text);
+    break;
+  }
+  case 'admins': {
+    if (!await guardGroup(msg)) return;
+    const admins = Object.values(getChat(chatId).users).filter(u=>u.adminRank>0).sort((a,b)=>b.adminRank-a.adminRank);
+    if (!admins.length) { await replyTo(msg,'👥 Нет назначенных администраторов.'); return; }
+    let text = '👑 <b>Администрация</b>\n\n';
+    admins.forEach(u => { const ri=getRankInfo(u.adminRank); text+=`${ri.emoji} <b>${ri.name}</b> — ${esc(u.firstName)}${u.username?` (@${u.username})`:''}\n`; });
+    await replyTo(msg, text);
+    break;
+  }
+
+  // ── DB INFO ────────────────────────────────────────────────
+  case 'db': {
+    if (!await guardGroup(msg)) return;
+    const chat  = getChat(chatId);
+    const users = Object.values(chat.users);
+    const total  = users.filter(u => u.canCall !== false && !u.leftChat && u.username).length;
+    const aCount = users.filter(u => u.adminRank >= 10).length;
+    const oCount = users.filter(u => u.adminRank >= 95).length;
+    await replyTo(msg, `📦 <b>База этой беседы</b>\n\n👥 Всего для созыва: ${total}\n🛡 Админов: ${aCount}\n👑 Владельцев: ${oCount}\n\n💡 Бот запоминает всех, кто написал хотя бы одно сообщение.`);
+    break;
+  }
+
+  case 'remember': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 30)) return;
+    // "запомнить 123456789 Имя" or reply
+    if (msg.reply_to_message?.from) {
+      const u2 = msg.reply_to_message.from;
+      getUser(chatId, u2.id, u2.first_name, u2.username);
+      saveDB();
+      await replyTo(msg, `✅ Запомнил: ${esc(u2.first_name)} (<code>${u2.id}</code>)`);
+    } else if (args[0] && /^\d+$/.test(args[0])) {
+      const uid2 = parseInt(args[0],10);
+      const name = args.slice(1).join(' ') || String(uid2);
+      getUser(chatId, uid2, name, null);
+      saveDB();
+      await replyTo(msg, `✅ Запомнил: ${esc(name)} (<code>${uid2}</code>)`);
+    } else {
+      await replyTo(msg,'❌ Укажи ID или ответь на сообщение пользователя.');
+    }
+    break;
+  }
+
+  // ── CALL ───────────────────────────────────────────────────
+  case 'call': {
+    if (!await guardGroup(msg)) return;
+    const rank = await getEffectiveRank(chatId, msg.from.id);
+    if (rank < 30) { await replyTo(msg,'❌ Созыв доступен с ранга 🧹 Модератор.'); return; }
+    const target = args[0]?.toLowerCase();
+    if (!target) {
+      const k = `call:${chatId}:${msg.message_id}`;
+      pending[k] = { actorId: msg.from.id };
+      const kb = { inline_keyboard: [
+        [{ text:'👥 Все',       callback_data:`call:${k}:all`    }],
+        [{ text:'🛡 Админы',   callback_data:`call:${k}:admins`  }],
+        [{ text:'👑 Владельцы',callback_data:`call:${k}:owners`  }],
+        [{ text:'❌ Отмена',   callback_data:`call:${k}:cancel`  }]
+      ]};
+      await replyTo(msg,'📢 <b>Созыв</b>\n\nКого созвать?', { reply_markup: kb });
+    } else {
+      await doCall(msg, target, chatId);
+    }
+    break;
+  }
+
+  // ── PROFILE ────────────────────────────────────────────────
+  case 'profile': {
+    const t  = await resolveTarget(msg, args, chatId);
+    const uid = t ? t.id : msg.from.id;
+    const u   = getUser(chatId, uid, msg.from.first_name, msg.from.username);
+    const lvl = Math.floor(Math.sqrt((u.xp||0)/10))+1;
+    const r   = await getEffectiveRank(chatId, uid);
+    const ri  = getRankInfo(r);
+    const dk  = todayKey(), wk = weekKey(), mk = monthKey();
+    const mt  = u.msgTypes || {};
+    const badges = [];
+    if (u.inventory?.vip)           badges.push('⭐ VIP');
+    if (u.inventory?.premium)       badges.push('💎 Premium');
+    if (u.inventory?.coloredProfile) badges.push('🎨 Цвет');
+    let coupleStr = '';
+    if (u.couple) {
+      const cp = Object.values(getChat(chatId).users).find(x => String(x.id) === String(u.couple));
+      if (cp) coupleStr = `\n❤️ Пара: ${mention(cp)}`;
+    }
+    await replyTo(msg,
+      `👤 <b>Профиль пользователя</b>\n\n` +
+      `<b>Основное:</b>\n👤 ${esc(u.firstName)}\n🆔 <code>${uid}</code>\n${u.username?`🔗 @${u.username}\n`:''}\n` +
+      `<b>Активность:</b>\n💬 Сообщений всего: ${u.messages||0}\n✍️ Текст: ${mt.text||0}\n🎙 Голосовые: ${mt.voice||0}\n⭕ Кружки: ${mt.circle||0}\n🖼 Фото: ${mt.photo||0}\n🎬 Видео: ${mt.video||0}\n😄 Стикеры: ${mt.sticker||0}\n` +
+      `📅 Сегодня: ${u.stats?.daily?.[dk]||0}  📆 Неделя: ${u.stats?.weekly?.[wk]||0}  🗓 Месяц: ${u.stats?.monthly?.[mk]||0}\n\n` +
+      `<b>Статистика:</b>\n⭐ Репутация: ${u.reputation||0}\n⚠️ Предупреждений: ${(u.warns||[]).length}/5\n🪙 Баланс: ${u.balance||0} монет\n🎚 Уровень: ${lvl}\n` +
+      `${u.title?`🏷 Титул: ${esc(u.title)}\n`:''}` +
+      `${r>0?`👑 Ранг: ${ri.emoji} ${ri.name}\n`:''}` +
+      `${u.birthday?`🎂 День рождения: ${u.birthday.day}.${u.birthday.month}\n`:''}` +
+      `${coupleStr}${badges.length?`\n${badges.join(' · ')}`:''}`
+    );
+    break;
+  }
+
+  case 'id': {
+    if (msg.reply_to_message?.from) {
+      const u=msg.reply_to_message.from;
+      await replyTo(msg,`🆔 ID: <code>${u.id}</code>\n👤 ${esc(u.first_name)}`);
+    } else {
+      await replyTo(msg,`🆔 Твой ID: <code>${msg.from.id}</code>`);
+    }
+    break;
+  }
+
+  // ── TOP ────────────────────────────────────────────────────
+  case 'top': {
+    if (!await guardGroup(msg)) return;
+    const period = args[0]?.toLowerCase();
+    const users  = Object.values(getChat(chatId).users);
+    const medals = ['🥇','🥈','🥉'];
+
+    let key, label, statKey;
+    if (period==='day'||period==='день')          { key=todayKey(); statKey='daily';   label='Топ дня 📅'; }
+    else if (period==='week'||period==='неделя')  { key=weekKey();  statKey='weekly';  label='Топ недели 📆'; }
+    else if (period==='month'||period==='месяц')  { key=monthKey(); statKey='monthly'; label='Топ месяца 🗓'; }
+    else                                           { label='Топ за всё время 🏆'; }
+
+    let sorted;
+    if (key) {
+      sorted = users.map(u=>({ u, cnt: u.stats?.[statKey]?.[key]||0 })).filter(x=>x.cnt>0).sort((a,b)=>b.cnt-a.cnt).slice(0,10);
+    } else {
+      sorted = users.filter(u=>u.messages>0).sort((a,b)=>b.messages-a.messages).slice(0,10).map(u=>({u,cnt:u.messages}));
+    }
+    if (!sorted.length) { await replyTo(msg,'📊 Статистика пуста.'); return; }
+    let text = `🏆 <b>${label}</b>\n\n`;
+    sorted.forEach(({u,cnt},i) => {
+      const medal = medals[i]||`${i+1}.`;
+      text += `${medal} ${mention(u)} — ${cnt}\n`;
+    });
+    await replyTo(msg, text);
+    break;
+  }
+
+  case 'level': {
+    const t = await resolveTarget(msg, args, chatId); const uid = t?t.id:msg.from.id;
+    const u = getUser(chatId, uid);
+    const lvl = Math.floor(Math.sqrt((u.xp||0)/10))+1;
+    await replyTo(msg, `🎚 <b>Уровень</b>\n\n👤 ${mention(u)}\n🎚 ${lvl}\n⚡ XP: ${u.xp||0} / ${Math.pow(lvl,2)*10}`);
+    break;
+  }
+
+  case 'history': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 50)) return;
+    const t = await resolveTarget(msg, args, chatId); const uid = t?t.id:msg.from.id;
+    const u = getUser(chatId, uid);
+    const h = (u.history||[]).slice(-10).reverse();
+    let text = `📂 <b>История</b> ${mention(u)}\n\n🆔 <code>${uid}</code>\n⚠️ Предов: ${(u.warns||[]).length}\n💬 Сообщений: ${u.messages||0}\n\n`;
+    if (h.length) text += h.map(x=>`• <i>${new Date(x.time).toLocaleDateString('ru')}</i> — <b>${x.type}</b>${x.reason?` (${esc(x.reason)})`:''}`).join('\n');
+    await replyTo(msg, text);
+    break;
+  }
+
+  case 'actions': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 30)) return;
+    if (!msg.reply_to_message) { await replyTo(msg,'❌ Ответь на сообщение.'); return; }
+    const tid = msg.reply_to_message.from.id;
+    const k   = `act:${chatId}:${msg.message_id}`;
+    pending[k] = { actorId: msg.from.id, chatId, targetId: tid };
+    const target = getUser(chatId, tid, msg.reply_to_message.from.first_name, msg.reply_to_message.from.username);
+    const kb = { inline_keyboard: [
+      [{ text:'🔇 Мут', callback_data:`act:${k}:mute` }, { text:'🚫 Бан',  callback_data:`act:${k}:ban`  }],
+      [{ text:'👢 Кик', callback_data:`act:${k}:kick` }, { text:'⚠️ Пред', callback_data:`act:${k}:warn` }],
+      [{ text:'📂 История', callback_data:`act:${k}:history` }, { text:'🗑 Удалить', callback_data:`act:${k}:del` }],
+      [{ text:'❌ Отмена', callback_data:`act:${k}:cancel` }]
+    ]};
+    await replyTo(msg, `👤 <b>Действия с</b> ${mention(target)}`, { reply_markup: kb });
+    break;
+  }
+
+  // ── REPUTATION ─────────────────────────────────────────────
+  case 'rep': {
+    const t = await resolveTarget(msg, args, chatId);
+    if (!t) { await replyTo(msg,'❌ Укажи пользователя.'); return; }
+    if (t.id === msg.from.id) { await replyTo(msg,'❌ Нельзя себе.'); return; }
+    const giver = getUser(chatId, msg.from.id); const now = Date.now();
+    if (!giver.cooldowns) giver.cooldowns = { daily:0, rep:{}, action:0 };
+    if (!giver.cooldowns.rep) giver.cooldowns.rep = {};
+    if (giver.cooldowns.rep[t.id] && now - giver.cooldowns.rep[t.id] < 12*3600000) {
+      await replyTo(msg,`⏳ Подожди ещё ${Math.ceil((12*3600000-(now-giver.cooldowns.rep[t.id]))/3600000)} ч.`); return;
+    }
+    giver.cooldowns.rep[t.id] = now;
+    const target = getUser(chatId, t.id, t.firstName, t.username);
+    target.reputation = (target.reputation||0)+1; saveDB();
+    await replyTo(msg, `⭐ <b>Репутация +1</b>\n👤 ${mention(target)}\n⭐ ${target.reputation}\n от ${esc(msg.from.first_name)}`);
+    await checkAchievements(chatId, t.id);
+    break;
+  }
+  case 'minusrep': {
+    const t = await resolveTarget(msg, args, chatId);
+    if (!t) { await replyTo(msg,'❌ Укажи пользователя.'); return; }
+    if (t.id === msg.from.id) { await replyTo(msg,'❌ Нельзя себе.'); return; }
+    const g = getUser(chatId, msg.from.id); const now = Date.now();
+    if (!g.cooldowns) g.cooldowns = { daily:0, rep:{}, action:0 };
+    if (!g.cooldowns.rep) g.cooldowns.rep = {};
+    const rk = `m:${t.id}`;
+    if (g.cooldowns.rep[rk] && now - g.cooldowns.rep[rk] < 12*3600000) { await replyTo(msg,'⏳ Слишком рано.'); return; }
+    g.cooldowns.rep[rk] = now;
+    const target = getUser(chatId, t.id, t.firstName, t.username);
+    target.reputation = (target.reputation||0)-1; saveDB();
+    await replyTo(msg, `👎 <b>Репутация -1</b>\n👤 ${mention(target)}\n⭐ ${target.reputation}`);
+    break;
+  }
+  case 'myrep': {
+    const u = getUser(chatId, msg.from.id);
+    await replyTo(msg, `⭐ Твоя репутация: <b>${u.reputation||0}</b>`);
+    break;
+  }
+
+  // ── BALANCE & ECONOMY ──────────────────────────────────────
+  case 'balance': {
+    // if args look like "ID amount" → coins command for owner
+    if (args[0] && /^\d+$/.test(args[0]) && args[1] && msg.from.id === OWNER_ID) {
+      await handleCommand('coins', msg, args, argText); return;
+    }
+    if (msg.reply_to_message && args[0] && /^-?\d+$/.test(args[0]) && msg.from.id === OWNER_ID) {
+      await handleCommand('coins', msg, args, argText); return;
+    }
+    const u = getUser(chatId, msg.from.id);
+    await replyTo(msg, `🪙 <b>Баланс</b>\n👤 ${esc(u.firstName)}\n🪙 ${u.balance||0} монет`);
+    break;
+  }
+
+  case 'coins': {
+    if (msg.from.id !== OWNER_ID) { await replyTo(msg,'❌ Только для разработчика.'); return; }
+    let targetId, amount;
+    if (msg.reply_to_message?.from) {
+      targetId = msg.reply_to_message.from.id; amount = parseInt(args[0],10);
+    } else {
+      targetId = parseInt(args[0],10); amount = parseInt(args[1],10);
+    }
+    if (!targetId || isNaN(amount)) { await replyTo(msg,'❌ Укажи: coins ID сумма (или reply + сумма).'); return; }
+    const u = getUser(chatId, targetId); u.balance = (u.balance||0) + amount; saveDB();
+    await replyTo(msg,
+      `🪙 <b>Монеты выданы</b>\n\n👤 ${mention(u)}\n🆔 <code>${targetId}</code>\n💰 Изменение: ${amount>0?'+':''}${amount}\n🏦 Новый баланс: ${u.balance}\n👨‍💻 Выдал разработчик`
+    );
+    break;
+  }
+
+  case 'daily': {
+    const u = getUser(chatId, msg.from.id); const now = Date.now();
+    if (!u.cooldowns) u.cooldowns = { daily:0, rep:{}, action:0 };
+    if (u.cooldowns.daily && now - u.cooldowns.daily < 24*3600000) {
+      await replyTo(msg,`⏳ Следующая награда через ${Math.ceil((24*3600000-(now-u.cooldowns.daily))/3600000)} ч.`); return;
+    }
+    u.cooldowns.daily = now; u.balance = (u.balance||0)+250; saveDB();
+    await replyTo(msg, `🎁 <b>Ежедневная награда!</b>\n+250 монет\n🪙 Баланс: ${u.balance}`);
+    break;
+  }
+
+  case 'give': {
+    if (!await guardGroup(msg)) return;
+    const t = await resolveTarget(msg, args, chatId); if (!t) return;
+    const amount = parseInt(t.args[0],10);
+    if (!amount || amount <= 0) { await replyTo(msg,'❌ Укажи сумму.'); return; }
+    const sender = getUser(chatId, msg.from.id);
+    if ((sender.balance||0) < amount) { await replyTo(msg,'❌ Недостаточно монет.'); return; }
+    sender.balance -= amount;
+    const target = getUser(chatId, t.id, t.firstName, t.username);
+    target.balance = (target.balance||0)+amount; saveDB();
+    await replyTo(msg, `💸 Передано <b>${amount}</b> монет → ${mention(target)}`);
+    break;
+  }
+
+  case 'shop': {
+    let text = '🛍 <b>Магазин</b>\n\n';
+    for (const [id,item] of Object.entries(SHOP)) { text += `• <b>${item.name}</b> — ${item.price} монет\n  <i>${item.desc}</i>\n`; }
+    text += '\n💬 Купить: <code>купить название</code>';
+    await replyTo(msg, text);
+    break;
+  }
+
+  case 'buy': {
+    const k2 = args[0]?.toLowerCase().replace(/[^a-zа-яё]/gi,'');
+    const MAP = { vip:'vip', premium:'premium', титул:'customtitle', customtitle:'customtitle',
+                  защита:'warnshield', warnshield:'warnshield', цвет:'coloredprofile',
+                  coloredprofile:'coloredprofile', реп:'reputationboost', reputationboost:'reputationboost' };
+    const key3 = MAP[k2], item = key3 && SHOP[key3];
+    if (!item) { await replyTo(msg,`❌ Товар не найден. Доступные: ${Object.keys(SHOP).join(', ')}`); return; }
+    const u = getUser(chatId, msg.from.id);
+    if ((u.balance||0) < item.price) { await replyTo(msg,`❌ Нужно: ${item.price} монет\n🪙 Есть: ${u.balance||0}`); return; }
+    u.balance -= item.price;
+    if (key3==='reputationboost')  u.reputation=(u.reputation||0)+5;
+    else if (key3==='warnshield')  u.inventory.warnShield=(u.inventory.warnShield||0)+1;
+    else if (key3==='customtitle') u.inventory.customTitle=true;
+    else u.inventory[key3]=true;
+    saveDB();
+    await replyTo(msg, `✅ <b>Куплено!</b>\n${item.name} — ${item.price} монет\n🪙 Баланс: ${u.balance}`);
+    break;
+  }
+
+  case 'title': {
+    const u = getUser(chatId, msg.from.id);
+    if (!u.inventory?.customTitle) { await replyTo(msg,'❌ Купи право на титул в магазине.'); return; }
+    if (!argText) { await replyTo(msg,'❌ Укажи текст титула.'); return; }
+    if (argText.length > 30) { await replyTo(msg,'❌ Максимум 30 символов.'); return; }
+    u.title = argText; saveDB();
+    await replyTo(msg, `✅ Титул: <b>${esc(argText)}</b>`);
+    break;
+  }
+  case 'removetitle': {
+    getUser(chatId, msg.from.id).title = null; saveDB();
+    await replyTo(msg,'✅ Титул снят.');
+    break;
+  }
+
+  // ── SETTINGS ───────────────────────────────────────────────
+  case 'antispam': case 'antilinks': case 'antimat':
+  case 'welcome':  case 'goodbye': {
+    if (!await guardGroup(msg) || !await guardRank(msg, 80)) return;
+    const chat2 = getChat(chatId); const val = args[0]?.toLowerCase();
+    const settingMap = { antispam:'antispam', antilinks:'antilinks', antimat:'antimat', welcome:'welcome', goodbye:'goodbye' };
+    const field = settingMap[cmd];
+    if (val==='on'||val==='вкл') { chat2.settings[field]=true; saveDB(); await replyTo(msg,`✅ ${field} включён.`); }
+    else if (val==='off'||val==='выкл') { chat2.settings[field]=false; saveDB(); await replyTo(msg,`✅ ${field} выключен.`); }
+    else { await replyTo(msg,`${cmd}: ${chat2.settings[field]?'✅ ВКЛ':'❌ ВЫКЛ'}\n\nУправление: ${cmd} on | off`); }
+    break;
+  }
+
+  case 'setwelcome': {
+    if (!await guardGroup(msg)||!await guardRank(msg,80)) return;
+    if (!argText) { await replyTo(msg,'❌ Укажи текст. {name} = имя.'); return; }
+    getChat(chatId).settings.welcomeText=argText; saveDB(); await replyTo(msg,'✅ Приветствие обновлено.');
+    break;
+  }
+  case 'setgoodbye': {
+    if (!await guardGroup(msg)||!await guardRank(msg,80)) return;
+    if (!argText) { await replyTo(msg,'❌ Укажи текст. {name} = имя.'); return; }
+    getChat(chatId).settings.goodbyeText=argText; saveDB(); await replyTo(msg,'✅ Прощание обновлено.');
+    break;
+  }
+  case 'settings': {
+    if (!await guardGroup(msg)||!await guardRank(msg,80)) return;
+    const s = getChat(chatId).settings;
+    const kb = { inline_keyboard: [
+      [{ text:`🛡 Антиспам: ${s.antispam?'✅':'❌'}`,  callback_data:`cfg:${chatId}:antispam`  }, { text:`🔗 Ссылки: ${s.antilinks?'✅':'❌'}`, callback_data:`cfg:${chatId}:antilinks` }],
+      [{ text:`🤬 Антимат: ${s.antimat?'✅':'❌'}`,    callback_data:`cfg:${chatId}:antimat`   }, { text:`👋 Привет: ${s.welcome?'✅':'❌'}`,   callback_data:`cfg:${chatId}:welcome`   }],
+      [{ text:`👋 Прощание: ${s.goodbye?'✅':'❌'}`,   callback_data:`cfg:${chatId}:goodbye`   }, { text:`🎉 Пятница: ${s.fridayPost?.enabled?'✅':'❌'}`, callback_data:`cfg:${chatId}:friday` }],
+      [{ text:`☀️ Утро: ${s.morningEnabled?'✅':'❌'}`, callback_data:`cfg:${chatId}:morning`  }, { text:`🌙 Ночь: ${s.nightEnabled?'✅':'❌'}`,   callback_data:`cfg:${chatId}:night`   }],
+      [{ text:`📊 Отчёт: ${s.weeklyReportEnabled?'✅':'❌'}`, callback_data:`cfg:${chatId}:weekly` }],
+      [{ text:'📜 Правила', callback_data:`cfg:${chatId}:rules` }, { text:'📢 Лог-чат', callback_data:`cfg:${chatId}:setlog` }]
+    ]};
+    await replyTo(msg,'⚙️ <b>Настройки чата</b>\n\nНажми для переключения:', { reply_markup: kb });
+    break;
+  }
+  case 'setlog': {
+    if (!await guardGroup(msg)||!await guardRank(msg,90)) return;
+    getChat(chatId).settings.logChatId=chatId; saveDB();
+    await replyTo(msg,'✅ Этот чат назначен лог-чатом.');
+    break;
+  }
+  case 'logs': {
+    if (!await guardGroup(msg)||!await guardRank(msg,80)) return;
+    const logs = (getChat(chatId).logs||[]).slice(-20).reverse();
+    if (!logs.length) { await replyTo(msg,'📋 Логи пусты.'); return; }
+    await replyTo(msg, `📋 <b>Последние логи</b>\n\n${logs.map(l=>`<i>${new Date(l.time).toLocaleString('ru')}</i>\n${esc(l.text)}`).join('\n\n').slice(0,3500)}`);
+    break;
+  }
+  case 'badwords': {
+    if (!await guardGroup(msg)||!await guardRank(msg,80)) return;
+    const words = getChat(chatId).settings.badwords||[];
+    await replyTo(msg,`🤬 <b>Стоп-слова</b>\n\n${words.length?words.map(w=>`• ${esc(w)}`).join('\n'):'Список пуст.'}`);
+    break;
+  }
+  case 'addbadword': {
+    if (!await guardGroup(msg)||!await guardRank(msg,80)) return;
+    const w = args[0]?.toLowerCase(); if (!w) { await replyTo(msg,'❌ Укажи слово.'); return; }
+    const chat2 = getChat(chatId); if (!chat2.settings.badwords) chat2.settings.badwords=[];
+    if (!chat2.settings.badwords.includes(w)) { chat2.settings.badwords.push(w); saveDB(); }
+    await replyTo(msg, `✅ <code>${esc(w)}</code> добавлено.`);
+    break;
+  }
+  case 'delbadword': {
+    if (!await guardGroup(msg)||!await guardRank(msg,80)) return;
+    const w = args[0]?.toLowerCase(); if (!w) { await replyTo(msg,'❌ Укажи слово.'); return; }
+    const chat2 = getChat(chatId); if (!chat2.settings.badwords) chat2.settings.badwords=[];
+    chat2.settings.badwords = chat2.settings.badwords.filter(x=>x!==w); saveDB();
+    await replyTo(msg, `✅ <code>${esc(w)}</code> удалено.`);
+    break;
+  }
+
+  // ── FRIDAY ─────────────────────────────────────────────────
+  case 'fridaypost': {
+    if (!await guardGroup(msg)||!await guardRank(msg,80)) return;
+    const chat2 = getChat(chatId); const val = args[0]?.toLowerCase();
+    if (!chat2.settings.fridayPost) chat2.settings.fridayPost = mkDefaultChat().settings.fridayPost;
+    if (val==='on'||val==='вкл') { chat2.settings.fridayPost.enabled=true; saveDB(); await replyTo(msg,'✅ Пятничный пост включён.'); }
+    else if (val==='off'||val==='выкл') { chat2.settings.fridayPost.enabled=false; saveDB(); await replyTo(msg,'✅ Пятничный пост выключен.'); }
+    else {
+      const fp=chat2.settings.fridayPost;
+      await replyTo(msg,`🎉 <b>Пятничный пост</b>\nСтатус: ${fp.enabled?'✅':'❌'}\nВремя: ${fp.time}\n\nпятница on/off\nсетпятница текст\nсетвремяпятницы HH:MM\nпятницасейчас`);
+    }
+    break;
+  }
+  case 'setfriday': {
+    if (!await guardGroup(msg)||!await guardRank(msg,80)) return;
+    if (!argText) { await replyTo(msg,'❌ Укажи текст.'); return; }
+    const chat2=getChat(chatId); if (!chat2.settings.fridayPost) chat2.settings.fridayPost=mkDefaultChat().settings.fridayPost;
+    chat2.settings.fridayPost.text=argText; saveDB();
+    await replyTo(msg,'✅ Текст пятничного поста сохранён.');
+    break;
+  }
+  case 'setfridaytime': {
+    if (!await guardGroup(msg)||!await guardRank(msg,80)) return;
+    const t2=args[0]; if (!t2||!/^\d{1,2}:\d{2}$/.test(t2)) { await replyTo(msg,'❌ Формат: HH:MM'); return; }
+    const chat2=getChat(chatId); if (!chat2.settings.fridayPost) chat2.settings.fridayPost=mkDefaultChat().settings.fridayPost;
+    chat2.settings.fridayPost.time=t2; saveDB();
+    await replyTo(msg,`✅ Пятничный пост в ${t2}.`);
+    break;
+  }
+  case 'fridaynow': {
+    if (!await guardGroup(msg)||!await guardRank(msg,80)) return;
+    const chat2=getChat(chatId); const fp=chat2.settings.fridayPost;
+    const txt=fp?.text||FRIDAY_TEXTS[Math.floor(Math.random()*FRIDAY_TEXTS.length)];
+    await tgReply(chatId, txt);
+    if (fp) { fp.lastSentDate=todayKey(); saveDB(); }
+    break;
+  }
+
+  // ── RELATIONS ──────────────────────────────────────────────
+  case 'love': {
+    if (!await guardGroup(msg)) return;
+    if (!msg.reply_to_message?.from) { await replyTo(msg,'❌ Ответь на сообщение.'); return; }
+    const p = msg.reply_to_message.from;
+    if (p.is_bot||p.id===msg.from.id) { await replyTo(msg,'❌ Нельзя.'); return; }
+    const u1=getUser(chatId,msg.from.id,msg.from.first_name,msg.from.username);
+    const u2=getUser(chatId,p.id,p.first_name,p.username);
+    u1.couple=p.id; u2.couple=msg.from.id; saveDB();
+    await replyTo(msg,`❤️ <b>Пара создана!</b>\n\n${mention(u1)} и ${mention(u2)} теперь пара! 🥰`);
+    break;
+  }
+  case 'couple': {
+    const u=getUser(chatId,msg.from.id);
+    if (!u.couple) { await replyTo(msg,'💔 Нет пары. Используй: любовь (reply)'); return; }
+    const p=Object.values(getChat(chatId).users).find(x=>String(x.id)===String(u.couple));
+    await replyTo(msg, p ? `❤️ Твоя пара: ${mention(p)}` : '💔 Пара не найдена в этом чате.');
+    break;
+  }
+  case 'breakup': {
+    const u=getUser(chatId,msg.from.id);
+    if (!u.couple) { await replyTo(msg,'💔 Нет пары.'); return; }
+    const p=Object.values(getChat(chatId).users).find(x=>String(x.id)===String(u.couple));
+    if (p) p.couple=null;
+    u.couple=null; saveDB();
+    await replyTo(msg,`💔 <b>Расставание</b>\n\n${esc(msg.from.first_name)} и ${p?mention(p):'партнёр'} расстались.`);
+    break;
+  }
+  case 'hug': case 'kiss': case 'slap': case 'pat':
+  case 'bite': case 'poke': case 'feed': case 'tea':
+  case 'flower': case 'compliment':
+    await handleSocial(cmd, msg);
+    break;
+
+  default: break;
+  }} catch (e) { console.error(`handleCommand[${cmd}]:`, e.message); }
 }
 
-cleanupOldSmallAchievements();
+// ── CALL HELPER ────────────────────────────────────────────────────
+async function doCall(msg, target, chatId) {
+  const chat = getChat(chatId);
+  const now  = Date.now();
+  if (now - (chat.settings.callCooldown||0) < 10*60000) {
+    const left = Math.ceil((10*60000 - (now - chat.settings.callCooldown)) / 60000);
+    await replyTo(msg, `⏳ Созыв недавно уже был. Подожди ещё ${left} мин.`); return;
+  }
+  chat.settings.callCooldown = now; saveDB();
 
+  const t = target.toLowerCase();
+  const actorRank = await getEffectiveRank(chatId, msg.from.id);
+  const allUsers  = Object.values(chat.users);
+  let filtered, groupLabel;
 
-bot.launch({ dropPendingUpdates: true });
-console.log('✅ FulTalchik_botik запущен!');
-console.log('🤖 Клуб случайных людей работает');
-console.log('🚀 GitHub/Railway ready');
+  if (t === 'admins' || t === 'админы') {
+    if (actorRank < 40) { await replyTo(msg,'❌ Созыв админов — ранг 40+.'); return; }
+    filtered   = allUsers.filter(u => u.adminRank >= 10 && !u.leftChat);
+    groupLabel = 'администрация';
+  } else if (t === 'owners' || t === 'владельцы') {
+    if (actorRank < 80) { await replyTo(msg,'❌ Созыв владельцев — ранг 80+.'); return; }
+    filtered   = allUsers.filter(u => u.adminRank >= 95 && !u.leftChat);
+    groupLabel = 'владельцы';
+  } else {
+    if (actorRank < 60) { await replyTo(msg,'❌ Созыв всех — ранг 60+.'); return; }
+    filtered   = allUsers.filter(u => u.canCall !== false && !u.leftChat);
+    groupLabel = 'все участники';
+  }
 
-process.once('SIGINT', () => { saveDBNow(); bot.stop('SIGINT'); });
-process.once('SIGTERM', () => { saveDBNow(); bot.stop('SIGTERM'); });
+  const mentions = filtered.filter(u => u.username && u.username !== BOT_USERNAME).map(u => `@${u.username}`);
+
+  if (!mentions.length) {
+    await replyTo(msg,
+      `❌ Некого созывать.\nБот ещё не знает участников этой категории.\n\nЧтобы запомнить участника:\n• человек должен написать сообщение;\n• или ответь: <code>запомнить</code>;\n• или добавь: <code>запомнить 123456789 Имя</code>.`
+    ); return;
+  }
+
+  const actorName = msg.from.username ? `@${msg.from.username}` : esc(msg.from.first_name);
+  await tgReply(chatId, `📢 <b>Созыв участников</b>\n👮 Созвал: ${actorName}\n🎯 Группа: ${groupLabel}`);
+
+  for (let i = 0; i < mentions.length; i += 25) {
+    await tgReply(chatId, mentions.slice(i, i+25).join(' '));
+  }
+  await sendLog(chatId, `📢 Созыв (${groupLabel}) от ${actorName}`);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CALLBACK QUERY HANDLER
+// ═══════════════════════════════════════════════════════════════
+bot.on('callback_query', async (query) => {
+  try {
+    const data   = query.data;
+    const msg    = query.message;
+    const chatId = msg.chat.id;
+    const userId = query.from.id;
+
+    // ── HELP SECTIONS ─────────────────────────────────────────
+    if (data.startsWith('help:')) {
+      const sec = data.split(':')[1];
+      const MAP = {
+        moder:   `🛡 <b>Модерация</b>\n\nмут [ID/reply] [мин] [причина]\nунмут [ID/reply]\nбан [ID/reply] [причина]\nразбан ID\nкик [ID/reply] [причина]\nпред [ID/reply] [причина]\nунпред [ID/reply]\nпреды [ID/reply]\nудалить (reply)\nдействия (reply)`,
+        ranks:   `👑 <b>Ранги</b>\n\nвладелец | зам | га | куратор | са | админ\nма | см | модер | помощник | стажер | юзер\n\nПо ID: <code>админ 123456789</code>\nПо reply: ответь на сообщение + команду\nвыдатьранг ID уровень\nснятьранг ID`,
+        profile: `👤 <b>Профиль и статистика</b>\n\nпрофиль [ID/reply]\nид\nтоп [день/неделя/месяц/все]\nуровень\nреп [ID/reply]\nминусреп [ID/reply]\nмояреп\nбаланс\nежедневно`,
+        rules:   `📜 <b>Правила</b>\n\nправила\nустановитьправила текст`,
+        settings:`⚙️ <b>Настройки</b>\n\nнастройки\nантиспам on/off\nссылки on/off\nантимат on/off\nприветствие on/off\nпрощание on/off\nсетпривет текст\nсетпрощание текст\nматлист | добавитьмат | удалитьмат\nсетлог | логи`,
+        shop:    `🎁 <b>Магазин</b>\n\nмагазин\nкупить vip | premium | customtitle | warnshield\nбаланс | ежедневно | передать ID сумма\nтитул текст | снятьтитул`,
+        call:    `📢 <b>Созыв</b>\n\nкалл все — ранг 60+\nкалл админы — ранг 40+\nкалл владельцы — ранг 80+\nбаза — статистика БД\nзапомнить [ID/reply] — добавить в базу\n\nКулдаун: 10 минут`,
+        social:  `❤️ <b>Отношения</b>\n\nлюбовь (reply) — создать пару\nпара | расстаться\n\nДействия по reply (или на пару):\nобнять | поцеловать | шлепнуть | погладить\nукусить | тыкнуть | покормить | чай | цветок | комплимент`,
+        tops:    `🏆 <b>Топы</b>\n\nтоп | топ день | топ неделя | топ месяц\n\nУчитываются все типы сообщений.\nПрофиль показывает статистику по периодам.`,
+        friday:  `🎉 <b>Пятничный пост</b>\n\nпятница on/off\nсетпятница текст\nсетвремяпятницы HH:MM\nпятницасейчас\n\nАвтоматически каждую пятницу.`,
+        global:  `🌍 <b>Глобальные ранги</b>\n\ngsetrank ID ранг — выдать\ngdelrank ID — снять\nglobaladmins — список\n\nГлобальный ранг работает во всех беседах.\nДоступно только владельцу (OWNER_ID).`,
+        coins:   `💰 <b>Монеты разработчика</b>\n\ncoin ID сумма\nмонеты ID сумма\nreply + монеты сумма\n\nМожно выдавать отрицательные суммы.\nДоступно только OWNER_ID.`
+      };
+      await bot.answerCallbackQuery(query.id);
+      await bot.editMessageText(MAP[sec]||'❌ Раздел не найден.', {
+        chat_id: chatId, message_id: msg.message_id, parse_mode:'HTML',
+        reply_markup: { inline_keyboard:[[{ text:'🔙 Назад', callback_data:'help:back' }]] }
+      });
+      return;
+    }
+
+    if (data === 'help:back') {
+      await bot.answerCallbackQuery(query.id);
+      const kb = { inline_keyboard:[
+        [{ text:'🛡 Модерация', callback_data:'help:moder' },   { text:'👑 Ранги',     callback_data:'help:ranks'   }],
+        [{ text:'👤 Профиль',  callback_data:'help:profile' },  { text:'📜 Правила',   callback_data:'help:rules'   }],
+        [{ text:'⚙️ Настройки',callback_data:'help:settings' }, { text:'🎁 Магазин',   callback_data:'help:shop'    }],
+        [{ text:'📢 Созыв',    callback_data:'help:call' },      { text:'❤️ Отношения', callback_data:'help:social'  }],
+        [{ text:'🏆 Топы',     callback_data:'help:tops' },      { text:'🎉 Пятница',   callback_data:'help:friday'  }],
+        [{ text:'🌍 Глоб.ранги',callback_data:'help:global' },  { text:'💰 Монеты',    callback_data:'help:coins'   }]
+      ]};
+      await bot.editMessageText('🤖 <b>FulTalchik_Botik</b> — меню команд\n\n⚙️ Все команды работают со слешем и без!\n\nВыбери раздел:', {
+        chat_id: chatId, message_id: msg.message_id, parse_mode:'HTML', reply_markup: kb
+      });
+      return;
+    }
+
+    // ── SETTINGS TOGGLE ───────────────────────────────────────
+    if (data.startsWith('cfg:')) {
+      const parts = data.split(':'); const cfgChat = parts[1]; const key = parts[2];
+      if (await getEffectiveRank(cfgChat, userId) < 80) { await bot.answerCallbackQuery(query.id,{text:'❌ Нет прав.'}); return; }
+      const chat2 = getChat(cfgChat);
+      if (['antispam','antilinks','antimat','welcome','goodbye'].includes(key)) {
+        chat2.settings[key] = !chat2.settings[key]; saveDB();
+      } else if (key==='friday')  { if (!chat2.settings.fridayPost) chat2.settings.fridayPost=mkDefaultChat().settings.fridayPost; chat2.settings.fridayPost.enabled = !chat2.settings.fridayPost.enabled; saveDB(); }
+      else if (key==='morning')   { chat2.settings.morningEnabled  = !chat2.settings.morningEnabled;  saveDB(); }
+      else if (key==='night')     { chat2.settings.nightEnabled    = !chat2.settings.nightEnabled;    saveDB(); }
+      else if (key==='weekly')    { chat2.settings.weeklyReportEnabled = !chat2.settings.weeklyReportEnabled; saveDB(); }
+      const s2 = chat2.settings;
+      const kb = { inline_keyboard:[
+        [{ text:`🛡 Антиспам: ${s2.antispam?'✅':'❌'}`, callback_data:`cfg:${cfgChat}:antispam` }, { text:`🔗 Ссылки: ${s2.antilinks?'✅':'❌'}`, callback_data:`cfg:${cfgChat}:antilinks` }],
+        [{ text:`🤬 Антимат: ${s2.antimat?'✅':'❌'}`,   callback_data:`cfg:${cfgChat}:antimat`  }, { text:`👋 Привет: ${s2.welcome?'✅':'❌'}`,   callback_data:`cfg:${cfgChat}:welcome`   }],
+        [{ text:`👋 Прощание: ${s2.goodbye?'✅':'❌'}`,  callback_data:`cfg:${cfgChat}:goodbye`  }, { text:`🎉 Пятница: ${s2.fridayPost?.enabled?'✅':'❌'}`, callback_data:`cfg:${cfgChat}:friday` }],
+        [{ text:`☀️ Утро: ${s2.morningEnabled?'✅':'❌'}`, callback_data:`cfg:${cfgChat}:morning`}, { text:`🌙 Ночь: ${s2.nightEnabled?'✅':'❌'}`, callback_data:`cfg:${cfgChat}:night`    }],
+        [{ text:`📊 Отчёт: ${s2.weeklyReportEnabled?'✅':'❌'}`, callback_data:`cfg:${cfgChat}:weekly` }],
+        [{ text:'📜 Правила', callback_data:`cfg:${cfgChat}:rules` }, { text:'📢 Лог-чат', callback_data:`cfg:${cfgChat}:setlog` }]
+      ]};
+      await bot.answerCallbackQuery(query.id,{text:'✅ Обновлено'});
+      try { await bot.editMessageReplyMarkup(kb,{chat_id:chatId,message_id:msg.message_id}); } catch (_) {}
+      return;
+    }
+
+    // ── CALL BUTTONS ──────────────────────────────────────────
+    if (data.startsWith('call:')) {
+      const parts  = data.split(':');
+      const choice = parts[parts.length-1];
+      const k      = parts.slice(1,-1).join(':');
+      const p2     = pending[k];
+      if (!p2) { await bot.answerCallbackQuery(query.id,{text:'❌ Устарело.'}); return; }
+      if (p2.actorId !== userId) { await bot.answerCallbackQuery(query.id,{text:'❌ Эта кнопка не для тебя.'}); return; }
+      delete pending[k];
+      await bot.answerCallbackQuery(query.id);
+      if (choice==='cancel') { await bot.deleteMessage(chatId,msg.message_id); return; }
+      const fakeMsg = { ...msg, from: query.from };
+      await doCall(fakeMsg, choice, chatId);
+      return;
+    }
+
+    // ── MUTE TIME ─────────────────────────────────────────────
+    if (data.startsWith('mt:')) {
+      const parts  = data.split(':');
+      const choice = parts[parts.length-1];
+      const k      = parts.slice(1,-1).join(':');
+      const p2     = pending[k];
+      if (!p2) { await bot.answerCallbackQuery(query.id,{text:'❌ Устарело.'}); return; }
+      if (p2.actorId !== userId) { await bot.answerCallbackQuery(query.id,{text:'❌ Не для тебя.'}); return; }
+      if (choice==='cancel') { delete pending[k]; await bot.answerCallbackQuery(query.id); await bot.deleteMessage(chatId,msg.message_id); return; }
+      p2.minutes = parseInt(choice,10); await bot.answerCallbackQuery(query.id);
+      const kb = { inline_keyboard:[
+        [{ text:'Мат',         callback_data:`mr:${k}:мат`         }, { text:'Флуд',      callback_data:`mr:${k}:флуд`      }],
+        [{ text:'Спам',        callback_data:`mr:${k}:спам`        }, { text:'Оскорбление',callback_data:`mr:${k}:оскорбление`}],
+        [{ text:'Реклама',     callback_data:`mr:${k}:реклама`     }, { text:'Провокация', callback_data:`mr:${k}:провокация` }],
+        [{ text:'Другое',      callback_data:`mr:${k}:другое`      }]
+      ]};
+      await bot.editMessageText(`🔇 Срок: <b>${p2.minutes} мин.</b>\n\nВыбери причину:`, {
+        chat_id:chatId, message_id:msg.message_id, parse_mode:'HTML', reply_markup:kb
+      });
+      return;
+    }
+
+    // ── MUTE REASON ───────────────────────────────────────────
+    if (data.startsWith('mr:')) {
+      const parts  = data.split(':');
+      const reason = parts[parts.length-1];
+      const k      = parts.slice(1,-1).join(':');
+      const p2     = pending[k];
+      if (!p2) { await bot.answerCallbackQuery(query.id,{text:'❌ Устарело.'}); return; }
+      if (p2.actorId !== userId) { await bot.answerCallbackQuery(query.id,{text:'❌ Не для тебя.'}); return; }
+      await bot.answerCallbackQuery(query.id); delete pending[k];
+      try {
+        const ar = await getEffectiveRank(p2.chatId, userId);
+        const lim = getMuteLimit(ar);
+        if (p2.minutes > lim && lim !== Infinity) {
+          await bot.editMessageText(`❌ Превышен лимит мута (${lim} мин.)`, {chat_id:chatId,message_id:msg.message_id}); return;
+        }
+        await doMute(p2.chatId, p2.targetId, p2.minutes, reason, query.from.first_name);
+        const u2 = getUser(p2.chatId, p2.targetId);
+        await bot.editMessageText(`🔇 <b>Мут выдан</b>\n👤 ${mention(u2)}\n⏱ ${p2.minutes} мин.\n📌 ${esc(reason)}\n👮 ${esc(query.from.first_name)}`, {
+          chat_id:chatId, message_id:msg.message_id, parse_mode:'HTML'
+        });
+      } catch (e) { await bot.editMessageText(`❌ ${e.message}`, {chat_id:chatId,message_id:msg.message_id}); }
+      return;
+    }
+
+    // ── ACTIONS MENU ──────────────────────────────────────────
+    if (data.startsWith('act:')) {
+      const parts  = data.split(':');
+      const action = parts[parts.length-1];
+      const k      = parts.slice(1,-1).join(':');
+      const p2     = pending[k];
+      if (!p2) { await bot.answerCallbackQuery(query.id,{text:'❌ Устарело.'}); return; }
+      if (p2.actorId !== userId) { await bot.answerCallbackQuery(query.id,{text:'❌ Не для тебя.'}); return; }
+      await bot.answerCallbackQuery(query.id); delete pending[k];
+      const target = getUser(p2.chatId, p2.targetId);
+      if (action==='cancel') { await bot.deleteMessage(chatId,msg.message_id); return; }
+      if (action==='del')     { try { await bot.deleteMessage(chatId,msg.message_id); } catch (_) {} }
+      else if (action==='history') {
+        const h=(target.history||[]).slice(-5).reverse().map(x=>`• ${x.type}${x.reason?` (${x.reason})`:''}`).join('\n')||'Нет.';
+        await bot.editMessageText(`📂 <b>История</b> ${mention(target)}\n\n${h}`, {chat_id:chatId,message_id:msg.message_id,parse_mode:'HTML'});
+      } else if (action==='mute') {
+        try { await doMute(p2.chatId,p2.targetId,60,'Через меню',query.from.first_name); await bot.editMessageText(`🔇 Мут 60 мин. → ${mention(target)}`, {chat_id:chatId,message_id:msg.message_id,parse_mode:'HTML'}); }
+        catch (e) { await bot.editMessageText(`❌ ${e.message}`, {chat_id:chatId,message_id:msg.message_id}); }
+      } else if (action==='ban') {
+        try { await doBan(p2.chatId,p2.targetId,'Через меню',query.from.first_name); await bot.editMessageText(`🚫 ${mention(target)} забанен.`, {chat_id:chatId,message_id:msg.message_id,parse_mode:'HTML'}); }
+        catch (e) { await bot.editMessageText(`❌ ${e.message}`, {chat_id:chatId,message_id:msg.message_id}); }
+      } else if (action==='kick') {
+        try { await doKick(p2.chatId,p2.targetId,'Через меню',query.from.first_name); await bot.editMessageText(`👢 ${mention(target)} кикнут.`, {chat_id:chatId,message_id:msg.message_id,parse_mode:'HTML'}); }
+        catch (e) { await bot.editMessageText(`❌ ${e.message}`, {chat_id:chatId,message_id:msg.message_id}); }
+      } else if (action==='warn') {
+        await doWarn(p2.chatId,p2.targetId,'Через меню',query.from.first_name,null);
+        await bot.editMessageText(`⚠️ Пред → ${mention(target)} (${(target.warns||[]).length}/5)`, {chat_id:chatId,message_id:msg.message_id,parse_mode:'HTML'});
+      }
+      return;
+    }
+
+    await bot.answerCallbackQuery(query.id);
+  } catch (e) { console.error('callback_query:', e.message); try { await bot.answerCallbackQuery(query.id); } catch (_) {} }
+});
+
+console.log('🤖  FulTalchik_Botik v3.0 запущен!');
