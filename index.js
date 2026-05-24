@@ -329,18 +329,68 @@ function addHistory(chatId, userId, action) {
   saveDB();
 }
 
-async function resolveTarget(msg, args, chatId) {
+async function resolveTarget(msg, args = [], chatId) {
+  // 1) По ответу на сообщение
   if (msg.reply_to_message && msg.reply_to_message.from) {
     const u = msg.reply_to_message.from;
-    return { id: u.id, firstName: u.first_name, username: u.username, args };
+
+    return {
+      id: u.id,
+      firstName: u.first_name || u.firstName || String(u.id),
+      username: u.username || null,
+      user: u,
+      args
+    };
   }
-  if (args[0] && /^\d+$/.test(args[0])) {
+
+  // 2) По Telegram ID
+  if (args[0] && /^\d+$/.test(String(args[0]))) {
     const id = parseInt(args[0], 10);
+    const restArgs = args.slice(1);
+
+    // Сначала пробуем взять из Telegram
     try {
-      const m = await bot.getChatMember(chatId, id);
-      return { id: m.user.id, firstName: m.user.first_name, username: m.user.username, args: args.slice(1) };
-    } catch (_) { return { id, firstName: String(id), username: null, args: args.slice(1) }; }
+      const member = await bot.getChatMember(chatId, id);
+
+      if (member && member.user) {
+        return {
+          id: member.user.id,
+          firstName: member.user.first_name || String(id),
+          username: member.user.username || null,
+          user: member.user,
+          args: restArgs
+        };
+      }
+    } catch (_) {
+      // Если Telegram не отдал пользователя, пробуем взять из нашей БД
+    }
+
+    // Потом пробуем взять из базы
+    const chat = getChat(chatId);
+    const stored = chat.users?.[String(id)];
+
+    if (stored) {
+      return {
+        id,
+        firstName: stored.firstName || String(id),
+        username: stored.username || null,
+        user: null,
+        args: restArgs
+      };
+    }
+
+    // Если даже в БД нет — всё равно возвращаем ID
+    // Это позволит создать запись и отправить заявку по ID,
+    // но человек сможет нажать кнопку только если Telegram отдаст callback от него.
+    return {
+      id,
+      firstName: String(id),
+      username: null,
+      user: null,
+      args: restArgs
+    };
   }
+
   return null;
 }
 
