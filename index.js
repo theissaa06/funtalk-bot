@@ -211,6 +211,7 @@ const RANK_COMMANDS = {
 
 const ALIASES = {
   help: ['help', 'помощь', 'commands', 'команды'],
+  basedb: ['база', 'db', 'бд', 'участникибаза'],
   setup: ['setup', 'настроить', 'стартгруппа', 'startgroup'],
   rules: ['rules', 'правила'],
   setrules: ['setrules', 'установитьправила'],
@@ -768,6 +769,78 @@ async function sendCallByMode(ctx, mode) {
   }
 }
 
+
+function rememberChatUserForCalls(ctx, userLike) {
+  if (!ctx || !ctx.chat || !userLike || userLike.is_bot) return null;
+
+  const chat = getChatDB(ctx.chat.id);
+  const user = getUserDB(chat, userLike);
+
+  user.id = Number(userLike.id);
+  user.firstName = userLike.first_name || userLike.firstName || user.firstName || '';
+  user.username = userLike.username || user.username || '';
+  user.isBot = Boolean(userLike.is_bot);
+  user.canCall = true;
+  user.leftChat = false;
+  user.chatId = ctx.chat.id;
+  user.chatTitle = ctx.chat.title || chat.title || 'эта беседа';
+  user.lastSeenAt = new Date().toISOString();
+
+  if (!user.firstSeenAt) {
+    user.firstSeenAt = new Date().toISOString();
+  }
+
+  return user;
+}
+
+function markUserLeftChat(ctx, userLike) {
+  if (!ctx || !ctx.chat || !userLike) return;
+
+  const chat = getChatDB(ctx.chat.id);
+  const user = getUserDB(chat, userLike);
+
+  user.leftChat = true;
+  user.canCall = false;
+  user.leftAt = new Date().toISOString();
+
+  saveDB();
+}
+
+function getCallableUsersFromDB(chat, mode = 'all') {
+  let users = Object.values(chat.users || {});
+
+  users = users.filter((u) => {
+    if (!u) return false;
+    if (!u.id) return false;
+    if (u.isBot) return false;
+    if (u.leftChat) return false;
+    if (u.canCall === false) return false;
+    return true;
+  });
+
+  if (mode === 'admins') {
+    users = users.filter((u) => {
+      const rank = Number(u.adminRank || chat.admins[String(u.id)] || 0);
+      return rank >= 10;
+    });
+  }
+
+  if (mode === 'owners') {
+    users = users.filter((u) => {
+      const rank = Number(u.adminRank || chat.admins[String(u.id)] || 0);
+      return rank >= 95 || Number(u.id) === OWNER_ID;
+    });
+  }
+
+  const unique = new Map();
+
+  for (const user of users) {
+    unique.set(String(user.id), user);
+  }
+
+  return Array.from(unique.values());
+}
+
 function mainMenuKeyboard() {
   return Markup.inlineKeyboard([
     [Markup.button.callback('🛡 Модерация', 'help:mod'), Markup.button.callback('👑 Ранги', 'help:ranks')],
@@ -826,7 +899,7 @@ async function handleCommand(ctx, parsed) {
 
     const chatTitle = ctx.chat.title || 'эта беседа';
     const chat = getChatDB(ctx.chat.id);
-    const user = getUserDB(chat, ctx.from);
+    const user = rememberChatUserForCalls(ctx, ctx.from) || getUserDB(chat, ctx.from);
 
     chat.title = chatTitle;
     chat.type = ctx.chat.type;
@@ -1131,6 +1204,19 @@ async function handleCommand(ctx, parsed) {
   if (command === 'myrep') { const u = getUserDB(chat, ctx.from); return ctx.reply(`⭐ Твоя репутация: <b>${u.reputation}</b>`, { parse_mode: 'HTML' }); }
 
 
+  if (command === 'basedb') {
+    if (!(await requireGroup(ctx))) return;
+
+    const users = getCallableUsersFromDB(chat, 'all');
+    const admins = getCallableUsersFromDB(chat, 'admins');
+    const owners = getCallableUsersFromDB(chat, 'owners');
+
+    return ctx.reply(
+      `📦 <b>База этой беседы</b>\n\n👥 Всего для созыва: <b>${users.length}</b>\n🛡 Админов: <b>${admins.length}</b>\n👑 Владельцев: <b>${owners.length}</b>\n\nЕсли человек написал хоть 1 сообщение — он автоматически сохраняется в БД и его можно созывать даже оффлайн.`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
   if (command === 'call') {
     if (!(await requireGroup(ctx))) return;
 
@@ -1246,7 +1332,7 @@ bot.on('new_chat_members', async (ctx) => {
     if (!chat.settings.welcome) return;
     for (const member of ctx.message.new_chat_members || []) {
       if (member.is_bot) continue;
-      const u = getUserDB(chat, member); u.balance += 25; saveDB();
+      const u = rememberChatUserForCalls(ctx, member) || getUserDB(chat, member); u.canCall = true; u.leftChat = false; u.balance += 25; saveDB();
       const text = chat.settings.welcomeText || '👋 Добро пожаловать, {user}!\n\nТы попал в «Клуб случайных людей». Перед общением прочитай /правила.';
       await ctx.reply(text.replace('{user}', mentionUser(member)).replace('{chat}', escapeHtml(ctx.chat.title || chat.title || 'эта беседа')), { parse_mode: 'HTML' });
     }
@@ -1258,6 +1344,7 @@ bot.on('left_chat_member', async (ctx) => {
     const chat = getChatDB(ctx.chat.id);
     if (!chat.settings.goodbye) return;
     const member = ctx.message.left_chat_member;
+    markUserLeftChat(ctx, member);
     const text = chat.settings.goodbyeText || '👋 {user} покинул чат.';
     await ctx.reply(text.replace('{user}', mentionUser(member)), { parse_mode: 'HTML' });
   } catch (e) { console.error('goodbye error:', e); }
@@ -1269,6 +1356,7 @@ async function sendCallByModeButton(ctx, mode) {
   const chat = getChatDB(chatId);
 
   let minRank = 40;
+
   if (mode === 'all') minRank = 60;
   if (mode === 'admins') minRank = 40;
   if (mode === 'owners') minRank = 80;
@@ -1289,31 +1377,21 @@ async function sendCallByModeButton(ctx, mode) {
 
   if (now - lastCall < cooldown) {
     const left = Math.ceil((cooldown - (now - lastCall)) / 60000);
-    return ctx.telegram.sendMessage(chatId, `⏳ Созыв уже был недавно. Подожди ещё ${left} мин.`);
+
+    return ctx.telegram.sendMessage(
+      chatId,
+      `⏳ Созыв уже был недавно. Подожди ещё ${left} мин.`
+    );
   }
 
-  let users = Object.values(chat.users || {});
-
-  users = users.filter((u) => u && u.id && !u.is_bot);
-
-  if (mode === 'admins') {
-    users = users.filter((u) => {
-      const rank = Number(u.adminRank || chat.admins[String(u.id)] || 0);
-      return rank >= 10;
-    });
-  }
-
-  if (mode === 'owners') {
-    users = users.filter((u) => {
-      const rank = Number(u.adminRank || chat.admins[String(u.id)] || 0);
-      return rank >= 95 || Number(u.id) === OWNER_ID;
-    });
-  }
+  // Берём людей из БД:
+  // написал сообщение / вошёл в чат / добавлен через запомнить / админ после обновитьадминов
+  let users = getCallableUsersFromDB(chat, mode);
 
   if (!users.length) {
     return ctx.telegram.sendMessage(
       chatId,
-      '❌ Некого созывать. Бот ещё не знает участников этой категории.'
+      '❌ Некого созывать.\n\nБот ещё не знает участников этой категории.\n\nЧтобы бот запомнил человека:\n• человек должен написать любое сообщение;\n• или ответь на его сообщение: запомнить;\n• или добавь по ID: запомнить 123456789 Имя;\n• для админов: обновитьадминов'
     );
   }
 
@@ -1322,14 +1400,14 @@ async function sendCallByModeButton(ctx, mode) {
 
   const title =
     mode === 'all'
-      ? '👥 Все участники'
+      ? '👥 Все участники из базы'
       : mode === 'admins'
-        ? '🛡 Администрация'
-        : '👑 Владельцы';
+        ? '🛡 Администрация из базы'
+        : '👑 Владельцы из базы';
 
   await ctx.telegram.sendMessage(
     chatId,
-    `📢 <b>Созыв: ${title}</b>\n\n👮 Созвал: ${mentionUser(ctx.from)}`,
+    `📢 <b>Созыв: ${title}</b>\n\n👮 Созвал: ${mentionUser(ctx.from)}\n👥 Найдено в БД: <b>${users.length}</b>`,
     { parse_mode: 'HTML' }
   );
 
@@ -1337,7 +1415,10 @@ async function sendCallByModeButton(ctx, mode) {
     const chunk = users.slice(i, i + 25);
 
     const mentions = chunk
-      .map((u) => mentionById(u.id, u.firstName || u.username || `ID ${u.id}`))
+      .map((u) => {
+        const name = u.firstName || u.username || `ID ${u.id}`;
+        return mentionById(u.id, name);
+      })
       .join(' ');
 
     await ctx.telegram.sendMessage(chatId, mentions, { parse_mode: 'HTML' });
