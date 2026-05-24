@@ -989,7 +989,15 @@ async function removeFriendCommand(msg, args) {
   const target = await resolveTarget(msg, args, chatId);
 
   if (!target) {
-    await replyTo(msg, '❌ Укажи друга по ID или ответь на его сообщение.');
+    await replyTo(
+      msg,
+      '❌ <b>Укажи друга</b>\n\nМожно так:\n• ответь на сообщение друга: <code>раздружиться</code>\n• или напиши: <code>раздружиться ID</code>'
+    );
+    return;
+  }
+
+  if (Number(target.id) === Number(msg.from.id)) {
+    await replyTo(msg, '😅 С самим собой дружбу завершить нельзя.');
     return;
   }
 
@@ -1000,15 +1008,28 @@ async function removeFriendCommand(msg, args) {
     return;
   }
 
-  delete chat.friendships[key];
-  saveDB();
+  const actor = getUser(chatId, msg.from.id, msg.from.first_name, msg.from.username);
+  const friend = getUser(chatId, target.id, target.firstName, target.username);
+
+  const kb = {
+    inline_keyboard: [
+      [
+        { text: '💔 Завершить дружбу', callback_data: 'unfriend:' + actor.id + ':' + friend.id + ':yes' }
+      ],
+      [
+        { text: '🤝 Оставить дружбу', callback_data: 'unfriend:' + actor.id + ':' + friend.id + ':no' }
+      ]
+    ]
+  };
 
   await replyTo(
     msg,
-    '💔 <b>Дружба завершена</b>\n\n' +
-    mentionByIdSafe(msg.from.id, msg.from.first_name) + ' и ' +
-    mentionByIdSafe(target.id, target.firstName || ('ID ' + target.id)) +
-    ' больше не друзья.'
+    '🤝 <b>Подтверждение дружбы</b>\n\n' +
+    mentionByIdSafe(actor.id, actor.firstName) + ', ты точно хочешь завершить дружбу с ' +
+    mentionByIdSafe(friend.id, friend.firstName || ('ID ' + friend.id)) + '?\n\n' +
+    '━━━━━━━━━━━━━━\n' +
+    'Это действие уберёт вас из списка друзей в этой беседе.',
+    { reply_markup: kb }
   );
 }
 
@@ -1035,27 +1056,36 @@ async function showCoupleCommand(msg) {
 async function breakupCommand(msg) {
   if (!await guardGroup(msg)) return;
 
-  const user = getUser(msg.chat.id, msg.from.id, msg.from.first_name, msg.from.username);
+  const chatId = msg.chat.id;
+  const user = getUser(chatId, msg.from.id, msg.from.first_name, msg.from.username);
 
   if (!user.couple) {
-    await replyTo(msg, '💔 У тебя нет пары.');
+    await replyTo(msg, '💔 У тебя пока нет пары.');
     return;
   }
 
-  const partner = getUser(msg.chat.id, user.couple);
-  const partnerId = user.couple;
+  const partner = getUser(chatId, user.couple);
+  const partnerName = partner.firstName || partner.username || ('ID ' + partner.id);
 
-  user.couple = null;
-  partner.couple = null;
-
-  saveDB();
+  const kb = {
+    inline_keyboard: [
+      [
+        { text: '💔 Расстаться', callback_data: 'break:' + user.id + ':' + partner.id + ':yes' }
+      ],
+      [
+        { text: '❤️ Остаться вместе', callback_data: 'break:' + user.id + ':' + partner.id + ':no' }
+      ]
+    ]
+  };
 
   await replyTo(
     msg,
-    '💔 <b>Отношения завершены</b>\n\n' +
-    mentionByIdSafe(user.id, user.firstName) + ' и ' +
-    mentionByIdSafe(partnerId, partner.firstName || ('ID ' + partnerId)) +
-    ' больше не пара.'
+    '💔 <b>Подтверждение расставания</b>\n\n' +
+    mentionByIdSafe(user.id, user.firstName) + ', ты точно хочешь расстаться с ' +
+    mentionByIdSafe(partner.id, partnerName) + '?\n\n' +
+    '━━━━━━━━━━━━━━\n' +
+    'Иногда лучше подумать ещё раз. Если уверен(а), нажми кнопку ниже.',
+    { reply_markup: kb }
   );
 }
 
@@ -2272,6 +2302,145 @@ bot.on('callback_query', async (query) => {
         ).catch(() => {});
         return;
       }
+    }
+
+    // ── BREAKUP / UNFRIEND BUTTONS ─────────────────────
+    if (data.startsWith('break:')) {
+      const parts = data.split(':');
+      const actorId = Number(parts[1]);
+      const partnerId = Number(parts[2]);
+      const action = parts[3];
+
+      if (Number(userId) !== actorId) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Эта кнопка не для тебя.' });
+        return;
+      }
+
+      const actor = getUser(chatId, actorId);
+      const partner = getUser(chatId, partnerId);
+
+      if (action === 'no') {
+        await bot.answerCallbackQuery(query.id, { text: '❤️ Решение отменено.' });
+
+        await bot.editMessageText(
+          '❤️ <b>Расставание отменено</b>\n\n' +
+          mentionByIdSafe(actor.id, actor.firstName) + ' решил(а) сохранить отношения с ' +
+          mentionByIdSafe(partner.id, partner.firstName || ('ID ' + partner.id)) + '.\n\n' +
+          '✨ Иногда один клик может сохранить красивую историю.',
+          {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'HTML'
+          }
+        ).catch(() => {});
+        return;
+      }
+
+      if (String(actor.couple) !== String(partnerId)) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Вы уже не пара.' });
+
+        await bot.editMessageText(
+          '❌ Эти отношения уже не активны.',
+          {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'HTML'
+          }
+        ).catch(() => {});
+        return;
+      }
+
+      actor.couple = null;
+      partner.couple = null;
+
+      saveDB();
+
+      await bot.answerCallbackQuery(query.id, { text: '💔 Отношения завершены.' });
+
+      await bot.editMessageText(
+        '💔 <b>Отношения завершены</b>\n\n' +
+        mentionByIdSafe(actor.id, actor.firstName) + ' и ' +
+        mentionByIdSafe(partner.id, partner.firstName || ('ID ' + partner.id)) +
+        ' больше не пара.\n\n' +
+        '━━━━━━━━━━━━━━\n' +
+        'Спасибо за вашу историю. У каждого начинается новая глава.',
+        {
+          chat_id: chatId,
+          message_id: msg.message_id,
+          parse_mode: 'HTML'
+        }
+      ).catch(() => {});
+      return;
+    }
+
+    if (data.startsWith('unfriend:')) {
+      const parts = data.split(':');
+      const actorId = Number(parts[1]);
+      const friendId = Number(parts[2]);
+      const action = parts[3];
+
+      if (Number(userId) !== actorId) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Эта кнопка не для тебя.' });
+        return;
+      }
+
+      const chat = ensureSocialStorage(getChat(chatId));
+      const key = makePairKey(actorId, friendId);
+
+      const actor = getUser(chatId, actorId);
+      const friend = getUser(chatId, friendId);
+
+      if (action === 'no') {
+        await bot.answerCallbackQuery(query.id, { text: '🤝 Отменено.' });
+
+        await bot.editMessageText(
+          '🤝 <b>Дружба сохранена</b>\n\n' +
+          mentionByIdSafe(actor.id, actor.firstName) + ' и ' +
+          mentionByIdSafe(friend.id, friend.firstName || ('ID ' + friend.id)) +
+          ' остаются друзьями.\n\n' +
+          '✨ Хорошие люди в чате на вес золота.',
+          {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'HTML'
+          }
+        ).catch(() => {});
+        return;
+      }
+
+      if (!chat.friendships[key]) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Вы уже не друзья.' });
+
+        await bot.editMessageText(
+          '❌ Эта дружба уже не активна.',
+          {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'HTML'
+          }
+        ).catch(() => {});
+        return;
+      }
+
+      delete chat.friendships[key];
+      saveDB();
+
+      await bot.answerCallbackQuery(query.id, { text: '💔 Дружба завершена.' });
+
+      await bot.editMessageText(
+        '💔 <b>Дружба завершена</b>\n\n' +
+        mentionByIdSafe(actor.id, actor.firstName) + ' и ' +
+        mentionByIdSafe(friend.id, friend.firstName || ('ID ' + friend.id)) +
+        ' больше не друзья.\n\n' +
+        '━━━━━━━━━━━━━━\n' +
+        'Без драмы — просто разные дороги.',
+        {
+          chat_id: chatId,
+          message_id: msg.message_id,
+          parse_mode: 'HTML'
+        }
+      ).catch(() => {});
+      return;
     }
 
     // ── SETTINGS TOGGLE ───────────────────────────────────────
