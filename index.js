@@ -1083,7 +1083,11 @@ async function handleCommand(cmd, msg, args, argText) {
       [{ text:'🌍 Глоб.ранги', callback_data:'help:global'   }, { text:'💰 Монеты',    callback_data:'help:coins'   }]
     ]};
     await replyTo(msg,
-      `🤖 <b>FulTalchik_Botik</b> — меню команд\n\n⚙️ Все команды работают <b>со слешем и без</b>:\n• <code>/топ день</code> = <code>топ день</code>\n• <code>/мут 123 10 флуд</code> = <code>мут 123 10 флуд</code>\n\nВыбери раздел:`,
+      `🤖 <b>FulTalchik_Botik — меню команд</b>
+
+⚙️ Все команды работают со слешем и без!
+
+Выбери раздел:`,
       { reply_markup: kb }
     );
     break;
