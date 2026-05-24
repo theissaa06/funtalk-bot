@@ -1833,7 +1833,7 @@ bot.on('callback_query', async (query) => {
     const userId = query.from.id;
 
     // ── HELP SECTIONS ─────────────────────────────────────────
-    if (data.startsWith('help:')) {
+    if (data.startsWith('help:') && data !== 'help:back') {
       const sec = data.split(':')[1];
       const MAP = {
         moder:   `🛡 <b>Модерация</b>\n\nмут [ID/reply] [мин] [причина]\nунмут [ID/reply]\nбан [ID/reply] [причина]\nразбан ID\nкик [ID/reply] [причина]\nпред [ID/reply] [причина]\nунпред [ID/reply]\nпреды [ID/reply]\nудалить (reply)\nдействия (reply)`,
