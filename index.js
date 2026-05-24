@@ -229,7 +229,7 @@ const ALIASES = {
   admins: ['admins', 'админы'],
   actions: ['actions', 'действия'],
   history: ['history', 'история'],
-  profile: ['profile', 'профиль', 'me', 'я'],
+  profile: ['profile', 'профиль', 'me'],
   top: ['top', 'топ'],
   level: ['level', 'уровень'],
   balance: ['balance', 'баланс', 'coins', 'монеты'],
@@ -298,18 +298,41 @@ function parseCommand(ctx) {
   if (!text) return null;
 
   const hasSlash = text.startsWith('/');
-  const source = hasSlash ? text.slice(1).trim() : text;
-  const [raw, ...args] = source.split(/\s+/);
-  if (!raw) return null;
+  const cleanText = hasSlash ? text.slice(1).trim() : text;
 
-  const alias = cleanCommandName(raw);
-  const command = REVERSE_ALIASES.get(alias);
+  const parts = cleanText.split(/\s+/);
+  const [raw, ...args] = parts;
 
-  // Без слеша принимаем только известные команды, чтобы обычные сообщения не ломались.
-  if (!hasSlash && !command) return null;
+  const first = cleanCommandName(raw);
+  const second = (args[0] || '').toLowerCase();
 
-  return { raw: alias, command: command || alias, args, argText: args.join(' '), hasSlash };
+  // ВАЖНО:
+  // "я" и "я тут" — обычные сообщения, НЕ команда.
+  // Работает только "я профиль" или "/я профиль".
+  if (first === 'я') {
+    if (['профиль', 'profile'].includes(second)) {
+      return {
+        raw: 'я профиль',
+        command: 'profile',
+        args: args.slice(1),
+        argText: args.slice(1).join(' ')
+      };
+    }
+
+    return null;
+  }
+
+  const command = REVERSE_ALIASES.get(first) || null;
+  if (!command) return null;
+
+  return {
+    raw: first,
+    command,
+    args,
+    argText: args.join(' ')
+  };
 }
+
 function isGroup(ctx) {
   return ['group', 'supergroup'].includes(ctx.chat?.type);
 }
@@ -736,11 +759,53 @@ async function handleCommand(ctx, parsed) {
   }
   if (command === 'profile') {
     const target = resolveTarget(ctx, args, { self: true });
-    const user = target.user ? getUserDB(chat, target.user) : chat.users[String(target.id)] || getUserDB(chat, { id: target.id, first_name: `ID ${target.id}` });
+
+    const user = target.user
+      ? getUserDB(chat, target.user)
+      : chat.users[String(target.id)] || getUserDB(chat, {
+          id: target.id,
+          first_name: `ID ${target.id}`
+        });
+
     const level = levelFromXp(user.xp);
-    const status = user.inventory?.premium ? '💎 Premium' : user.inventory?.vip ? '⭐ VIP' : 'обычный';
-    return ctx.reply(`👤 <b>Профиль пользователя</b>\n\nНик: <b>${usernameText(user)}</b>\nID: <code>${user.id}</code>\n💬 Сообщений: <b>${user.messages}</b>\n⭐ Репутация: <b>${user.reputation}</b>\n🎚 Уровень: <b>${level}</b> — ${levelTitle(level)}\n🏷 Титул: <b>${escapeHtml(user.title || 'нет')}</b>\n👑 Админ-ранг: <b>${rankInfo(user.adminRank).title}</b>\n⚠️ Предупреждений: <b>${user.warns?.length || 0}/5</b>\n🪙 Баланс: <b>${user.balance}</b> монет\n🎁 Статус: <b>${status}</b>`, { parse_mode: 'HTML' });
+    const status = user.inventory?.premium
+      ? '💎 Premium'
+      : user.inventory?.vip
+        ? '⭐ VIP'
+        : 'обычный';
+
+    const username = user.username ? '@' + escapeHtml(user.username) : 'нет';
+    const nick = escapeHtml(user.firstName || user.first_name || 'Пользователь');
+    const title = user.title ? escapeHtml(user.title) : 'нет';
+    const adminRank = rankInfo(user.adminRank).title;
+    const warnsCount = user.warns?.length || 0;
+
+    return ctx.reply(
+`👤 <b>Профиль пользователя</b>
+
+<b>Основное:</b>
+👤 Ник: <b>${nick}</b>
+🆔 ID: <code>${user.id}</code>
+🔗 Username: <b>${username}</b>
+
+<b>Активность:</b>
+💬 Сообщений: <b>${user.messages}</b>
+🎚 Уровень: <b>${level}</b>
+🏆 Ранг активности: <b>${levelTitle(level)}</b>
+
+<b>Статистика:</b>
+⭐ Репутация: <b>${user.reputation}</b>
+⚠️ Предупреждения: <b>${warnsCount}/5</b>
+🪙 Баланс: <b>${user.balance}</b> монет
+
+<b>Статус:</b>
+🏷 Титул: <b>${title}</b>
+👑 Админ-ранг: <b>${adminRank}</b>
+🎁 Статус: <b>${status}</b>`,
+      { parse_mode: 'HTML' }
+    );
   }
+
   if (command === 'id') return ctx.reply(`🆔 Твой ID: <code>${ctx.from.id}</code>`, { parse_mode: 'HTML' });
   if (command === 'top') {
     const period = args[0]?.toLowerCase() || 'all';
