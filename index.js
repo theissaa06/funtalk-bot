@@ -335,7 +335,7 @@ async function resolveTarget(msg, args = [], chatId) {
     const u = msg.reply_to_message.from;
 
     return {
-      id: u.id,
+      id: Number(u.id),
       firstName: u.first_name || u.firstName || String(u.id),
       username: u.username || null,
       user: u,
@@ -345,9 +345,11 @@ async function resolveTarget(msg, args = [], chatId) {
 
   const firstArg = String(args[0] || '').trim();
 
+  if (!firstArg) return null;
+
   // 2) По Telegram ID
-  if (firstArg && /^\d+$/.test(firstArg)) {
-    const id = parseInt(firstArg, 10);
+  if (/^\d+$/.test(firstArg)) {
+    const id = Number(firstArg);
     const restArgs = args.slice(1);
 
     try {
@@ -355,7 +357,7 @@ async function resolveTarget(msg, args = [], chatId) {
 
       if (member && member.user) {
         return {
-          id: member.user.id,
+          id: Number(member.user.id),
           firstName: member.user.first_name || String(id),
           username: member.user.username || null,
           user: member.user,
@@ -369,8 +371,8 @@ async function resolveTarget(msg, args = [], chatId) {
 
     if (stored) {
       return {
-        id,
-        firstName: stored.firstName || String(id),
+        id: Number(stored.id || id),
+        firstName: stored.firstName || stored.first_name || stored.username || String(id),
         username: stored.username || null,
         user: null,
         args: restArgs
@@ -386,13 +388,10 @@ async function resolveTarget(msg, args = [], chatId) {
     };
   }
 
-  // 3) По Telegram username: @username или username
-  // Важно: бот может найти username только если человек уже есть в БД этой беседы.
-  if (firstArg) {
+  // 3) По @username
+  if (firstArg.startsWith('@') || /^[a-zA-Z0-9_]{5,32}$/.test(firstArg)) {
     const usernameRaw = firstArg.replace(/^@/, '').toLowerCase();
 
-    // Не пытаемся искать обычные слова без @, если это явно не username.
-    // Но для удобства поддерживаем и @username, и username.
     if (/^[a-zA-Z0-9_]{5,32}$/.test(usernameRaw)) {
       const chat = getChat(chatId);
 
@@ -400,17 +399,16 @@ async function resolveTarget(msg, args = [], chatId) {
         return String(u.username || '').toLowerCase() === usernameRaw;
       });
 
-      if (stored) {
+      if (stored && stored.id) {
         return {
-          id: stored.id,
+          id: Number(stored.id),
           firstName: stored.firstName || stored.first_name || stored.username || String(stored.id),
-          username: stored.username || null,
+          username: stored.username || usernameRaw,
           user: null,
           args: args.slice(1)
         };
       }
 
-      // Если username не найден в БД — объясним пользователю красиво через null.
       return {
         notFoundUsername: usernameRaw,
         args: args.slice(1)
@@ -961,12 +959,25 @@ async function startSocialRequest(msg, args, type) {
 
   const target = await resolveTarget(msg, args, chatId);
 
-  if (!target) {
-    const example = type === 'relationship'
-      ? 'отношения @username / ID или reply → отношения'
-      : 'дружба @username / ID или reply → дружба';
+  if (target?.notFoundUsername) {
+    await replyTo(
+      msg,
+      '❌ <b>Пользователь @' + esc(target.notFoundUsername) + ' не найден в базе этой беседы.</b>\n\n' +
+      'Чтобы предложить дружбу/отношения по username, человек должен хотя бы 1 раз написать сообщение в этот чат.\n\n' +
+      'Лучшие варианты:\n' +
+      '• ответь на сообщение человека: <code>' + (type === 'relationship' ? 'отношения' : 'дружба') + '</code>\n' +
+      '• или используй TG ID: <code>' + (type === 'relationship' ? 'отношения' : 'дружба') + ' 123456789</code>'
+    );
+    return;
+  }
 
-    await replyTo(msg, '❌ Укажи пользователя.\n\nПример: ' + example);
+  if (!target || !target.id) {
+    await replyTo(
+      msg,
+      type === 'relationship'
+        ? '❌ <b>Укажи человека</b>\n\nМожно так:\n• reply → <code>отношения</code>\n• <code>отношения @username</code>\n• <code>отношения TG_ID</code>'
+        : '❌ <b>Укажи человека</b>\n\nМожно так:\n• reply → <code>дружба</code>\n• <code>дружба @username</code>\n• <code>дружба TG_ID</code>'
+    );
     return;
   }
 
@@ -986,22 +997,24 @@ async function startSocialRequest(msg, args, type) {
   const fromUser = getUser(chatId, msg.from.id, msg.from.first_name, msg.from.username);
   const toUser = getUser(chatId, target.id, target.firstName, target.username);
 
+  ensureSocialStorage(chat);
+
+  const toDisplayName = toUser.firstName || toUser.username || target.firstName || ('ID ' + target.id);
+
   if (type === 'relationship') {
-    if (fromUser.couple) {
-      await replyTo(msg, '❌ У тебя уже есть пара. Сначала напиши: расстаться');
+    if (getStoredCoupleId(chat, fromUser)) {
+      await replyTo(msg, '❌ У тебя уже есть пара. Сначала напиши: <code>расстаться</code>');
       return;
     }
 
-    if (toUser.couple) {
+    if (getStoredCoupleId(chat, toUser)) {
       await replyTo(msg, '❌ У этого пользователя уже есть пара.');
       return;
     }
   }
 
   if (type === 'friend') {
-    const key = makePairKey(fromUser.id, toUser.id);
-
-    if (chat.friendships[key]) {
+    if (areFriends(chat, fromUser.id, toUser.id)) {
       await replyTo(msg, '🤝 Вы уже друзья.');
       return;
     }
@@ -1013,10 +1026,10 @@ async function startSocialRequest(msg, args, type) {
     id: requestId,
     type,
     chatId,
-    fromId: fromUser.id,
-    toId: toUser.id,
+    fromId: Number(fromUser.id),
+    toId: Number(toUser.id),
     fromName: fromUser.firstName || msg.from.first_name || 'Пользователь',
-    toName: toUser.firstName || target.firstName || 'Пользователь',
+    toName: toDisplayName,
     createdAt: Date.now()
   };
 
@@ -1032,21 +1045,26 @@ async function startSocialRequest(msg, args, type) {
 
   const text =
     title + '\n\n' +
-    '👤 ' + mentionByIdSafe(fromUser.id, fromUser.firstName) + '\n' +
-    '💌 предлагает ' + mentionByIdSafe(toUser.id, toUser.firstName) + '\n\n' +
-    '✨ <b>' + esc(toUser.firstName || 'Пользователь') + '</b>, ' + question + '\n\n' +
-    '━━━━━━━━━━━━━━\n' +
+    '👤 ' + mentionByIdPretty(fromUser.id, fromUser.firstName || fromUser.username || ('ID ' + fromUser.id)) + '\n' +
+    '💌 предлагает ' + mentionByIdPretty(toUser.id, toDisplayName) + '\n\n' +
+    '✨ <b>' + esc(toDisplayName) + '</b>, ' + question + '\n\n' +
+    '💭 Решение только за тобой — можно принять или красиво отказаться.\n' +
     '⏳ Заявка активна 24 часа.\n' +
-    'Нажать кнопки может только тот, кому отправили предложение.';
+    '🔒 Нажать кнопки может только тот, кому отправили предложение.';
+
+  const acceptText = type === 'relationship' ? '❤️ Принять отношения' : '🤝 Принять дружбу';
+  const declineText = type === 'relationship' ? '💔 Отказаться' : '🙅 Отказаться';
 
   const kb = {
     inline_keyboard: [
-      [
-        { text: '✅ Принять', callback_data: 'soc:' + requestId + ':yes' },
-        { text: '❌ Отказаться', callback_data: 'soc:' + requestId + ':no' }
-      ]
+      [{ text: acceptText, callback_data: 'soc:' + requestId + ':yes' }],
+      [{ text: declineText, callback_data: 'soc:' + requestId + ':no' }]
     ]
   };
+
+  if (typeof botInviteUrl === 'function') {
+    kb.inline_keyboard.push([{ text: '➕ Добавить бота в чат', url: botInviteUrl() }]);
+  }
 
   await replyTo(msg, text, { reply_markup: kb });
 }
