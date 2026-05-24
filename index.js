@@ -343,12 +343,13 @@ async function resolveTarget(msg, args = [], chatId) {
     };
   }
 
+  const firstArg = String(args[0] || '').trim();
+
   // 2) По Telegram ID
-  if (args[0] && /^\d+$/.test(String(args[0]))) {
-    const id = parseInt(args[0], 10);
+  if (firstArg && /^\d+$/.test(firstArg)) {
+    const id = parseInt(firstArg, 10);
     const restArgs = args.slice(1);
 
-    // Сначала пробуем взять из Telegram
     try {
       const member = await bot.getChatMember(chatId, id);
 
@@ -361,11 +362,8 @@ async function resolveTarget(msg, args = [], chatId) {
           args: restArgs
         };
       }
-    } catch (_) {
-      // Если Telegram не отдал пользователя, пробуем взять из нашей БД
-    }
+    } catch (_) {}
 
-    // Потом пробуем взять из базы
     const chat = getChat(chatId);
     const stored = chat.users?.[String(id)];
 
@@ -379,9 +377,6 @@ async function resolveTarget(msg, args = [], chatId) {
       };
     }
 
-    // Если даже в БД нет — всё равно возвращаем ID
-    // Это позволит создать запись и отправить заявку по ID,
-    // но человек сможет нажать кнопку только если Telegram отдаст callback от него.
     return {
       id,
       firstName: String(id),
@@ -389,6 +384,38 @@ async function resolveTarget(msg, args = [], chatId) {
       user: null,
       args: restArgs
     };
+  }
+
+  // 3) По Telegram username: @username или username
+  // Важно: бот может найти username только если человек уже есть в БД этой беседы.
+  if (firstArg) {
+    const usernameRaw = firstArg.replace(/^@/, '').toLowerCase();
+
+    // Не пытаемся искать обычные слова без @, если это явно не username.
+    // Но для удобства поддерживаем и @username, и username.
+    if (/^[a-zA-Z0-9_]{5,32}$/.test(usernameRaw)) {
+      const chat = getChat(chatId);
+
+      const stored = Object.values(chat.users || {}).find((u) => {
+        return String(u.username || '').toLowerCase() === usernameRaw;
+      });
+
+      if (stored) {
+        return {
+          id: stored.id,
+          firstName: stored.firstName || stored.first_name || stored.username || String(stored.id),
+          username: stored.username || null,
+          user: null,
+          args: args.slice(1)
+        };
+      }
+
+      // Если username не найден в БД — объясним пользователю красиво через null.
+      return {
+        notFoundUsername: usernameRaw,
+        args: args.slice(1)
+      };
+    }
   }
 
   return null;
@@ -560,10 +587,31 @@ async function guardRank(msg, minRank, label) {
 
 async function guardTarget(msg, args, chatId) {
   const t = await resolveTarget(msg, args, chatId);
-  if (!t) {
-    await replyTo(msg, '❌ <b>Пользователь не указан</b>\n\n• /команда ID причина\n• Или ответь на сообщение');
+
+  if (t?.notFoundUsername) {
+    await replyTo(
+      msg,
+      '❌ <b>Пользователь @' + esc(t.notFoundUsername) + ' не найден в БД этой беседы.</b>\n\n' +
+      'Чтобы бот нашёл человека по username, он должен хотя бы 1 раз написать сообщение в чат.\n\n' +
+      'Можно также использовать:\n' +
+      '• reply на сообщение пользователя;\n' +
+      '• TG ID пользователя.'
+    );
     return null;
   }
+
+  if (!t) {
+    await replyTo(
+      msg,
+      '❌ <b>Пользователь не указан</b>\n\n' +
+      'Можно использовать:\n' +
+      '• reply на сообщение;\n' +
+      '• TG ID;\n' +
+      '• @username, если пользователь есть в БД.'
+    );
+    return null;
+  }
+
   return t;
 }
 
@@ -915,8 +963,8 @@ async function startSocialRequest(msg, args, type) {
 
   if (!target) {
     const example = type === 'relationship'
-      ? 'отношения ID или reply → отношения'
-      : 'дружба ID или reply → дружба';
+      ? 'отношения @username / ID или reply → отношения'
+      : 'дружба @username / ID или reply → дружба';
 
     await replyTo(msg, '❌ Укажи пользователя.\n\nПример: ' + example);
     return;
@@ -1041,7 +1089,7 @@ async function removeFriendCommand(msg, args) {
   if (!target) {
     await replyTo(
       msg,
-      '❌ <b>Укажи друга</b>\n\nМожно так:\n• ответь на сообщение друга: <code>раздружиться</code>\n• или напиши: <code>раздружиться ID</code>'
+      '❌ <b>Укажи друга</b>\n\nМожно так:\n• ответь на сообщение друга: <code>раздружиться</code>\n• или напиши: <code>раздружиться @username / ID</code>'
     );
     return;
   }
