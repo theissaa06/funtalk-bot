@@ -435,7 +435,7 @@ const CMD_ALIASES = {
   // relations
   relationship:  ['relationship','relations','отношения','отношение','love','любовь'],
   couple:        ['couple','пара'],
-  breakup:       ['breakup','расстаться'],
+  breakup:       ['breakup','расстаться','разрыв'],
   hug:           ['hug','обнять'],
   kiss:          ['kiss','поцеловать'],
   slap:          ['slap','шлепнуть','шлёпнуть'],
@@ -2431,6 +2431,263 @@ bot.on('callback_query', async (query) => {
         '💔 <b>Дружба завершена</b>\n\n' +
         mentionByIdSafe(actor.id, actor.firstName) + ' и ' +
         mentionByIdSafe(friend.id, friend.firstName || ('ID ' + friend.id)) +
+        ' больше не друзья.\n\n' +
+        '━━━━━━━━━━━━━━\n' +
+        'Без драмы — просто разные дороги.',
+        {
+          chat_id: chatId,
+          message_id: msg.message_id,
+          parse_mode: 'HTML'
+        }
+      ).catch(() => {});
+      return;
+    }
+
+    // ── SOCIAL RELATIONSHIP FRIENDSHIP BUTTONS V2 ───────
+    if (data.startsWith('soc:')) {
+      const parts = data.split(':');
+      const requestId = parts[1];
+      const action = parts[2];
+
+      const chat = ensureSocialStorage(getChat(chatId));
+      const request = chat.pendingSocialRequests?.[requestId];
+
+      if (!request) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Заявка устарела.' });
+        return;
+      }
+
+      if (Number(request.toId) !== Number(userId)) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Эта заявка не для тебя.' });
+        return;
+      }
+
+      if (Date.now() - Number(request.createdAt || 0) > 24 * 60 * 60 * 1000) {
+        delete chat.pendingSocialRequests[requestId];
+        saveDB();
+        await bot.answerCallbackQuery(query.id, { text: '⏳ Заявка истекла.' });
+        await bot.editMessageText('⏳ Заявка устарела и больше недоступна.', {
+          chat_id: chatId,
+          message_id: msg.message_id,
+          parse_mode: 'HTML'
+        }).catch(() => {});
+        return;
+      }
+
+      const fromUser = getUser(chatId, request.fromId);
+      const toUser = getUser(chatId, request.toId);
+
+      if (action === 'no') {
+        delete chat.pendingSocialRequests[requestId];
+        saveDB();
+
+        await bot.answerCallbackQuery(query.id, { text: '❌ Отклонено.' });
+
+        await bot.editMessageText(
+          (request.type === 'relationship'
+            ? '💔 <b>Предложение отношений отклонено</b>'
+            : '🤝 <b>Предложение дружбы отклонено</b>') +
+          '\n\n' +
+          mentionByIdPretty(toUser.id, toUser.firstName) + ' отказался/отказалась от предложения.',
+          {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'HTML'
+          }
+        ).catch(() => {});
+        return;
+      }
+
+      if (request.type === 'relationship') {
+        if (getStoredCoupleId(chat, fromUser) || getStoredCoupleId(chat, toUser)) {
+          delete chat.pendingSocialRequests[requestId];
+          saveDB();
+
+          await bot.answerCallbackQuery(query.id, { text: '❌ У кого-то уже есть пара.' });
+          await bot.editMessageText('❌ Заявка больше недоступна: у одного из пользователей уже есть пара.', {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'HTML'
+          }).catch(() => {});
+          return;
+        }
+
+        setStoredCouple(chat, fromUser, toUser);
+
+        delete chat.pendingSocialRequests[requestId];
+        saveDB();
+
+        await bot.answerCallbackQuery(query.id, { text: '❤️ Теперь вы пара!' });
+
+        await bot.editMessageText(
+          '❤️ <b>Новая пара в беседе!</b>\n\n' +
+          mentionByIdPretty(fromUser.id, fromUser.firstName) + ' и ' +
+          mentionByIdPretty(toUser.id, toUser.firstName) + ' теперь вместе!\n\n' +
+          '💍 Пусть всё будет красиво, спокойно и по взаимности.\n' +
+          '🎁 Бонус каждому: <b>+20 монет</b>',
+          {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'HTML'
+          }
+        ).catch(() => {});
+        return;
+      }
+
+      if (request.type === 'friend') {
+        if (areFriends(chat, fromUser.id, toUser.id)) {
+          delete chat.pendingSocialRequests[requestId];
+          saveDB();
+
+          await bot.answerCallbackQuery(query.id, { text: '🤝 Вы уже друзья.' });
+          await bot.editMessageText('🤝 Вы уже друзья.', {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'HTML'
+          }).catch(() => {});
+          return;
+        }
+
+        setStoredFriendship(chat, fromUser, toUser);
+
+        delete chat.pendingSocialRequests[requestId];
+        saveDB();
+
+        await bot.answerCallbackQuery(query.id, { text: '🤝 Дружба принята!' });
+
+        await bot.editMessageText(
+          '🤝 <b>Новая дружба в беседе!</b>\n\n' +
+          mentionByIdPretty(fromUser.id, fromUser.firstName) + ' и ' +
+          mentionByIdPretty(toUser.id, toUser.firstName) + ' теперь друзья!\n\n' +
+          '✨ Дружба — это когда в чате есть свой человек.\n' +
+          '🎁 Бонус каждому: <b>+10 монет</b>',
+          {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'HTML'
+          }
+        ).catch(() => {});
+        return;
+      }
+    }
+
+    if (data.startsWith('break:')) {
+      const parts = data.split(':');
+      const actorId = Number(parts[1]);
+      const partnerId = Number(parts[2]);
+      const action = parts[3];
+
+      if (Number(userId) !== actorId) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Эта кнопка не для тебя.' });
+        return;
+      }
+
+      const chat = ensureSocialStorage(getChat(chatId));
+      const actor = getUser(chatId, actorId);
+      const partner = getUser(chatId, partnerId);
+
+      if (action === 'no') {
+        await bot.answerCallbackQuery(query.id, { text: '❤️ Решение отменено.' });
+
+        await bot.editMessageText(
+          '❤️ <b>Расставание отменено</b>\n\n' +
+          mentionByIdPretty(actor.id, actor.firstName) + ' решил(а) сохранить отношения с ' +
+          mentionByIdPretty(partner.id, partner.firstName || ('ID ' + partner.id)) + '.\n\n' +
+          '✨ Иногда один клик может сохранить красивую историю.',
+          {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'HTML'
+          }
+        ).catch(() => {});
+        return;
+      }
+
+      if (String(getStoredCoupleId(chat, actor)) !== String(partnerId)) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Вы уже не пара.' });
+
+        await bot.editMessageText('❌ Эти отношения уже не активны.', {
+          chat_id: chatId,
+          message_id: msg.message_id,
+          parse_mode: 'HTML'
+        }).catch(() => {});
+        return;
+      }
+
+      clearStoredCouple(chat, actor, partner);
+      saveDB();
+
+      await bot.answerCallbackQuery(query.id, { text: '💔 Отношения завершены.' });
+
+      await bot.editMessageText(
+        '💔 <b>Отношения завершены</b>\n\n' +
+        mentionByIdPretty(actor.id, actor.firstName) + ' и ' +
+        mentionByIdPretty(partner.id, partner.firstName || ('ID ' + partner.id)) +
+        ' больше не пара.\n\n' +
+        '━━━━━━━━━━━━━━\n' +
+        'Спасибо за вашу историю. У каждого начинается новая глава.',
+        {
+          chat_id: chatId,
+          message_id: msg.message_id,
+          parse_mode: 'HTML'
+        }
+      ).catch(() => {});
+      return;
+    }
+
+    if (data.startsWith('unfriend:')) {
+      const parts = data.split(':');
+      const actorId = Number(parts[1]);
+      const friendId = Number(parts[2]);
+      const action = parts[3];
+
+      if (Number(userId) !== actorId) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Эта кнопка не для тебя.' });
+        return;
+      }
+
+      const chat = ensureSocialStorage(getChat(chatId));
+      const actor = getUser(chatId, actorId);
+      const friend = getUser(chatId, friendId);
+
+      if (action === 'no') {
+        await bot.answerCallbackQuery(query.id, { text: '🤝 Отменено.' });
+
+        await bot.editMessageText(
+          '🤝 <b>Дружба сохранена</b>\n\n' +
+          mentionByIdPretty(actor.id, actor.firstName) + ' и ' +
+          mentionByIdPretty(friend.id, friend.firstName || ('ID ' + friend.id)) +
+          ' остаются друзьями.\n\n' +
+          '✨ Хорошие люди в чате на вес золота.',
+          {
+            chat_id: chatId,
+            message_id: msg.message_id,
+            parse_mode: 'HTML'
+          }
+        ).catch(() => {});
+        return;
+      }
+
+      if (!areFriends(chat, actorId, friendId)) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Вы уже не друзья.' });
+
+        await bot.editMessageText('❌ Эта дружба уже не активна.', {
+          chat_id: chatId,
+          message_id: msg.message_id,
+          parse_mode: 'HTML'
+        }).catch(() => {});
+        return;
+      }
+
+      clearStoredFriendship(chat, actorId, friendId);
+      saveDB();
+
+      await bot.answerCallbackQuery(query.id, { text: '💔 Дружба завершена.' });
+
+      await bot.editMessageText(
+        '💔 <b>Дружба завершена</b>\n\n' +
+        mentionByIdPretty(actor.id, actor.firstName) + ' и ' +
+        mentionByIdPretty(friend.id, friend.firstName || ('ID ' + friend.id)) +
         ' больше не друзья.\n\n' +
         '━━━━━━━━━━━━━━\n' +
         'Без драмы — просто разные дороги.',
