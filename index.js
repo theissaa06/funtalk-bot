@@ -792,6 +792,23 @@ async function quickRank(msg, args, targetRank, chatId) {
     return;
   }
 
+  if (Number(u.adminRank || 0) === Number(targetRank)) {
+    const ri = getRankInfo(targetRank);
+
+    await replyTo(
+      msg,
+      `⚠️ <b>Ранг уже выдан</b>
+
+👤 ${mention(u)}
+🆔 <code>${t.id}</code>
+🎚 Текущий ранг: ${ri.emoji} <b>${ri.name}</b> (${targetRank})
+
+Повторно выдавать этот же ранг не нужно.`
+    );
+
+    return;
+  }
+
   u.adminRank = targetRank;
   saveDB();
 
@@ -2528,6 +2545,23 @@ async function handleCommand(cmd, msg, args, argText) {
 
     if (tr >= ar) {
       await replyTo(msg, '❌ Нельзя изменить ранг у равного или выше себя.');
+      return;
+    }
+
+    if (Number(u.adminRank || 0) === Number(nr)) {
+      const ri = getRankInfo(nr);
+
+      await replyTo(
+        msg,
+        `⚠️ <b>Ранг уже выдан</b>
+
+👤 ${mention(u)}
+🆔 <code>${t.id}</code>
+🎚 Текущий ранг: ${ri.emoji} <b>${ri.name}</b> (${nr})
+
+Повторно выдавать этот же ранг не нужно.`
+      );
+
       return;
     }
 
