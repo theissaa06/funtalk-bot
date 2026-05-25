@@ -720,33 +720,89 @@ async function doWarn(chatId, targetId, reason, byName, replyMsg) {
 // ── QUICK RANK ────────────────────────────────────────────────────
 async function quickRank(msg, args, targetRank, chatId) {
   if (!await guardGroup(msg)) return;
+
   const actorRank = await getEffectiveRank(chatId, msg.from.id);
 
   if (targetRank === 100) {
     const existing = Object.values(getChat(chatId).users).find(u => u.adminRank === 100);
+
     if (existing && String(existing.id) !== String(msg.from.id)) {
-      await replyTo(msg, '❌ Владелец уже назначен. Используй /transferowner'); return;
+      await replyTo(msg, '❌ Владелец уже назначен. Используй /transferowner');
+      return;
     }
+
     if (actorRank < 100) {
-      try { const m = await bot.getChatMember(chatId, msg.from.id); if (m.status !== 'creator') { await replyTo(msg, '❌ Только создатель группы.'); return; } }
-      catch (_) { await replyTo(msg, '❌ Только создатель группы.'); return; }
+      try {
+        const m = await bot.getChatMember(chatId, msg.from.id);
+
+        if (m.status !== 'creator') {
+          await replyTo(msg, '❌ Только создатель группы.');
+          return;
+        }
+      } catch (_) {
+        await replyTo(msg, '❌ Только создатель группы.');
+        return;
+      }
     }
   } else if (targetRank >= actorRank) {
-    await replyTo(msg, `❌ Нельзя выдать ранг ≥ своему (${actorRank}).`); return;
+    await replyTo(msg, `❌ Нельзя выдать ранг ≥ своему (${actorRank}).`);
+    return;
   }
 
   const t = await resolveTarget(msg, args, chatId);
-  if (!t) { await replyTo(msg, '❌ Укажи пользователя (ID или reply).'); return; }
 
-  const u  = getUser(chatId, t.id, t.firstName, t.username);
+  if (t?.notFoundUsername) {
+    await replyTo(
+      msg,
+      '❌ <b>Пользователь @' + esc(t.notFoundUsername) + ' не найден в базе этой беседы.</b>\n\n' +
+      'Пусть он напишет сообщение в чат, или используй reply / TG ID.'
+    );
+    return;
+  }
+
+  if (!t || !t.id) {
+    await replyTo(msg, '❌ Укажи пользователя: reply, TG ID или @username.');
+    return;
+  }
+
+  const u = getUser(chatId, t.id, t.firstName, t.username);
+  const currentRank = Number(u.adminRank || 0);
+
+  if (currentRank === Number(targetRank)) {
+    const ri = getRankInfo(targetRank);
+
+    await replyTo(
+      msg,
+      `⚠️ <b>Ранг уже выдан</b>\n\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n🎚 Текущий ранг: ${ri.emoji} <b>${ri.name}</b> (${targetRank})\n\nПовторно выдавать этот же ранг не нужно.`
+    );
+    return;
+  }
+
+  // Нельзя менять ранг равного/выше себя
+  const targetEffectiveRank = await getEffectiveRank(chatId, t.id);
+
+  if (targetEffectiveRank >= actorRank && Number(t.id) !== Number(msg.from.id)) {
+    await replyTo(msg, '❌ Нельзя изменить ранг у равного или выше себя.');
+    return;
+  }
+
   u.adminRank = targetRank;
   saveDB();
+
   const ri = getRankInfo(targetRank);
+
   if (targetRank === 0) {
-    await replyTo(msg, `👤 <b>Ранг снят</b>\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n📉 Обычный пользователь\n👮 ${esc(msg.from.first_name)}`);
+    await replyTo(
+      msg,
+      `👤 <b>Ранг снят</b>\n\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n📉 Теперь обычный пользователь\n👮 ${esc(msg.from.first_name)}`
+    );
   } else {
-    await replyTo(msg, `${ri.emoji} <b>Ранг выдан</b>\n\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n🎚 ${ri.emoji} ${ri.name} (${targetRank})\n👮 ${esc(msg.from.first_name)}`);
+    await replyTo(
+      msg,
+      `${ri.emoji} <b>Ранг выдан</b>\n\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n🎚 ${ri.emoji} <b>${ri.name}</b> (${targetRank})\n👮 ${esc(msg.from.first_name)}`
+    );
   }
+
   await sendLog(chatId, `🎚 Ранг ${ri.name} (${targetRank}) → ${mention(u)} | ${msg.from.first_name}`);
 }
 
@@ -2431,17 +2487,58 @@ async function handleCommand(cmd, msg, args, argText) {
   // ── RANK ASSIGN ────────────────────────────────────────────
   case 'setrank': {
     if (!await guardGroup(msg) || !await guardRank(msg, 20)) return;
-    const t = await guardTarget(msg, args, chatId); if (!t) return;
-    const nr = parseInt(t.args[0],10);
-    if (isNaN(nr) || !RANKS[nr]) { await replyTo(msg,`❌ Неверный ранг. Допустимые: ${Object.keys(RANKS).join(', ')}`); return; }
+
+    const t = await guardTarget(msg, args, chatId);
+    if (!t) return;
+
+    const nr = parseInt(t.args[0], 10);
+
+    if (isNaN(nr) || !RANKS[nr]) {
+      await replyTo(msg, `❌ Неверный ранг. Допустимые: ${Object.keys(RANKS).join(', ')}`);
+      return;
+    }
+
     const ar = await getEffectiveRank(chatId, msg.from.id);
-    if (nr >= ar) { await replyTo(msg,`❌ Нельзя выдать ранг ≥ своему (${ar}).`); return; }
-    const u = getUser(chatId, t.id, t.firstName, t.username); u.adminRank = nr; saveDB();
+
+    if (nr >= ar) {
+      await replyTo(msg, `❌ Нельзя выдать ранг ≥ своему (${ar}).`);
+      return;
+    }
+
+    const u = getUser(chatId, t.id, t.firstName, t.username);
+    const currentRank = Number(u.adminRank || 0);
+
+    if (currentRank === Number(nr)) {
+      const ri = getRankInfo(nr);
+
+      await replyTo(
+        msg,
+        `⚠️ <b>Ранг уже выдан</b>\n\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n🎚 Текущий ранг: ${ri.emoji} <b>${ri.name}</b> (${nr})\n\nПовторно выдавать этот же ранг не нужно.`
+      );
+      return;
+    }
+
+    const tr = await getEffectiveRank(chatId, t.id);
+
+    if (tr >= ar) {
+      await replyTo(msg, '❌ Нельзя изменить ранг у равного или выше себя.');
+      return;
+    }
+
+    u.adminRank = nr;
+    saveDB();
+
     const ri = getRankInfo(nr);
-    await replyTo(msg, `${ri.emoji} <b>Ранг выдан</b>\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n🎚 ${ri.name} (${nr})\n👮 ${esc(msg.from.first_name)}`);
+
+    await replyTo(
+      msg,
+      `${ri.emoji} <b>Ранг выдан</b>\n\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n🎚 ${ri.name} (${nr})\n👮 ${esc(msg.from.first_name)}`
+    );
+
     await sendLog(chatId, `🎚 Ранг ${ri.name}(${nr}) → ${mention(u)} | ${msg.from.first_name}`);
     break;
   }
+
   case 'delrank': {
     if (!await guardGroup(msg)) return;
     const t  = await guardTarget(msg, args, chatId); if (!t) return;
