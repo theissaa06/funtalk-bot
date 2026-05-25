@@ -722,33 +722,6 @@ async function quickRank(msg, args, targetRank, chatId) {
   if (!await guardGroup(msg)) return;
 
   const actorRank = await getEffectiveRank(chatId, msg.from.id);
-
-  if (targetRank === 100) {
-    const existing = Object.values(getChat(chatId).users).find(u => u.adminRank === 100);
-
-    if (existing && String(existing.id) !== String(msg.from.id)) {
-      await replyTo(msg, '❌ Владелец уже назначен. Используй /transferowner');
-      return;
-    }
-
-    if (actorRank < 100) {
-      try {
-        const m = await bot.getChatMember(chatId, msg.from.id);
-
-        if (m.status !== 'creator') {
-          await replyTo(msg, '❌ Только создатель группы.');
-          return;
-        }
-      } catch (_) {
-        await replyTo(msg, '❌ Только создатель группы.');
-        return;
-      }
-    }
-  } else if (targetRank >= actorRank) {
-    await replyTo(msg, `❌ Нельзя выдать ранг ≥ своему (${actorRank}).`);
-    return;
-  }
-
   const t = await resolveTarget(msg, args, chatId);
 
   if (t?.notFoundUsername) {
@@ -765,34 +738,73 @@ async function quickRank(msg, args, targetRank, chatId) {
     return;
   }
 
+  if (Number(t.id) === Number(_botId)) {
+    await replyTo(msg, '❌ Нельзя выдавать ранг самому боту.');
+    return;
+  }
+
+  if (t.user?.is_bot) {
+    await replyTo(msg, '❌ Нельзя выдавать ранги ботам.');
+    return;
+  }
+
+  const chat = getChat(chatId);
   const u = getUser(chatId, t.id, t.firstName, t.username);
+
+  if (targetRank === 100) {
+    const existingOwner = Object.values(chat.users || {}).find((user) => {
+      return Number(user.adminRank || 0) === 100 && Number(user.id) !== Number(t.id);
+    });
+
+    if (existingOwner) {
+      await replyTo(
+        msg,
+        '❌ <b>Владелец уже назначен</b>\n\n' +
+        '👑 Текущий владелец: ' + mention(existingOwner) + '\n\n' +
+        'Чтобы передать владельца, используй команду передачи владельца.'
+      );
+      return;
+    }
+
+    if (actorRank < 100) {
+      try {
+        const m = await bot.getChatMember(chatId, msg.from.id);
+
+        if (m.status !== 'creator') {
+          await replyTo(msg, '❌ Только создатель группы может назначить владельца.');
+          return;
+        }
+      } catch (_) {
+        await replyTo(msg, '❌ Только создатель группы может назначить владельца.');
+        return;
+      }
+    }
+  }
+
+  if (targetRank === 95) {
+    const existingDeputy = Object.values(chat.users || {}).find((user) => {
+      return Number(user.adminRank || 0) === 95 && Number(user.id) !== Number(t.id);
+    });
+
+    if (existingDeputy) {
+      await replyTo(
+        msg,
+        '❌ <b>Заместитель владельца уже назначен</b>\n\n' +
+        '🛡 Текущий заместитель: ' + mention(existingDeputy) + '\n\n' +
+        'Сначала сними ранг с текущего заместителя, потом назначь нового.'
+      );
+      return;
+    }
+  }
+
+  if (targetRank !== 100 && targetRank >= actorRank) {
+    await replyTo(msg, `❌ Нельзя выдать ранг ≥ своему (${actorRank}).`);
+    return;
+  }
+
   const currentRank = Number(u.adminRank || 0);
 
   if (currentRank === Number(targetRank)) {
-    const ri = getRankInfo(targetRank);
-
-    await replyTo(
-      msg,
-      `⚠️ <b>Ранг уже выдан</b>\n\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n🎚 Текущий ранг: ${ri.emoji} <b>${ri.name}</b> (${targetRank})\n\nПовторно выдавать этот же ранг не нужно.`
-    );
-    return;
-  }
-
-  // Нельзя менять ранг равного/выше себя
-  const targetEffectiveRank = await getEffectiveRank(chatId, t.id);
-
-  if (targetEffectiveRank >= actorRank && Number(t.id) !== Number(msg.from.id)) {
-    await replyTo(msg, '❌ Нельзя изменить ранг у равного или выше себя.');
-    return;
-  }
-
-  if (Number(u.adminRank || 0) === Number(targetRank)) {
-    const ri = getRankInfo(targetRank);
-    await replyTo(msg, `⚠️ <b>Ранг уже выдан</b>\n\n👤 ${mention(u)}\n🎚 ${ri.emoji} <b>${ri.name}</b> (${targetRank})`);
-    return;
-  }
-
-  if (Number(u.adminRank || 0) === Number(targetRank)) {
     const ri = getRankInfo(targetRank);
 
     await replyTo(
@@ -809,6 +821,13 @@ async function quickRank(msg, args, targetRank, chatId) {
     return;
   }
 
+  const targetEffectiveRank = await getEffectiveRank(chatId, t.id);
+
+  if (targetEffectiveRank >= actorRank && Number(t.id) !== Number(msg.from.id)) {
+    await replyTo(msg, '❌ Нельзя изменить ранг у равного или выше себя.');
+    return;
+  }
+
   u.adminRank = targetRank;
   saveDB();
 
@@ -817,19 +836,29 @@ async function quickRank(msg, args, targetRank, chatId) {
   if (targetRank === 0) {
     await replyTo(
       msg,
-      `👤 <b>Ранг снят</b>\n\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n📉 Теперь обычный пользователь\n👮 ${esc(msg.from.first_name)}`
+      `👤 <b>Ранг снят</b>
+
+👤 ${mention(u)}
+🆔 <code>${t.id}</code>
+📉 Теперь обычный пользователь
+👮 ${esc(msg.from.first_name)}`
     );
   } else {
     await replyTo(
       msg,
-      `${ri.emoji} <b>Ранг выдан</b>\n\n👤 ${mention(u)}\n🆔 <code>${t.id}</code>\n🎚 ${ri.emoji} <b>${ri.name}</b> (${targetRank})\n👮 ${esc(msg.from.first_name)}`
+      `${ri.emoji} <b>Ранг выдан</b>
+
+👤 ${mention(u)}
+🆔 <code>${t.id}</code>
+🎚 ${ri.emoji} <b>${ri.name}</b> (${targetRank})
+👮 ${esc(msg.from.first_name)}`
     );
   }
 
   await sendLog(chatId, `🎚 Ранг ${ri.name} (${targetRank}) → ${mention(u)} | ${msg.from.first_name}`);
 }
 
-// ── ACHIEVEMENTS ──────────────────────────────────────────────────
+// ── ACHIEVEMENTS// ── ACHIEVEMENTS ──────────────────────────────────────────────────
 const ACHIEVEMENTS = [
   { id: 'msg100',  emoji: '💬', label: '100 сообщений',         reward: 300,  check: u => u.messages >= 100   },
   { id: 'msg500',  emoji: '🔥', label: '500 сообщений',         reward: 1000, check: u => u.messages >= 500   },
@@ -2563,6 +2592,42 @@ async function handleCommand(cmd, msg, args, argText) {
       );
 
       return;
+    }
+
+    if (Number(u.adminRank || 0) === Number(nr)) {
+      const ri = getRankInfo(nr);
+
+      await replyTo(
+        msg,
+        `⚠️ <b>Ранг уже выдан</b>
+
+👤 ${mention(u)}
+🆔 <code>${t.id}</code>
+🎚 Текущий ранг: ${ri.emoji} <b>${ri.name}</b> (${nr})
+
+Повторно выдавать этот же ранг не нужно.`
+      );
+
+      return;
+    }
+
+    if (nr === 100 || nr === 95) {
+      const existing = Object.values(getChat(chatId).users || {}).find((user) => {
+        return Number(user.adminRank || 0) === Number(nr) && Number(user.id) !== Number(t.id);
+      });
+
+      if (existing) {
+        const ri = getRankInfo(nr);
+
+        await replyTo(
+          msg,
+          '❌ <b>' + ri.name + ' уже назначен</b>\n\n' +
+          ri.emoji + ' Текущий пользователь: ' + mention(existing) + '\n\n' +
+          'Сначала сними этот ранг с текущего пользователя.'
+        );
+
+        return;
+      }
     }
 
     u.adminRank = nr;
