@@ -1531,7 +1531,7 @@ bot.onText(/^(\/start|\/help|начать|помощь)$/i, async (msg) => {
 
 
 // ======================================================
-// RELATIONSHIP REQUEST FIX V2
+// RELATIONSHIP REQUEST FIX V2 DISABLED
 // Отношения через reply / @username / TG ID
 // ======================================================
 
@@ -1717,15 +1717,6 @@ async function relFixStartRequest(msg, rawArg) {
   }
 }
 
-// Ловим отношения отдельным обработчиком, чтобы не зависеть от старого parseCommand
-bot.onText(/^\/?(?:отношения|отношение|любовь|love)(?:@[a-zA-Z0-9_]+)?(?:\s+(.+))?$/i, async (msg, match) => {
-  if (!msg.from || msg.from.is_bot) return;
-  if (!isGroup(msg)) return;
-
-  const rawArg = match && match[1] ? match[1].trim() : '';
-
-  await relFixStartRequest(msg, rawArg);
-});
 
 
 
@@ -1822,6 +1813,28 @@ async function finalRelFindTarget(msg, argText = '') {
 
 async function finalRelationshipRequest(msg, argText = '') {
   try {
+    // RELATIONSHIP MESSAGE DEDUPE
+    const chatForDedupe = getChat(msg.chat.id, msg.chat.title, msg.chat.type);
+    if (!chatForDedupe.relationshipMessageLocks) chatForDedupe.relationshipMessageLocks = {};
+
+    const lockKey = String(msg.message_id);
+
+    if (chatForDedupe.relationshipMessageLocks[lockKey]) {
+      return true;
+    }
+
+    chatForDedupe.relationshipMessageLocks[lockKey] = Date.now();
+
+    const lockIds = Object.keys(chatForDedupe.relationshipMessageLocks);
+    if (lockIds.length > 300) {
+      lockIds
+        .sort((a, b) => chatForDedupe.relationshipMessageLocks[a] - chatForDedupe.relationshipMessageLocks[b])
+        .slice(0, lockIds.length - 300)
+        .forEach((id) => delete chatForDedupe.relationshipMessageLocks[id]);
+    }
+
+    saveDB();
+
     if (!isGroup(msg)) return;
 
     const chatId = msg.chat.id;
