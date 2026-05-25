@@ -1,0 +1,323 @@
+﻿
+  advancedSecurity.js:185:}
+  advancedSecurity.js:186:
+  advancedSecurity.js:187:async function kickUser(ctx, userId) {
+  advancedSecurity.js:188:  try {
+> advancedSecurity.js:189:    await ctx.telegram.banChatMember(ctx.chat.id, userId);
+> advancedSecurity.js:190:    await ctx.telegram.unbanChatMember(ctx.chat.id, userId);
+  advancedSecurity.js:191:  } catch (error) {
+  advancedSecurity.js:192:    console.error("Ошибка кика:", error.message);
+  advancedSecurity.js:193:  }
+  advancedSecurity.js:194:}
+  advancedSecurity.js:195:
+  advancedSecurity.js:196:function hasLink(text) {
+  advancedSecurity.js:197:  const value = normalizeText(text);
+  advancedSecurity.js:198:
+  advancedSecurity.js:293:      for (const member of members) {
+  advancedSecurity.js:294:        if (member.id === ctx.botInfo?.id) continue;
+  advancedSecurity.js:295:
+  advancedSecurity.js:296:        if (member.is_bot && settings.antibot_enabled) {
+> advancedSecurity.js:297:          await ctx.telegram.banChatMember(ctx.chat.id, member.id);
+  advancedSecurity.js:298:          saveLog(ctx.chat.id, member.id, "BOT_BAN", "Новый бот был автоматически забанен");
+  advancedSecurity.js:299:
+  advancedSecurity.js:300:          await ctx.reply(`🤖 Бот ${userName(member)} автоматически забанен.`);
+  advancedSecurity.js:301:          continue;
+  advancedSecurity.js:302:        }
+  advancedSecurity.js:303:
+  advancedSecurity.js:304:        if (!member.is_bot && settings.captcha_enabled) {
+  advancedSecurity.js:305:          const captcha = generateCaptcha();
+  chatTools.js:39:          ? ""
+  chatTools.js:40:          : `<b>🛡 Модерация:</b>\n` +
+  chatTools.js:41:            `/mute или /мут — замутить\n` +
+  chatTools.js:42:            `/unmute или /размут — снять мут\n` +
+> chatTools.js:43:            `/ban или /бан — забанить\n` +
+> chatTools.js:44:            `/unban или /разбан — разбанить\n` +
+  chatTools.js:45:            `/kick или /кик — выгнать\n` +
+  chatTools.js:46:            `/warn или /пред — предупреждение\n` +
+  chatTools.js:47:            `/warnings — посмотреть предупреждения\n` +
+  chatTools.js:48:            `/clearwarns — сбросить предупреждения\n` +
+  chatTools.js:49:            `/del — удалить сообщение ответом\n` +
+  chatTools.js:50:            `/modlog — лог модерации\n\n` +
+  chatTools.js:51:
+  chatTools.js:52:            `<b>📢 Созыв:</b>\n` +
+  commandDocs.js:55:        ["/clearwarns", "очистить варны"],
+  commandDocs.js:56:        ["/mute", "выдать мут"],
+  commandDocs.js:57:        ["/unmute", "снять мут"],
+  commandDocs.js:58:        ["/kick", "кикнуть"],
+> commandDocs.js:59:        ["/ban", "забанить"],
+> commandDocs.js:60:        ["/unban", "разбанить"],
+  commandDocs.js:61:        ["/modlog", "лог модерации"],
+  commandDocs.js:62:      ],
+  commandDocs.js:63:    },
+  commandDocs.js:64:
+  commandDocs.js:65:    security: {
+  commandDocs.js:66:      title: "🧩 Защита",
+  commandDocs.js:67:      commands: [
+  commandDocs.js:68:        ["/security", "настройки защиты"],
+  index.before-username-unban.js:757:
+  index.before-username-unban.js:758:  const reason = ctx.message.text.replace("/ban", "").trim() || "без причины";
+  index.before-username-unban.js:759:
+  index.before-username-unban.js:760:  try {
+> index.before-username-unban.js:761:    await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+  index.before-username-unban.js:762:
+  index.before-username-unban.js:763:    await ctx.reply(
+  index.before-username-unban.js:764:      `🚫 <b>Пользователь забанен</b>\n\n👤 ${userMention(target)}\n📌 Причина: <b>${escapeHtml(reason)}</b>`,
+  index.before-username-unban.js:765:      { parse_mode: "HTML" }
+  index.before-username-unban.js:766:    );
+  index.before-username-unban.js:767:  } catch (error) {
+  index.before-username-unban.js:768:    console.error(error);
+> index.before-username-unban.js:769:    await ctx.reply("❌ Не получилось забанить. Проверь права бота.");
+  index.before-username-unban.js:770:  }
+  index.before-username-unban.js:771:});
+  index.before-username-unban.js:772:
+  index.before-username-unban.js:773:bot.command("kick", async (ctx) => {
+  index.before-username-unban.js:774:  if (!(await isAdmin(ctx, ctx.from.id))) {
+  index.before-username-unban.js:775:    return ctx.reply("❌ Команда только для администрации.");
+  index.before-username-unban.js:776:  }
+  index.before-username-unban.js:777:
+  index.before-username-unban.js:780:
+  index.before-username-unban.js:781:  const reason = ctx.message.text.replace("/kick", "").trim() || "без причины";
+  index.before-username-unban.js:782:
+  index.before-username-unban.js:783:  try {
+> index.before-username-unban.js:784:    await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+> index.before-username-unban.js:785:    await ctx.telegram.unbanChatMember(ctx.chat.id, target.id);
+  index.before-username-unban.js:786:
+  index.before-username-unban.js:787:    await ctx.reply(
+  index.before-username-unban.js:788:      `👢 <b>Пользователь кикнут</b>\n\n👤 ${userMention(target)}\n📌 Причина: <b>${escapeHtml(reason)}</b>`,
+  index.before-username-unban.js:789:      { parse_mode: "HTML" }
+  index.before-username-unban.js:790:    );
+  index.before-username-unban.js:791:  } catch (error) {
+  index.before-username-unban.js:792:    console.error(error);
+  index.before-username-unban.js:793:    await ctx.reply("❌ Не получилось кикнуть. Проверь права бота.");
+  index.js:757:
+  index.js:758:  const reason = ctx.message.text.replace("/ban", "").trim() || "без причины";
+  index.js:759:
+  index.js:760:  try {
+> index.js:761:    await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+  index.js:762:
+  index.js:763:    await ctx.reply(
+  index.js:764:      `🚫 <b>Пользователь забанен</b>\n\n👤 ${userMention(target)}\n📌 Причина: <b>${escapeHtml(reason)}</b>`,
+  index.js:765:      { parse_mode: "HTML" }
+  index.js:766:    );
+  index.js:767:  } catch (error) {
+  index.js:768:    console.error(error);
+> index.js:769:    await ctx.reply("❌ Не получилось забанить. Проверь права бота.");
+  index.js:770:  }
+  index.js:771:});
+  index.js:772:
+  index.js:773:bot.command("kick", async (ctx) => {
+  index.js:774:  if (!(await isAdmin(ctx, ctx.from.id))) {
+  index.js:775:    return ctx.reply("❌ Команда только для администрации.");
+  index.js:776:  }
+  index.js:777:
+  index.js:780:
+  index.js:781:  const reason = ctx.message.text.replace("/kick", "").trim() || "без причины";
+  index.js:782:
+  index.js:783:  try {
+> index.js:784:    await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+> index.js:785:    await ctx.telegram.unbanChatMember(ctx.chat.id, target.id);
+  index.js:786:
+  index.js:787:    await ctx.reply(
+  index.js:788:      `👢 <b>Пользователь кикнут</b>\n\n👤 ${userMention(target)}\n📌 Причина: <b>${escapeHtml(reason)}</b>`,
+  index.js:789:      { parse_mode: "HTML" }
+  index.js:790:    );
+  index.js:791:  } catch (error) {
+  index.js:792:    console.error(error);
+  index.js:793:    await ctx.reply("❌ Не получилось кикнуть. Проверь права бота.");
+  moderation.js:204:    if (!target) return ctx.reply('⚠️ Укажи пользователя.');
+  moderation.js:205:
+  moderation.js:206:    // *** ЗАЩИТА АДМИНИСТРАТОРОВ ***
+  moderation.js:207:    if (await isUserAdmin(ctx, target.id)) {
+> moderation.js:208:      return ctx.reply('🛡 Нельзя забанить администратора или владельца чата.');
+  moderation.js:209:    }
+  moderation.js:210:
+  moderation.js:211:    try {
+> moderation.js:212:      await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+  moderation.js:213:      upsertUser(target, ctx.chat.id);
+  moderation.js:214:      logAction(ctx.chat.id, target.id, 'ban', null, ctx.from.id);
+  moderation.js:215:      await ctx.reply(`🔨 <b>${formatName(target)}</b> забанен.`, { parse_mode: 'HTML' });
+  moderation.js:216:    } catch (err) {
+  moderation.js:217:      console.error('[ban]', err.message);
+> moderation.js:218:      await ctx.reply('❌ Не удалось забанить. Проверь права бота.');
+  moderation.js:219:    }
+  moderation.js:220:  });
+  moderation.js:221:
+  moderation.js:222:  // ── /unban [@user|reply] ──────────────────────────────────────
+  moderation.js:223:  bot.command(['unban', 'разбан'], async (ctx) => {
+  moderation.js:224:    if (ctx.chat.type === 'private') return;
+  moderation.js:225:    if (!await isUserAdmin(ctx, ctx.from.id)) {
+  moderation.js:226:      return ctx.reply('⛔ Только администраторы могут разбанивать.');
+  moderation.js:229:    const target = await resolveTarget(ctx);
+  moderation.js:230:    if (!target) return ctx.reply('⚠️ Укажи пользователя.');
+  moderation.js:231:
+  moderation.js:232:    try {
+> moderation.js:233:      await ctx.telegram.unbanChatMember(ctx.chat.id, target.id);
+  moderation.js:234:      logAction(ctx.chat.id, target.id, 'unban', null, ctx.from.id);
+  moderation.js:235:      await ctx.reply(`✅ <b>${formatName(target)}</b> разбанен.`, { parse_mode: 'HTML' });
+  moderation.js:236:    } catch (err) {
+  moderation.js:237:      console.error('[unban]', err.message);
+> moderation.js:238:      await ctx.reply('❌ Не удалось разбанить.');
+  moderation.js:239:    }
+  moderation.js:240:  });
+  moderation.js:241:
+  moderation.js:242:  // ── /kick [@user|reply] ───────────────────────────────────────
+  moderation.js:243:  bot.command(['kick', 'кик'], async (ctx) => {
+  moderation.js:244:    if (ctx.chat.type === 'private') return;
+  moderation.js:245:    if (!await isUserAdmin(ctx, ctx.from.id)) {
+  moderation.js:246:      return ctx.reply('⛔ Только администраторы могут кикать.');
+  moderation.js:255:    }
+  moderation.js:256:
+  moderation.js:257:    try {
+  moderation.js:258:      // Кик = бан + немедленный разбан
+> moderation.js:259:      await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+> moderation.js:260:      await ctx.telegram.unbanChatMember(ctx.chat.id, target.id);
+  moderation.js:261:      logAction(ctx.chat.id, target.id, 'kick', null, ctx.from.id);
+  moderation.js:262:      await ctx.reply(`👢 <b>${formatName(target)}</b> выгнан из чата.`, { parse_mode: 'HTML' });
+  moderation.js:263:    } catch (err) {
+  moderation.js:264:      console.error('[kick]', err.message);
+  moderation.js:265:      await ctx.reply('❌ Не удалось кикнуть. Проверь права бота.');
+  moderation.js:266:    }
+  moderation.js:267:  });
+  moderation.js:268:
+  moderation.js:289:
+  moderation.js:290:    if (count >= MAX_WARNINGS) {
+  moderation.js:291:      // Автобан при достижении лимита
+  moderation.js:292:      try {
+> moderation.js:293:        await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+  moderation.js:294:        resetWarnings(target.id, ctx.chat.id);
+  moderation.js:295:        logAction(ctx.chat.id, target.id, 'autoban', `${MAX_WARNINGS} предупреждений`, ctx.from.id);
+  moderation.js:296:        return ctx.reply(
+  moderation.js:297:          `🔨 <b>${formatName(target)}</b> получил ${count}/${MAX_WARNINGS} предупреждений и автоматически забанен.\n📌 Причина: ${reason}`,
+  moderation.js:298:          { parse_mode: 'HTML' }
+  moderation.js:299:        );
+> moderation.js:300:      } catch { /* если не смогли забанить — сообщаем */ }
+  moderation.js:301:    }
+  moderation.js:302:
+  moderation.js:303:    logAction(ctx.chat.id, target.id, 'warn', reason, ctx.from.id);
+  moderation.js:304:    await ctx.reply(
+  moderation.js:305:      `⚠️ <b>${formatName(target)}</b> получает предупреждение ${count}/${MAX_WARNINGS}.\n📌 Причина: ${reason}`,
+  moderation.js:306:      { parse_mode: 'HTML' }
+  moderation.js:307:    );
+  moderation.js:308:  });
+  removeUser.js:140:  const target = getTargetFromReplyOrArgs(ctx, args);
+  removeUser.js:141:
+  removeUser.js:142:  if (!target) {
+  removeUser.js:143:    return ctx.reply(
+> removeUser.js:144:      "🛡 Чтобы забанить пользователя:\n\n" +
+  removeUser.js:145:      "1) Ответь на его сообщение командой:\n" +
+  removeUser.js:146:      "/ban причина\n" +
+  removeUser.js:147:      "или\n" +
+  removeUser.js:148:      "/бан причина\n\n" +
+> removeUser.js:149:      "2) Или укажи ID:\n" +
+  removeUser.js:150:      "/ban 123456789 причина"
+  removeUser.js:151:    );
+  removeUser.js:152:  }
+  removeUser.js:153:
+  removeUser.js:154:  if (target.id === ctx.from.id) {
+  removeUser.js:155:    return ctx.reply("🤨 Самого себя банить не надо.");
+  removeUser.js:156:  }
+  removeUser.js:157:
+  removeUser.js:163:
+  removeUser.js:164:  const reason = getReason(args, target.fromReply);
+  removeUser.js:165:
+  removeUser.js:166:  try {
+> removeUser.js:167:    await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+  removeUser.js:168:
+  removeUser.js:169:    removeFromLocalDb(target.id, ctx.chat.id);
+  removeUser.js:170:    logModAction(ctx.chat.id, target.id, "ban", reason, ctx.from.id);
+  removeUser.js:171:
+  removeUser.js:172:    return ctx.reply(
+  removeUser.js:173:      `🔨 <b>${formatUser(target)} забанен и удалён из группы.</b>\n\n` +
+  removeUser.js:174:      `📝 <b>Причина:</b> ${reason}`,
+  removeUser.js:175:      { parse_mode: "HTML" }
+  removeUser.js:177:  } catch (err) {
+  removeUser.js:178:    console.error("[removeUser:ban]", err.message);
+  removeUser.js:179:
+  removeUser.js:180:    return ctx.reply(
+> removeUser.js:181:      "❌ Не получилось забанить пользователя.\n\n" +
+  removeUser.js:182:      "Проверь, что бот админ и у него есть право «Блокировать пользователей»."
+  removeUser.js:183:    );
+  removeUser.js:184:  }
+  removeUser.js:185:}
+  removeUser.js:186:
+  removeUser.js:187:async function kickUser(ctx) {
+  removeUser.js:188:  const ok = await baseChecks(ctx);
+  removeUser.js:189:  if (!ok) return;
+  removeUser.js:197:      "1) Ответь на его сообщение командой:\n" +
+  removeUser.js:198:      "/kick причина\n" +
+  removeUser.js:199:      "или\n" +
+  removeUser.js:200:      "/кик причина\n\n" +
+> removeUser.js:201:      "2) Или укажи ID:\n" +
+  removeUser.js:202:      "/kick 123456789 причина"
+  removeUser.js:203:    );
+  removeUser.js:204:  }
+  removeUser.js:205:
+  removeUser.js:206:  if (target.id === ctx.from.id) {
+  removeUser.js:207:    return ctx.reply("🤨 Самого себя кикать не надо.");
+  removeUser.js:208:  }
+  removeUser.js:209:
+  removeUser.js:216:  const reason = getReason(args, target.fromReply);
+  removeUser.js:217:
+  removeUser.js:218:  try {
+  removeUser.js:219:    // Telegram не имеет отдельного kick.
+> removeUser.js:220:    // Правильный кик = временно banChatMember + сразу unbanChatMember.
+  removeUser.js:221:    // Пользователь удаляется из группы, но сможет вступить обратно.
+> removeUser.js:222:    await ctx.telegram.banChatMember(ctx.chat.id, target.id);
+> removeUser.js:223:    await ctx.telegram.unbanChatMember(ctx.chat.id, target.id, {
+  removeUser.js:224:      only_if_banned: true,
+  removeUser.js:225:    });
+  removeUser.js:226:
+  removeUser.js:227:    removeFromLocalDb(target.id, ctx.chat.id);
+  removeUser.js:228:    logModAction(ctx.chat.id, target.id, "kick", reason, ctx.from.id);
+  removeUser.js:229:
+  removeUser.js:230:    return ctx.reply(
+  removeUser.js:231:      `👢 <b>${formatUser(target)} кикнут из группы.</b>\n\n` +
+  removeUser.js:250:  const userId = args[0];
+  removeUser.js:251:
+  removeUser.js:252:  if (!userId || !/^-?\d+$/.test(userId)) {
+  removeUser.js:253:    return ctx.reply(
+> removeUser.js:254:      "🔓 Чтобы разбанить пользователя, укажи его ID:\n\n" +
+  removeUser.js:255:      "/unban 123456789\n" +
+  removeUser.js:256:      "или\n" +
+  removeUser.js:257:      "/разбан 123456789"
+  removeUser.js:258:    );
+  removeUser.js:259:  }
+  removeUser.js:260:
+  removeUser.js:261:  try {
+> removeUser.js:262:    await ctx.telegram.unbanChatMember(ctx.chat.id, Number(userId), {
+  removeUser.js:263:      only_if_banned: true,
+  removeUser.js:264:    });
+  removeUser.js:265:
+  removeUser.js:266:    logModAction(ctx.chat.id, Number(userId), "unban", "Разбан", ctx.from.id);
+  removeUser.js:267:
+  removeUser.js:268:    return ctx.reply(`🔓 Пользователь <code>${userId}</code> разбанен.`, {
+  removeUser.js:269:      parse_mode: "HTML",
+  removeUser.js:270:    });
+  removeUser.js:271:  } catch (err) {
+  removeUser.js:272:    console.error("[removeUser:unban]", err.message);
+> removeUser.js:273:    return ctx.reply("❌ Не получилось разбанить пользователя. Проверь ID и права бота.");
+  removeUser.js:274:  }
+  removeUser.js:275:}
+  removeUser.js:276:
+  removeUser.js:277:function register(bot) {
+  removeUser.js:278:  bot.command(["ban", "бан"], banUser);
+  removeUser.js:279:  bot.command(["kick", "кик"], kickUser);
+  removeUser.js:280:  bot.command(["unban", "разбан"], unbanUser);
+  removeUser.js:281:
+  ruCommands.js:45:  "замутить": "mute",
+  ruCommands.js:46:  "размут": "unmute",
+  ruCommands.js:47:  "размутить": "unmute",
+  ruCommands.js:48:  "бан": "ban",
+> ruCommands.js:49:  "забанить": "ban",
+  ruCommands.js:50:  "разбан": "unban",
+> ruCommands.js:51:  "разбанить": "unban",
+  ruCommands.js:52:  "кик": "kick",
+  ruCommands.js:53:  "кикнуть": "kick",
+  ruCommands.js:54:  "пред": "warn",
+  ruCommands.js:55:  "варн": "warn",
+  ruCommands.js:56:  "предупреждение": "warn",
+  ruCommands.js:57:  "преды": "warnings",
+  ruCommands.js:58:  "варны": "warnings",
+  ruCommands.js:59:  "сброспред": "clearwarns",
+
+

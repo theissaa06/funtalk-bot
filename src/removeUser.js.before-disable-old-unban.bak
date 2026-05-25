@@ -289,4 +289,3 @@ function register(bot) {
 }
 
 module.exports = { register };
-
