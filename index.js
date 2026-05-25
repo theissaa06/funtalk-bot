@@ -786,6 +786,12 @@ async function quickRank(msg, args, targetRank, chatId) {
     return;
   }
 
+  if (Number(u.adminRank || 0) === Number(targetRank)) {
+    const ri = getRankInfo(targetRank);
+    await replyTo(msg, `⚠️ <b>Ранг уже выдан</b>\n\n👤 ${mention(u)}\n🎚 ${ri.emoji} <b>${ri.name}</b> (${targetRank})`);
+    return;
+  }
+
   u.adminRank = targetRank;
   saveDB();
 
