@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const dbPath = process.env.DATABASE_PATH || "./data/bot.sqlite";
+const dbPath = process.env.DATABASE_PATH || path.join(__dirname, '../data/bot.sqlite');
 
 function isGroup(ctx) {
   const type = ctx.chat?.type;
@@ -114,15 +114,15 @@ function registerSystemTools(bot, helpers) {
 
   bot.command("modules", async (ctx) => {
     const modules = [
-      ["moderation.js", "./src/moderation.js"],
-      ["security.js", "./src/security.js"],
-      ["advancedSecurity.js", "./src/advancedSecurity.js"],
-      ["levels.js", "./src/levels.js"],
-      ["economy.js", "./src/economy.js"],
-      ["chatTools.js", "./src/chatTools.js"],
-      ["autoResponder.js", "./src/autoResponder.js"],
-      ["systemTools.js", "./src/systemTools.js"],
-      ["phrases.js", "./src/data/phrases.js"],
+      ["moderation.js", path.join(__dirname, "moderation.js")],
+      ["security.js", path.join(__dirname, "security.js")],
+      ["advancedSecurity.js", path.join(__dirname, "advancedSecurity.js")],
+      ["levels.js", path.join(__dirname, "levels.js")],
+      ["economy.js", path.join(__dirname, "economy.js")],
+      ["chatTools.js", path.join(__dirname, "chatTools.js")],
+      ["autoResponder.js", path.join(__dirname, "autoResponder.js")],
+      ["systemTools.js", path.join(__dirname, "systemTools.js")],
+      ["phrases.js", path.join(__dirname, "data/phrases.js")],
     ];
 
     const text = modules
@@ -141,7 +141,7 @@ function registerSystemTools(bot, helpers) {
         `Файл: ${db.exists ? "✅ найден" : "❌ не найден"}\n` +
         `Путь: ${db.path}\n` +
         `Размер: ${db.size} байт\n\n` +
-        `DATABASE_PATH: ${process.env.DATABASE_PATH || "не указан, используется ./data/bot.sqlite"}`
+        `DATABASE_PATH: ${process.env.DATABASE_PATH || "не указан, используется ../data/bot.sqlite"}`
     );
   });
 
@@ -193,15 +193,15 @@ function registerSystemTools(bot, helpers) {
     const isGroupChat = isGroup(ctx);
 
     const files = {
-      moderation: checkFile("./src/moderation.js"),
-      security: checkFile("./src/security.js"),
-      advancedSecurity: checkFile("./src/advancedSecurity.js"),
-      levels: checkFile("./src/levels.js"),
-      economy: checkFile("./src/economy.js"),
-      chatTools: checkFile("./src/chatTools.js"),
-      autoResponder: checkFile("./src/autoResponder.js"),
-      systemTools: checkFile("./src/systemTools.js"),
-      phrases: checkFile("./src/data/phrases.js"),
+      moderation: checkFile(path.join(__dirname, "moderation.js")),
+      security: checkFile(path.join(__dirname, "security.js")),
+      advancedSecurity: checkFile(path.join(__dirname, "advancedSecurity.js")),
+      levels: checkFile(path.join(__dirname, "levels.js")),
+      economy: checkFile(path.join(__dirname, "economy.js")),
+      chatTools: checkFile(path.join(__dirname, "chatTools.js")),
+      autoResponder: checkFile(path.join(__dirname, "autoResponder.js")),
+      systemTools: checkFile(path.join(__dirname, "systemTools.js")),
+      phrases: checkFile(path.join(__dirname, "data/phrases.js")),
     };
 
     const packages = {
