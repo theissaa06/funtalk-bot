@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
-const dbPath = path.resolve(process.env.DATABASE_URL || './database.json');
+const dbPath = path.resolve(process.env.DATABASE_URL || path.join(__dirname, '../../data/database.json'));
 
 const defaultData = {
   counters: {

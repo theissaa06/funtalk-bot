@@ -3,7 +3,7 @@
 const __tgFs = require("fs");
 const __tgPath = require("path");
 
-const __tgDataDir = __tgPath.join(process.cwd(), "data");
+const __tgDataDir = __tgPath.join(__dirname, "../data");
 const __tgUsersDb = __tgPath.join(__tgDataDir, "tg-users.json");
 
 if (!__tgFs.existsSync(__tgDataDir)) {

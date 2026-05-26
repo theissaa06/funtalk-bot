@@ -10,6 +10,12 @@
 //   db.prepare(sql).run(...params)
 //   db.exec(sql)          — только CREATE TABLE (игнорируется)
 //   db.pragma(...)        — игнорируется
+//
+// Прямые функции (без SQL):
+//   db.rememberUser(user, chatId)        — запомнить участника
+//   db.findUser(chatId, query)           — найти по id/username
+//   db.setUserStatus(userId, chatId, s)  — active/banned/muted
+//   db.getChatMembers(chatId)            — все участники чата
 // ============================================================
 
 const fs   = require('fs');
@@ -17,7 +23,7 @@ const path = require('path');
 require('dotenv').config();
 
 // ── Путь к файлу базы ─────────────────────────────────────────
-const dataDir = path.resolve('./data');
+const dataDir = path.resolve(path.join(__dirname, '../data'));
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const dbPath = process.env.DB_PATH
@@ -48,7 +54,6 @@ function load() {
     }
     const raw = fs.readFileSync(dbPath, 'utf8');
     const data = JSON.parse(raw);
-    // Добавляем недостающие таблицы
     for (const key of Object.keys(DEFAULT_DB)) {
       if (!(key in data)) data[key] = Array.isArray(DEFAULT_DB[key]) ? [] : {};
     }
@@ -76,16 +81,104 @@ function nextId(data, table) {
   return data._counters[table];
 }
 
-// ── Парсер SQL-запросов ───────────────────────────────────────
-// Поддерживает только те запросы, которые реально используются в боте.
+// ══════════════════════════════════════════════════════════════
+// ПРЯМЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С УЧАСТНИКАМИ
+// ══════════════════════════════════════════════════════════════
 
+/**
+ * Запомнить/обновить участника чата.
+ * НИКОГДА не удаляет запись — только обновляет поля.
+ */
+function rememberUser(user, chatId) {
+  if (!user || !user.id || !chatId) return null;
+  const data = load();
+  if (!data.users) data.users = [];
+
+  let row = data.users.find(
+    u => u.id === user.id && String(u.chat_id) === String(chatId)
+  );
+
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+  if (row) {
+    if (user.username  !== undefined) row.username   = user.username   || null;
+    if (user.first_name !== undefined) row.first_name = user.first_name || null;
+    if (user.last_name  !== undefined) row.last_name  = user.last_name  || null;
+    row.last_active = now;
+  } else {
+    row = {
+      id:          user.id,
+      chat_id:     chatId,
+      username:    user.username   || null,
+      first_name:  user.first_name || null,
+      last_name:   user.last_name  || null,
+      xp:          0,
+      level:       1,
+      coins:       0,
+      warnings:    0,
+      muted_until: 0,
+      status:      'active',
+      joined_at:   now,
+      last_active: now,
+    };
+    data.users.push(row);
+  }
+
+  save(data);
+  return row;
+}
+
+/**
+ * Найти участника чата по ID или @username.
+ * Работает даже если пользователь уже покинул/забанен.
+ */
+function findUser(chatId, query) {
+  if (!query || !chatId) return null;
+  const data = load();
+  const users = (data.users || []).filter(
+    u => String(u.chat_id) === String(chatId)
+  );
+
+  const q = String(query).replace(/^@/, '').toLowerCase().trim();
+
+  // По числовому ID
+  if (/^\d+$/.test(q)) {
+    const byId = users.find(u => String(u.id) === q);
+    if (byId) return byId;
+  }
+
+  // По username
+  return users.find(u => u.username && u.username.toLowerCase() === q) || null;
+}
+
+/**
+ * Установить статус участника: 'active' | 'banned' | 'muted'
+ */
+function setUserStatus(userId, chatId, status) {
+  const data = load();
+  const row = (data.users || []).find(
+    u => u.id === userId && String(u.chat_id) === String(chatId)
+  );
+  if (row) {
+    row.status = status;
+    save(data);
+  }
+}
+
+/**
+ * Получить всех участников чата (включая забаненных).
+ */
+function getChatMembers(chatId) {
+  const data = load();
+  return (data.users || []).filter(u => String(u.chat_id) === String(chatId));
+}
+
+// ── Парсер SQL-запросов ───────────────────────────────────────
 function parseSQL(sql) {
   const s = sql.trim();
 
-  // CREATE TABLE — игнорируем
   if (/^CREATE\s+TABLE/i.test(s)) return { type: 'CREATE_TABLE' };
 
-  // INSERT INTO table (...) VALUES (...)
   const insertMatch = s.match(/^INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
   if (insertMatch) {
     return {
@@ -95,7 +188,6 @@ function parseSQL(sql) {
     };
   }
 
-  // INSERT OR IGNORE INTO table (col) VALUES (?)
   const insertIgnoreMatch = s.match(/^INSERT\s+OR\s+IGNORE\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i);
   if (insertIgnoreMatch) {
     return {
@@ -105,7 +197,6 @@ function parseSQL(sql) {
     };
   }
 
-  // SELECT * FROM table WHERE ...
   const selectMatch = s.match(/^SELECT\s+(.*?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(.+?))?(?:\s+LIMIT\s+(\d+))?$/i);
   if (selectMatch) {
     return {
@@ -118,7 +209,6 @@ function parseSQL(sql) {
     };
   }
 
-  // UPDATE table SET col = expr WHERE ...
   const updateMatch = s.match(/^UPDATE\s+(\w+)\s+SET\s+(.+?)\s+WHERE\s+(.+)$/i);
   if (updateMatch) {
     return {
@@ -129,7 +219,6 @@ function parseSQL(sql) {
     };
   }
 
-  // DELETE FROM table WHERE ...
   const deleteMatch = s.match(/^DELETE\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?$/i);
   if (deleteMatch) {
     return {
@@ -142,16 +231,12 @@ function parseSQL(sql) {
   return { type: 'UNKNOWN', sql: s };
 }
 
-// ── Вычислить WHERE-условие ───────────────────────────────────
 function matchWhere(row, whereClause, params) {
   if (!whereClause) return true;
-
-  // Разбиваем по AND
   const conditions = whereClause.split(/\s+AND\s+/i);
   let paramIdx = 0;
 
   for (const cond of conditions) {
-    // col = ?
     const eqMatch = cond.trim().match(/^(\w+)\s*=\s*\?$/i);
     if (eqMatch) {
       const col = eqMatch[1].toLowerCase();
@@ -159,8 +244,6 @@ function matchWhere(row, whereClause, params) {
       if (String(row[col]) !== String(val)) return false;
       continue;
     }
-
-    // lower(col) = ?
     const lowerMatch = cond.trim().match(/^lower\((\w+)\)\s*=\s*\?$/i);
     if (lowerMatch) {
       const col = lowerMatch[1].toLowerCase();
@@ -168,14 +251,10 @@ function matchWhere(row, whereClause, params) {
       if (String(row[col] || '').toLowerCase() !== String(val).toLowerCase()) return false;
       continue;
     }
-
-    // col IS NULL / col IS NOT NULL — пропускаем (не используется)
   }
-
   return true;
 }
 
-// ── Применить SET-выражение ───────────────────────────────────
 function applySet(row, setClause, params) {
   const assignments = setClause.split(',');
   let paramIdx = 0;
@@ -183,14 +262,9 @@ function applySet(row, setClause, params) {
   for (const assign of assignments) {
     const trimmed = assign.trim();
 
-    // col = ?
     const simpleMatch = trimmed.match(/^(\w+)\s*=\s*\?$/i);
-    if (simpleMatch) {
-      row[simpleMatch[1].toLowerCase()] = params[paramIdx++];
-      continue;
-    }
+    if (simpleMatch) { row[simpleMatch[1].toLowerCase()] = params[paramIdx++]; continue; }
 
-    // col = col + ?
     const addMatch = trimmed.match(/^(\w+)\s*=\s*(\w+)\s*\+\s*\?$/i);
     if (addMatch) {
       const col = addMatch[1].toLowerCase();
@@ -198,7 +272,6 @@ function applySet(row, setClause, params) {
       continue;
     }
 
-    // col = MAX(0, col - ?)
     const maxSubMatch = trimmed.match(/^(\w+)\s*=\s*MAX\s*\(\s*0\s*,\s*\w+\s*-\s*\?\s*\)$/i);
     if (maxSubMatch) {
       const col = maxSubMatch[1].toLowerCase();
@@ -206,7 +279,6 @@ function applySet(row, setClause, params) {
       continue;
     }
 
-    // col = col - ?
     const subMatch = trimmed.match(/^(\w+)\s*=\s*(\w+)\s*-\s*\?$/i);
     if (subMatch) {
       const col = subMatch[1].toLowerCase();
@@ -214,19 +286,14 @@ function applySet(row, setClause, params) {
       continue;
     }
 
-    // col = CURRENT_TIMESTAMP
     if (/^(\w+)\s*=\s*CURRENT_TIMESTAMP$/i.test(trimmed)) {
       const col = trimmed.split('=')[0].trim().toLowerCase();
       row[col] = new Date().toISOString().slice(0, 19).replace('T', ' ');
       continue;
     }
-
-    // col = col (no-op, e.g. username = excluded.username — ON CONFLICT)
-    // Пропускаем
   }
 }
 
-// ── Сортировка ────────────────────────────────────────────────
 function applyOrderBy(rows, orderBy) {
   if (!orderBy) return rows;
   const parts = orderBy.trim().split(/\s+/);
@@ -234,57 +301,42 @@ function applyOrderBy(rows, orderBy) {
   const dir   = (parts[1] || 'ASC').toUpperCase();
 
   return [...rows].sort((a, b) => {
-    const av = a[col];
-    const bv = b[col];
+    const av = a[col], bv = b[col];
     if (av == null && bv == null) return 0;
     if (av == null) return 1;
     if (bv == null) return -1;
-    if (typeof av === 'number' && typeof bv === 'number') {
-      return dir === 'DESC' ? bv - av : av - bv;
-    }
+    if (typeof av === 'number' && typeof bv === 'number') return dir === 'DESC' ? bv - av : av - bv;
     return dir === 'DESC'
       ? String(bv).localeCompare(String(av))
       : String(av).localeCompare(String(bv));
   });
 }
 
-// ── Дефолтные значения для новых строк ───────────────────────
 const TABLE_DEFAULTS = {
   users: {
-    xp: 0, level: 1, coins: 0, warnings: 0, muted_until: 0,
-    joined_at: () => new Date().toISOString().slice(0, 19).replace('T', ' '),
+    xp: 0, level: 1, coins: 0, warnings: 0, muted_until: 0, status: 'active',
+    joined_at:   () => new Date().toISOString().slice(0, 19).replace('T', ' '),
     last_active: () => new Date().toISOString().slice(0, 19).replace('T', ' '),
   },
-  warnings: {
-    created_at: () => new Date().toISOString().slice(0, 19).replace('T', ' '),
-  },
-  mod_log: {
-    created_at: () => new Date().toISOString().slice(0, 19).replace('T', ' '),
-  },
+  warnings:    { created_at: () => new Date().toISOString().slice(0, 19).replace('T', ' ') },
+  mod_log:     { created_at: () => new Date().toISOString().slice(0, 19).replace('T', ' ') },
   security_settings: {
     antilink_enabled: 1, antiflood_enabled: 1, badwords_enabled: 1,
     delete_violations: 1, automute_enabled: 1,
     flood_limit: 5, flood_seconds: 8, mute_minutes: 10,
   },
-  security_logs: {
-    created_at: () => Date.now(),
-  },
+  security_logs:              { created_at: () => Date.now() },
   advanced_security_settings: {
     captcha_enabled: 1, antibot_enabled: 1, smart_links_enabled: 1,
-    captcha_minutes: 3, captcha_attempts: 3,
-    updated_at: () => Date.now(),
+    captcha_minutes: 3, captcha_attempts: 3, updated_at: () => Date.now(),
   },
-  captcha_logs: {
-    created_at: () => Date.now(),
-  },
+  captcha_logs: { created_at: () => Date.now() },
 };
 
 function applyDefaults(table, row) {
   const defs = TABLE_DEFAULTS[table] || {};
   for (const [key, val] of Object.entries(defs)) {
-    if (!(key in row)) {
-      row[key] = typeof val === 'function' ? val() : val;
-    }
+    if (!(key in row)) row[key] = typeof val === 'function' ? val() : val;
   }
   return row;
 }
@@ -296,11 +348,9 @@ class Statement {
     this._sql    = sql;
   }
 
-  // Выполнить SELECT → вернуть первую строку или undefined
   get(...params) {
     const data = load();
     const p    = this._parsed;
-
     if (p.type === 'SELECT') {
       const table = data[p.table] || [];
       let rows = table.filter(row => matchWhere(row, p.where, params));
@@ -308,16 +358,13 @@ class Statement {
       if (p.limit) rows = rows.slice(0, p.limit);
       return rows[0] || undefined;
     }
-
     console.warn('[db.js] get() вызван для не-SELECT запроса:', this._sql);
     return undefined;
   }
 
-  // Выполнить SELECT → вернуть все строки
   all(...params) {
     const data = load();
     const p    = this._parsed;
-
     if (p.type === 'SELECT') {
       const table = data[p.table] || [];
       let rows = table.filter(row => matchWhere(row, p.where, params));
@@ -325,39 +372,31 @@ class Statement {
       if (p.limit) rows = rows.slice(0, p.limit);
       return rows;
     }
-
     console.warn('[db.js] all() вызван для не-SELECT запроса:', this._sql);
     return [];
   }
 
-  // Выполнить INSERT / UPDATE / DELETE → вернуть { changes, lastInsertRowid }
   run(...params) {
     const data = load();
     const p    = this._parsed;
     let changes = 0;
     let lastInsertRowid = null;
 
-    if (p.type === 'CREATE_TABLE') {
-      // Ничего не делаем
-      return { changes: 0, lastInsertRowid: null };
-    }
+    if (p.type === 'CREATE_TABLE') return { changes: 0, lastInsertRowid: null };
 
     if (p.type === 'INSERT' || p.type === 'INSERT_IGNORE') {
       if (!data[p.table]) data[p.table] = [];
 
-      // Строим объект из колонок и параметров
       const row = {};
       p.columns.forEach((col, i) => {
         row[col.toLowerCase()] = params[i] !== undefined ? params[i] : null;
       });
 
-      // ON CONFLICT(id) DO UPDATE — обновляем если id совпадает
       const isUpsert = /ON\s+CONFLICT/i.test(this._sql);
       if (isUpsert) {
         const idCol = p.columns[0].toLowerCase();
         const existing = data[p.table].find(r => String(r[idCol]) === String(row[idCol]));
         if (existing) {
-          // Применяем SET из ON CONFLICT ... DO UPDATE SET
           const conflictMatch = this._sql.match(/DO\s+UPDATE\s+SET\s+(.+)$/is);
           if (conflictMatch) {
             const setClauses = conflictMatch[1].split(',');
@@ -366,11 +405,8 @@ class Statement {
               if (m) {
                 existing[m[1].toLowerCase()] = row[m[2].toLowerCase()];
               } else {
-                // last_active = CURRENT_TIMESTAMP
                 const tsMatch = clause.trim().match(/^(\w+)\s*=\s*CURRENT_TIMESTAMP$/i);
-                if (tsMatch) {
-                  existing[tsMatch[1].toLowerCase()] = new Date().toISOString().slice(0, 19).replace('T', ' ');
-                }
+                if (tsMatch) existing[tsMatch[1].toLowerCase()] = new Date().toISOString().slice(0, 19).replace('T', ' ');
               }
             }
           }
@@ -379,16 +415,12 @@ class Statement {
         }
       }
 
-      // INSERT OR IGNORE — пропускаем если уже есть
       if (p.type === 'INSERT_IGNORE') {
         const idCol = p.columns[0].toLowerCase();
         const exists = data[p.table].some(r => String(r[idCol]) === String(row[idCol]));
-        if (exists) {
-          return { changes: 0, lastInsertRowid: null };
-        }
+        if (exists) return { changes: 0, lastInsertRowid: null };
       }
 
-      // Новая строка
       applyDefaults(p.table, row);
       if (!row.id) row.id = nextId(data, p.table);
       data[p.table].push(row);
@@ -400,17 +432,10 @@ class Statement {
 
     if (p.type === 'UPDATE') {
       if (!data[p.table]) data[p.table] = [];
-
-      // Разбиваем WHERE на части для подсчёта параметров SET
-      const setParams  = [];
-      const whereParams = [];
-
-      // Считаем кол-во ? в SET
-      const setClause = p.setClause;
-      const setCount  = (setClause.match(/\?/g) || []).length;
-
-      for (let i = 0; i < setCount; i++)   setParams.push(params[i]);
-      for (let i = setCount; i < params.length; i++) whereParams.push(params[i]);
+      const setClause   = p.setClause;
+      const setCount    = (setClause.match(/\?/g) || []).length;
+      const setParams   = params.slice(0, setCount);
+      const whereParams = params.slice(setCount);
 
       for (const row of data[p.table]) {
         if (matchWhere(row, p.where, whereParams)) {
@@ -418,7 +443,6 @@ class Statement {
           changes++;
         }
       }
-
       save(data);
       return { changes, lastInsertRowid: null };
     }
@@ -439,19 +463,15 @@ class Statement {
 
 // ── Публичный API ─────────────────────────────────────────────
 const db = {
-  prepare(sql) {
-    return new Statement(sql);
-  },
+  prepare(sql)  { return new Statement(sql); },
+  exec(sql)     { return this; },
+  pragma(str)   { return this; },
 
-  exec(sql) {
-    // CREATE TABLE — игнорируем (таблицы создаются автоматически)
-    return this;
-  },
-
-  pragma(str) {
-    // Игнорируем (WAL, foreign_keys и т.д.)
-    return this;
-  },
+  // Прямые функции для работы с участниками
+  rememberUser,
+  findUser,
+  setUserStatus,
+  getChatMembers,
 };
 
 console.log(`✅ JSON-база подключена: ${dbPath}`);
