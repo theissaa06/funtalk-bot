@@ -83,43 +83,8 @@ function getTelegramTargetText(msg) {
 
 const fs = require("fs");
 const path = require("path");
-const Database = require("better-sqlite3");
 
-const dbPath = process.env.DATABASE_PATH || "./data/bot.sqlite";
-const dbDir = path.dirname(dbPath);
-
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
-
-const db = new Database(dbPath);
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS advanced_security_settings (
-  chat_id TEXT PRIMARY KEY,
-  captcha_enabled INTEGER DEFAULT 1,
-  antibot_enabled INTEGER DEFAULT 1,
-  smart_links_enabled INTEGER DEFAULT 1,
-  captcha_minutes INTEGER DEFAULT 3,
-  captcha_attempts INTEGER DEFAULT 3,
-  updated_at INTEGER
-);
-
-CREATE TABLE IF NOT EXISTS link_whitelist (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  chat_id TEXT NOT NULL,
-  domain TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS captcha_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  chat_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  action TEXT NOT NULL,
-  details TEXT,
-  created_at INTEGER NOT NULL
-);
-`);
+const db = require("./db");
 
 const captchaSessions = new Map();
 
@@ -777,70 +742,45 @@ function registerAdvancedSecurity(bot, helpers) {
 
     return safeReply(ctx, "🧩 Лог расширенной защиты:\n\n" + text);
   });
-}
 
-module.exports = {
-  registerAdvancedSecurity,
-};
-
-/* ===== TG REMEMBER USERS PATCH START ===== */
-if (typeof bot !== "undefined" && !global.__tgRememberUsersPatch) {
-  global.__tgRememberUsersPatch = true;
-
-  bot.on("message", (msg) => {
+  // Запоминаем пользователей из каждого сообщения
+  bot.on("message", (ctx, next) => {
     try {
-      rememberTelegramUser(msg.from);
-
-      if (msg.reply_to_message && msg.reply_to_message.from) {
-        rememberTelegramUser(msg.reply_to_message.from);
+      if (ctx.from) rememberTelegramUser(ctx.from);
+      if (ctx.message?.reply_to_message?.from) {
+        rememberTelegramUser(ctx.message.reply_to_message.from);
       }
-    } catch (error) {
-      console.error("rememberTelegramUser error:", error);
+    } catch (err) {
+      console.error("[advancedSecurity] rememberTelegramUser:", err.message);
     }
+    return next();
   });
-}
-/* ===== TG REMEMBER USERS PATCH END ===== */
 
+  // Команда /разбанить с поддержкой @username и ID
+  bot.command(["разбанить"], async (ctx) => {
+    if (!(await requireGroup(ctx, safeReply))) return;
+    if (!(await requireAdmin(ctx, safeReply))) return;
 
+    const targetId = resolveTelegramTarget(ctx.message);
 
-/* ===== TG USERNAME UNBAN COMMAND PATCH START ===== */
-if (typeof bot !== "undefined" && !global.__tgUsernameUnbanPatch) {
-  global.__tgUsernameUnbanPatch = true;
-
-  bot.onText(/^\/разбанить(?:@\w+Bot)?(?:\s+(.+))?$/i, async (msg) => {
-    try {
-      rememberTelegramUser(msg.from);
-
-      if (msg.reply_to_message && msg.reply_to_message.from) {
-        rememberTelegramUser(msg.reply_to_message.from);
-      }
-
-      const targetId = resolveTelegramTarget(msg);
-
-      if (!targetId) {
-        return bot.sendMessage(
-          msg.chat.id,
-          "❌ Укажи пользователя правильно:\n\n" +
-          "✅ /разбанить @username\n" +
-          "✅ /разбанить 588174634\n" +
-          "✅ или ответь /разбанить на сообщение пользователя\n\n" +
-          "⚠️ Через @username работает, если бот уже видел этого пользователя в чате."
-        );
-      }
-
-      await bot.unbanChatMember(msg.chat.id, targetId, {
-        only_if_banned: true,
-      });
-
-      return bot.sendMessage(
-        msg.chat.id,
-        "✅ Пользователь " + targetId + " разблокирован."
+    if (!targetId) {
+      return safeReply(
+        ctx,
+        "❌ Укажи пользователя правильно:\n\n" +
+        "✅ /разбанить @username\n" +
+        "✅ /разбанить 588174634\n" +
+        "✅ или ответь /разбанить на сообщение пользователя\n\n" +
+        "⚠️ Через @username работает, если бот уже видел этого пользователя в чате."
       );
-    } catch (error) {
-      console.error("Ошибка /разбанить через username:", error);
+    }
 
-      return bot.sendMessage(
-        msg.chat.id,
+    try {
+      await ctx.telegram.unbanChatMember(ctx.chat.id, targetId, { only_if_banned: true });
+      return safeReply(ctx, `✅ Пользователь ${targetId} разблокирован.`);
+    } catch (error) {
+      console.error("Ошибка /разбанить:", error.message);
+      return safeReply(
+        ctx,
         "❌ Не удалось разблокировать пользователя.\n\n" +
         "Проверь:\n" +
         "1. Бот администратор\n" +
@@ -851,5 +791,10 @@ if (typeof bot !== "undefined" && !global.__tgUsernameUnbanPatch) {
     }
   });
 }
-/* ===== TG USERNAME UNBAN COMMAND PATCH END ===== */
+
+module.exports = {
+  registerAdvancedSecurity,
+  rememberTelegramUser,
+  resolveTelegramTarget,
+};
 

@@ -50,4 +50,6 @@ module.exports = {
   getRandomMeme:         () => getRandom(memePhrases),
   getRandomReaction:     () => getRandom(memeReactions),
   getRandomMemeReply:    () => getRandom(memeReplies),
+  // Алиас для совместимости с bot/memes.js
+  getRandomMemeAnswer:   () => getRandom(memeReplies),
 };

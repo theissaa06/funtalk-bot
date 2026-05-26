@@ -1,44 +1,6 @@
-const fs = require("fs");
 const path = require("path");
-const Database = require("better-sqlite3");
 
-const dbPath = process.env.DATABASE_PATH || "./data/bot.sqlite";
-const dbDir = path.dirname(dbPath);
-
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
-
-const db = new Database(dbPath);
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS security_settings (
-  chat_id TEXT PRIMARY KEY,
-  antilink_enabled INTEGER DEFAULT 1,
-  antiflood_enabled INTEGER DEFAULT 1,
-  badwords_enabled INTEGER DEFAULT 1,
-  delete_violations INTEGER DEFAULT 1,
-  automute_enabled INTEGER DEFAULT 1,
-  flood_limit INTEGER DEFAULT 5,
-  flood_seconds INTEGER DEFAULT 8,
-  mute_minutes INTEGER DEFAULT 10
-);
-
-CREATE TABLE IF NOT EXISTS bad_words (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  chat_id TEXT NOT NULL,
-  word TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS security_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  chat_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  action TEXT NOT NULL,
-  reason TEXT,
-  created_at INTEGER NOT NULL
-);
-`);
+const db = require("./db");
 
 const floodMap = new Map();
 
