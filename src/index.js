@@ -152,6 +152,10 @@ registerAiAssistant(bot);
 const { registerSettings } = require('./bot/settings');
 registerSettings(bot);
 
+// Шиппинг пар и друзей
+const { registerShipping } = require('./bot/shipping');
+registerShipping(bot);
+
 // Безопасность (жалобы, фильтрация опасных запросов)
 const { registerSafety, safetyMiddleware } = require('./bot/safety');
 registerSafety(bot);
