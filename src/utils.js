@@ -123,9 +123,51 @@ function formatDuration(seconds) {
   return `${Math.floor(seconds / 86400)} дн.`;
 }
 
+/**
+ * Проверить, является ли пользователь защищённым от наказаний.
+ * Защищены: владелец чата, администраторы, владелец бота (OWNER_ID из .env), сам бот.
+ *
+ * @param {object} ctx
+ * @param {number} targetId — ID пользователя, которого хотят наказать
+ * @returns {Promise<{protected: boolean, reason: string}>}
+ */
+async function isProtected(ctx, targetId) {
+  if (!targetId) return { protected: false, reason: '' };
+
+  // Сам бот
+  try {
+    const botInfo = await ctx.telegram.getMe();
+    if (targetId === botInfo.id) {
+      return { protected: true, reason: '🤖 Нельзя применять действия к боту.' };
+    }
+  } catch {}
+
+  // Владелец бота (OWNER_ID из .env)
+  const ownerId = parseInt(process.env.OWNER_ID);
+  if (ownerId && targetId === ownerId) {
+    return { protected: true, reason: '👑 Нельзя применять действия к владельцу бота.' };
+  }
+
+  // Администратор или владелец чата
+  try {
+    const cid = ctx.chat?.id;
+    if (!cid) return { protected: false, reason: '' };
+    const member = await ctx.telegram.getChatMember(cid, targetId);
+    if (member.status === 'creator') {
+      return { protected: true, reason: '👑 Нельзя применять действия к владельцу чата.' };
+    }
+    if (member.status === 'administrator') {
+      return { protected: true, reason: '🛡 Нельзя применять действия к администратору чата.' };
+    }
+  } catch {}
+
+  return { protected: false, reason: '' };
+}
+
 module.exports = {
   isUserAdmin,
   isBotAdmin,
+  isProtected,
   formatName,
   formatNameLink,
   escapeHtml,

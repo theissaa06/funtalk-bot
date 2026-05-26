@@ -8,6 +8,7 @@
 // ============================================================
 
 const db = require("./db");
+const { isProtected } = require("./utils");
 
 async function isChatAdmin(ctx, userId) {
   try {
@@ -155,11 +156,9 @@ async function banUser(ctx) {
     return ctx.reply("🤨 Самого себя банить не надо.");
   }
 
-  const targetIsAdmin = await isChatAdmin(ctx, target.id);
-
-  if (targetIsAdmin) {
-    return ctx.reply("🛡 Администраторов и владельца чата банить нельзя.");
-  }
+  // *** ЗАЩИТА: администраторы, владелец чата, владелец бота ***
+  const guard = await isProtected(ctx, target.id);
+  if (guard.protected) return ctx.reply(guard.reason);
 
   const reason = getReason(args, target.fromReply);
 
@@ -207,11 +206,9 @@ async function kickUser(ctx) {
     return ctx.reply("🤨 Самого себя кикать не надо.");
   }
 
-  const targetIsAdmin = await isChatAdmin(ctx, target.id);
-
-  if (targetIsAdmin) {
-    return ctx.reply("🛡 Администраторов и владельца чата кикать нельзя.");
-  }
+  // *** ЗАЩИТА: администраторы, владелец чата, владелец бота ***
+  const guard = await isProtected(ctx, target.id);
+  if (guard.protected) return ctx.reply(guard.reason);
 
   const reason = getReason(args, target.fromReply);
 

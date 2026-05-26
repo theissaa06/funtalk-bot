@@ -5,7 +5,7 @@
 // ============================================================
 
 const db = require('./db');
-const { isUserAdmin, isBotAdmin, formatName, formatNameLink, formatDuration, deleteAfter } = require('./utils');
+const { isUserAdmin, isBotAdmin, isProtected, formatName, formatNameLink, formatDuration, deleteAfter } = require('./utils');
 
 // ── Антифлуд: хранит timestamp последних сообщений ───────────
 // Map<chatId_userId, number[]>
@@ -134,10 +134,9 @@ function register(bot) {
       return ctx.reply('⚠️ Укажи пользователя — ответь на его сообщение или напиши @username.');
     }
 
-    // *** ЗАЩИТА АДМИНИСТРАТОРОВ ***
-    if (await isUserAdmin(ctx, target.id)) {
-      return ctx.reply('🛡 Нельзя замутить администратора или владельца чата.');
-    }
+    // *** ЗАЩИТА: администраторы, владелец чата, владелец бота ***
+    const guard = await isProtected(ctx, target.id);
+    if (guard.protected) return ctx.reply(guard.reason);
 
     // Парсим аргументы: /mute [@user] [10m] [причина]
     const args = ctx.message.text.split(' ').slice(1);
@@ -203,10 +202,9 @@ function register(bot) {
     const target = await resolveTarget(ctx);
     if (!target) return ctx.reply('⚠️ Укажи пользователя.');
 
-    // *** ЗАЩИТА АДМИНИСТРАТОРОВ ***
-    if (await isUserAdmin(ctx, target.id)) {
-      return ctx.reply('🛡 Нельзя забанить администратора или владельца чата.');
-    }
+    // *** ЗАЩИТА: администраторы, владелец чата, владелец бота ***
+    const guard = await isProtected(ctx, target.id);
+    if (guard.protected) return ctx.reply(guard.reason);
 
     try {
       await ctx.telegram.banChatMember(ctx.chat.id, target.id);
@@ -249,10 +247,9 @@ function register(bot) {
     const target = await resolveTarget(ctx);
     if (!target) return ctx.reply('⚠️ Укажи пользователя.');
 
-    // *** ЗАЩИТА АДМИНИСТРАТОРОВ ***
-    if (await isUserAdmin(ctx, target.id)) {
-      return ctx.reply('🛡 Нельзя кикнуть администратора или владельца чата.');
-    }
+    // *** ЗАЩИТА: администраторы, владелец чата, владелец бота ***
+    const guard = await isProtected(ctx, target.id);
+    if (guard.protected) return ctx.reply(guard.reason);
 
     try {
       // Кик = бан + немедленный разбан
@@ -276,10 +273,9 @@ function register(bot) {
     const target = await resolveTarget(ctx);
     if (!target) return ctx.reply('⚠️ Укажи пользователя.');
 
-    // *** ЗАЩИТА АДМИНИСТРАТОРОВ ***
-    if (await isUserAdmin(ctx, target.id)) {
-      return ctx.reply('🛡 Нельзя выдать предупреждение администратору.');
-    }
+    // *** ЗАЩИТА: администраторы, владелец чата, владелец бота ***
+    const guard = await isProtected(ctx, target.id);
+    if (guard.protected) return ctx.reply(guard.reason);
 
     const args   = ctx.message.text.split(' ').slice(1);
     const reason = args.filter(a => !a.startsWith('@')).join(' ') || 'нарушение правил';
