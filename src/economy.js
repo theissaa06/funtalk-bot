@@ -67,12 +67,40 @@ function register(bot) {
     }
 
     const bonus = Math.floor(Math.random() * (DAILY_MAX - DAILY_MIN + 1)) + DAILY_MIN;
-    addCoins(userId, chatId, bonus);
+
+    // Проверяем daily_boost из магазина
+    let finalBonus = bonus;
+    try {
+      const fsLib  = require('fs');
+      const dbPath = process.env.DB_PATH || './data/bot_data.json';
+      const data   = JSON.parse(fsLib.readFileSync(dbPath, 'utf8'));
+      const dbUser = (data.users || []).find(u => u.id === userId && String(u.chat_id) === String(chatId));
+      if (dbUser?.daily_boost_next) {
+        finalBonus = bonus * 2;
+        dbUser.daily_boost_next = false;
+        fsLib.writeFileSync(dbPath, JSON.stringify(data, null, 2), 'utf8');
+      }
+      // Обновляем streak
+      const today    = new Date().toISOString().slice(0, 10);
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      if (dbUser) {
+        if (dbUser.last_daily_date === yesterday) {
+          dbUser.daily_streak = (dbUser.daily_streak || 0) + 1;
+        } else if (dbUser.last_daily_date !== today) {
+          dbUser.daily_streak = 1;
+        }
+        dbUser.last_daily_date = today;
+        fsLib.writeFileSync(dbPath, JSON.stringify(data, null, 2), 'utf8');
+      }
+    } catch {}
+
+    addCoins(userId, chatId, finalBonus);
     dailyCooldown.set(key, now);
 
     const user = getUser(userId, chatId);
     await ctx.reply(
-      `💰 <b>${formatName(ctx.from)}</b>, ты получаешь <b>+${bonus} монет</b>!\n\n` +
+      `💰 <b>${formatName(ctx.from)}</b>, ты получаешь <b>+${finalBonus} монет</b>!` +
+      (finalBonus > bonus ? ` (x2 буст!)` : '') + `\n\n` +
       `💼 Всего монет: <b>${user.coins}</b>`,
       { parse_mode: 'HTML' }
     );

@@ -89,9 +89,22 @@ function register(bot) {
     // Сохраняем пользователя
     upsertUser(ctx.from, chatId);
 
-    // Случайный XP
+    // Случайный XP (с учётом буста из магазина)
     const xpGain = Math.floor(Math.random() * (XP_MAX - XP_MIN + 1)) + XP_MIN;
-    const updated = addXP(userId, chatId, xpGain);
+
+    // Проверяем XP-буст
+    let finalXp = xpGain;
+    try {
+      const fsLib  = require('fs');
+      const dbPath = process.env.DB_PATH || './data/bot_data.json';
+      const data   = JSON.parse(fsLib.readFileSync(dbPath, 'utf8'));
+      const dbUser = (data.users || []).find(u => u.id === userId && String(u.chat_id) === String(chatId));
+      if (dbUser?.xp_boost_until && dbUser.xp_boost_until > Date.now()) {
+        finalXp = xpGain * 2;
+      }
+    } catch {}
+
+    const updated = addXP(userId, chatId, finalXp);
 
     if (!updated) return next();
 

@@ -11,6 +11,7 @@ const mainMenuKeyboard = Markup.keyboard([
   ['😂 Мемы', '👋 Приветствия'],
   ['🎲 Случайная фраза', '🤖 ИИ-помощник'],
   ['💞 Зашипить пару', '👫 Шип друзей'],
+  ['🎰 Игры', '🏪 Магазин'],
   ['⚙️ Настройки'],
 ]).resize();
 
@@ -32,6 +33,10 @@ function helpMenuKeyboard() {
     [
       Markup.button.callback('📌 Закрепы и инфо', 'help_tools'),
       Markup.button.callback('🤖 ИИ-помощник', 'help_ai'),
+    ],
+    [
+      Markup.button.callback('🎰 Мини-игры', 'help_games'),
+      Markup.button.callback('🏪 Магазин', 'help_shop'),
     ],
     [Markup.button.callback('📋 Все команды списком', 'help_all')],
   ]);
@@ -181,15 +186,72 @@ const HELP_SECTIONS = {
 
 ⚠️ _Требует настройки API-ключа в .env_`,
 
+  games: `🎰 *Мини-игры*
+
+/casino [ставка] — слоты (мин. 10 монет)
+/roulette [ставка] [red|black|green|even|odd|0-36] — рулетка
+/duel [сумма] — дуэль (ответом на сообщение)
+/guess — угадай число от 1 до 100
+
+🎰 *Казино — выплаты:*
+💎💎💎 — x10 | 7️⃣7️⃣7️⃣ — x8 | ⭐⭐⭐ — x5
+🍇🍇🍇 — x4 | 🍊🍊🍊 — x3 | 🍋🍋🍋 — x2.5
+🍒🍒🍒 — x2 | Два одинаковых — x1 (возврат)
+
+🎡 *Рулетка — выплаты:*
+Красное/чёрное — x2 | Чётное/нечётное — x2
+Зеро — x14 | Конкретное число — x35
+
+⚔️ *Дуэль:*
+Вызов: ответь на сообщение /duel 100
+Принять/отказать — кнопками (60 сек)
+
+🔢 *Угадай число:*
+/guess — начать игру
+/guess [число] — назвать число
+Награда зависит от количества попыток`,
+
+  shop: `🏪 *Магазин и инвентарь*
+
+/shop — открыть магазин
+/inventory — мой инвентарь
+/usetitle [id] — надеть титул
+
+🏷 *Доступные товары:*
+⭐ VIP — 500💰
+🔥 Про игрок — 800💰
+👑 Легенда — 2000💰
+💎 Богач — 1500💰
+🌑 Тень — 1000💰
+🌟 Звезда чата — 1200💰
+👻 Призрак — 700💰
+🤴 Король — 3000💰
+👸 Королева — 3000💰
+💻 Хакер — 900💰
+⚡ XP x2 (1 час) — 300💰
+🎁 Бонус x2 (1 раз) — 200💰
+
+Титулы отображаются в /rank`,
+
   all: `📋 *Все команды FunTalk Bot*
 
-👤 *Профиль:* /rank /top /coins /richest /id /info /ping
+👤 *Профиль:* /rank /top /coins /richest /id /info /ping /mystats
 
 🎁 *Бонусы:* /daily /give
 
 😂 *Развлечения:* /meme /topic /random /hello /flip /dice /ai
 
 🤝 *Социальное:* /friend /friends /unfriend /love /couple /breakup /hug /kiss /pat /slap /respect
+
+⭐ *Репутация:* +реп / -реп / /toprep / /myrep
+
+🎰 *Игры:* /casino /roulette /duel /guess
+
+🏪 *Магазин:* /shop /inventory /usetitle
+
+🏆 *Достижения:* /achievements
+
+📊 *Статистика:* /chatstats /toptoday /mystats
 
 🛡 *Модерация:* /mute /unmute /ban /unban /kick /warn /warnings /clearwarns /del /modlog /admins /setrank /call
 
@@ -252,7 +314,7 @@ function registerMenu(bot) {
 
   // ── Обработчики inline-кнопок справки ────────────────────────
 
-  const sections = ['profile', 'economy', 'fun', 'social', 'mod', 'security', 'tools', 'ai', 'all'];
+  const sections = ['profile', 'economy', 'fun', 'social', 'mod', 'security', 'tools', 'ai', 'all', 'games', 'shop'];
 
   for (const key of sections) {
     bot.action(`help_${key}`, async (ctx) => {
@@ -292,10 +354,112 @@ function registerMenu(bot) {
 
   bot.hears('👫 Шип друзей', async (ctx) => {
     if (ctx.chat.type === 'private') {
-      return ctx.reply('� Шип друзей работает только в группах!');
+      return ctx.reply('👫 Шип друзей работает только в группах!');
     }
     const { shipFriends } = require('./shipping');
     await shipFriends(ctx);
+  });
+
+  // ── Кнопка "🎰 Игры" ─────────────────────────────────────────
+  bot.hears('🎰 Игры', async (ctx) => {
+    await ctx.reply(
+      `🎰 <b>Мини-игры FunTalk</b>\n\n` +
+      `/casino [ставка] — слоты 🎰\n` +
+      `/roulette [ставка] [цвет/число] — рулетка 🎡\n` +
+      `/duel [сумма] — дуэль ⚔️ (ответом на сообщение)\n` +
+      `/guess — угадай число 🔢\n\n` +
+      `<b>Минимальная ставка: 10 монет</b>\n\n` +
+      `💰 Монеты: /coins | Бонус: /daily`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('🎰 Слоты (50)', 'game_casino_50'),
+            Markup.button.callback('🎡 Рулетка', 'game_roulette_info'),
+          ],
+          [
+            Markup.button.callback('🔢 Угадай число', 'game_guess_start'),
+          ],
+        ]),
+      }
+    );
+  });
+
+  // Быстрые кнопки игр
+  bot.action('game_casino_50', async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.message = ctx.callbackQuery.message;
+    ctx.message.text = '/casino 50';
+    ctx.message.from = ctx.from;
+    // Имитируем команду через reply
+    await ctx.reply('/casino 50 — используй эту команду в чате!');
+  });
+
+  bot.action('game_roulette_info', async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      `🎡 <b>Рулетка</b>\n\n` +
+      `Команда: /roulette [ставка] [выбор]\n\n` +
+      `<b>Варианты ставок:</b>\n` +
+      `🔴 red — красное (x2)\n` +
+      `⚫ black — чёрное (x2)\n` +
+      `🟢 green — зеро (x14)\n` +
+      `even — чётное (x2)\n` +
+      `odd — нечётное (x2)\n` +
+      `0–36 — конкретное число (x35)\n\n` +
+      `Пример: /roulette 100 red`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Назад', 'game_back')]]),
+      }
+    );
+  });
+
+  bot.action('game_guess_start', async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.reply('🔢 Начинаю игру! Напиши /guess чтобы загадать число, потом /guess [число] чтобы угадать.');
+  });
+
+  bot.action('game_back', async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      `🎰 <b>Мини-игры FunTalk</b>\n\n` +
+      `/casino [ставка] — слоты 🎰\n` +
+      `/roulette [ставка] [цвет/число] — рулетка 🎡\n` +
+      `/duel [сумма] — дуэль ⚔️ (ответом)\n` +
+      `/guess — угадай число 🔢`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('🎰 Слоты (50)', 'game_casino_50'),
+            Markup.button.callback('🎡 Рулетка', 'game_roulette_info'),
+          ],
+          [Markup.button.callback('🔢 Угадай число', 'game_guess_start')],
+        ]),
+      }
+    );
+  });
+
+  // ── Кнопка "🏪 Магазин" ──────────────────────────────────────
+  bot.hears('🏪 Магазин', async (ctx) => {
+    const { SHOP_ITEMS } = require('./shop');
+    const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
+    const db     = require('../db');
+    const user   = db.prepare('SELECT * FROM users WHERE id = ? AND chat_id = ?').get(ctx.from.id, chatId);
+
+    const perPage = 5;
+    const items   = SHOP_ITEMS.slice(0, perPage);
+    const total   = Math.ceil(SHOP_ITEMS.length / perPage);
+    const lines   = items.map(i => `${i.name}\n  💰 ${i.price} монет — ${i.desc}`).join('\n\n');
+
+    const buttons = items.map(i => [Markup.button.callback(`${i.name} — ${i.price}💰`, `shop_buy_${i.id}`)]);
+    buttons.push([Markup.button.callback('➡️', 'shop_page_1')]);
+
+    await ctx.reply(
+      `🏪 <b>Магазин FunTalk</b> (стр. 1/${total})\n\n${lines}\n\n💼 Твой баланс: <b>${user?.coins || 0} монет</b>`,
+      { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
+    );
   });
 }
 

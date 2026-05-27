@@ -1,21 +1,24 @@
 ﻿// ============================================================
 // src/removeUser.js
-// Жёсткое удаление участников: ban/kick/unban
-// Поддержка английских и русских команд:
-// /ban, /бан
-// /kick, /кик
-// /unban, /разбан
+// Бан / кик / разбан с запоминанием участников.
+//
+// Ключевые улучшения:
+// - Бот запоминает КАЖДОГО участника при любом сообщении
+// - Пользователи НИКОГДА не удаляются из базы (только статус)
+// - Разбан работает по @username, ID или ответом на сообщение
+// - Разбан работает даже если человека нет в чате
 // ============================================================
 
-const db = require("./db");
-const { isProtected } = require("./utils");
+const db = require('./db');
+const { isProtected } = require('./utils');
+
+// ── Вспомогательные функции ───────────────────────────────────
 
 async function isChatAdmin(ctx, userId) {
   try {
     const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
-    return member.status === "creator" || member.status === "administrator";
-  } catch (err) {
-    console.error("[removeUser:isChatAdmin]", err.message);
+    return member.status === 'creator' || member.status === 'administrator';
+  } catch {
     return false;
   }
 }
@@ -23,140 +26,140 @@ async function isChatAdmin(ctx, userId) {
 async function canBotRestrict(ctx) {
   try {
     const botInfo = await ctx.telegram.getMe();
-    const botMember = await ctx.telegram.getChatMember(ctx.chat.id, botInfo.id);
-
-    if (botMember.status === "creator") return true;
-
-    return (
-      botMember.status === "administrator" &&
-      botMember.can_restrict_members === true
-    );
-  } catch (err) {
-    console.error("[removeUser:canBotRestrict]", err.message);
+    const m = await ctx.telegram.getChatMember(ctx.chat.id, botInfo.id);
+    return m.status === 'creator' || (m.status === 'administrator' && m.can_restrict_members === true);
+  } catch {
     return false;
   }
 }
 
-function getCommandAndArgs(ctx) {
-  const text = ctx.message?.text || "";
-  const parts = text.trim().split(/\s+/);
-  const command = (parts[0] || "").replace("/", "").split("@")[0].toLowerCase();
-  const args = parts.slice(1);
-  return { command, args, text };
-}
-
-function getTargetFromReplyOrArgs(ctx, args) {
-  const replyUser = ctx.message?.reply_to_message?.from;
-
-  if (replyUser && replyUser.id) {
-    return {
-      id: replyUser.id,
-      username: replyUser.username,
-      first_name: replyUser.first_name,
-      is_bot: replyUser.is_bot,
-      fromReply: true,
-    };
-  }
-
-  const possibleId = args[0];
-
-  if (possibleId && /^-?\d+$/.test(possibleId)) {
-    return {
-      id: Number(possibleId),
-      username: null,
-      first_name: null,
-      is_bot: false,
-      fromReply: false,
-    };
-  }
-
-  return null;
-}
-
-function getReason(args, targetFromReply) {
-  if (targetFromReply) {
-    return args.join(" ").trim() || "Без причины";
-  }
-
-  return args.slice(1).join(" ").trim() || "Без причины";
-}
-
 function formatUser(user) {
-  if (!user) return "пользователь";
-  if (user.username) return `@${user.username}`;
+  if (!user) return 'пользователь';
+  if (user.username)   return `@${user.username}`;
   if (user.first_name) return user.first_name;
   return `ID ${user.id}`;
-}
-
-function removeFromLocalDb(userId, chatId) {
-  try {
-    db.prepare("DELETE FROM users WHERE id = ? AND chat_id = ?").run(userId, chatId);
-  } catch (err) {
-    console.error("[removeUser:removeFromLocalDb]", err.message);
-  }
 }
 
 function logModAction(chatId, userId, action, reason, byUserId) {
   try {
     db.prepare(
-      `INSERT INTO mod_log (chat_id, user_id, action, reason, by_user_id)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO mod_log (chat_id, user_id, action, reason, by_user_id) VALUES (?, ?, ?, ?, ?)`
     ).run(chatId, userId, action, reason, byUserId);
   } catch (err) {
-    console.error("[removeUser:logModAction]", err.message);
+    console.error('[removeUser:log]', err.message);
   }
 }
 
+// ── Разобрать аргументы команды ───────────────────────────────
+function parseArgs(ctx) {
+  const text  = ctx.message?.text || '';
+  const parts = text.trim().split(/\s+/);
+  const args  = parts.slice(1); // всё после команды
+  return args;
+}
+
+// ── Найти цель команды ────────────────────────────────────────
+// Приоритет: reply → @username/ID в аргументах → ничего
+async function resolveTarget(ctx, args) {
+  // 1. Ответ на сообщение
+  const replyFrom = ctx.message?.reply_to_message?.from;
+  if (replyFrom && replyFrom.id) {
+    // Запоминаем пользователя из reply
+    db.rememberUser(replyFrom, ctx.chat.id);
+    return {
+      id:         replyFrom.id,
+      username:   replyFrom.username   || null,
+      first_name: replyFrom.first_name || null,
+      fromReply:  true,
+    };
+  }
+
+  // 2. Первый аргумент — @username или числовой ID
+  const raw = args[0];
+  if (!raw) return null;
+
+  const query = raw.replace(/^@/, '');
+
+  // Сначала ищем в нашей базе (работает даже для забаненных)
+  const fromDb = db.findUser(ctx.chat.id, query);
+  if (fromDb) {
+    return {
+      id:         fromDb.id,
+      username:   fromDb.username   || null,
+      first_name: fromDb.first_name || null,
+      fromReply:  false,
+    };
+  }
+
+  // Если не нашли в базе — пробуем через Telegram API
+  try {
+    const member = /^\d+$/.test(query)
+      ? await ctx.telegram.getChatMember(ctx.chat.id, parseInt(query))
+      : await ctx.telegram.getChatMember(ctx.chat.id, raw); // @username
+
+    if (member?.user) {
+      db.rememberUser(member.user, ctx.chat.id);
+      return {
+        id:         member.user.id,
+        username:   member.user.username   || null,
+        first_name: member.user.first_name || null,
+        fromReply:  false,
+      };
+    }
+  } catch {
+    // Пользователь не найден через API — возможно уже забанен
+  }
+
+  // Если числовой ID — возвращаем как есть (для разбана)
+  if (/^\d+$/.test(query)) {
+    return { id: parseInt(query), username: null, first_name: null, fromReply: false };
+  }
+
+  return null;
+}
+
+function getReason(args, fromReply) {
+  // Если цель из reply — вся строка аргументов = причина
+  // Если цель из аргументов — причина начинается со второго аргумента
+  const start = fromReply ? 0 : 1;
+  return args.slice(start).join(' ').trim() || 'Без причины';
+}
+
+// ── Базовые проверки ──────────────────────────────────────────
 async function baseChecks(ctx) {
-  if (!ctx.chat || ctx.chat.type === "private") {
-    await ctx.reply("🛡 Эта команда работает только в группах.");
+  if (!ctx.chat || ctx.chat.type === 'private') {
+    await ctx.reply('🛡 Эта команда работает только в группах.');
     return false;
   }
-
-  const senderAdmin = await isChatAdmin(ctx, ctx.from.id);
-
-  if (!senderAdmin) {
-    await ctx.reply("⛔ Команду могут использовать только администраторы чата.");
+  if (!await isChatAdmin(ctx, ctx.from.id)) {
+    await ctx.reply('⛔ Команду могут использовать только администраторы чата.');
     return false;
   }
-
-  const botCanRestrict = await canBotRestrict(ctx);
-
-  if (!botCanRestrict) {
-    await ctx.reply(
-      "⚠️ Я не могу банить или кикать участников.\n\n" +
-      "Сделай меня админом и включи право «Блокировать пользователей»."
-    );
+  if (!await canBotRestrict(ctx)) {
+    await ctx.reply('⚠️ У меня нет прав банить/кикать.\nСделай меня админом с правом «Блокировать пользователей».');
     return false;
   }
-
   return true;
 }
 
+// ── /ban ──────────────────────────────────────────────────────
 async function banUser(ctx) {
-  const ok = await baseChecks(ctx);
-  if (!ok) return;
+  if (!await baseChecks(ctx)) return;
 
-  const { args } = getCommandAndArgs(ctx);
-  const target = getTargetFromReplyOrArgs(ctx, args);
+  const args   = parseArgs(ctx);
+  const target = await resolveTarget(ctx, args);
 
   if (!target) {
     return ctx.reply(
-      "🛡 Чтобы забанить пользователя:\n\n" +
-      "1) Ответь на его сообщение командой:\n" +
-      "/ban причина\n" +
-      "или\n" +
-      "/бан причина\n\n" +
-      "2) Или укажи ID:\n" +
-      "/ban 123456789 причина"
+      '� Как забанить:\n\n' +
+      '• Ответь на сообщение: /ban причина\n' +
+      '• По @username: /ban @username причина\n' +
+      '• По ID: /ban 123456789 причина'
     );
   }
 
-  if (target.id === ctx.from.id) {
-    return ctx.reply("🤨 Самого себя банить не надо.");
-  }
+  if (target.id === ctx.from.id) return ctx.reply('🤨 Самого себя банить не надо.');
 
-  // *** ЗАЩИТА: администраторы, владелец чата, владелец бота ***
   const guard = await isProtected(ctx, target.id);
   if (guard.protected) return ctx.reply(guard.reason);
 
@@ -165,125 +168,124 @@ async function banUser(ctx) {
   try {
     await ctx.telegram.banChatMember(ctx.chat.id, target.id);
 
-    removeFromLocalDb(target.id, ctx.chat.id);
-    logModAction(ctx.chat.id, target.id, "ban", reason, ctx.from.id);
+    // Помечаем статус в базе (НЕ удаляем запись)
+    db.setUserStatus(target.id, ctx.chat.id, 'banned');
+    logModAction(ctx.chat.id, target.id, 'ban', reason, ctx.from.id);
 
     return ctx.reply(
-      `🔨 <b>${formatUser(target)} забанен и удалён из группы.</b>\n\n` +
-      `📝 <b>Причина:</b> ${reason}`,
-      { parse_mode: "HTML" }
+      `🔨 <b>${formatUser(target)}</b> забанен.\n📝 Причина: ${reason}`,
+      { parse_mode: 'HTML' }
     );
   } catch (err) {
-    console.error("[removeUser:ban]", err.message);
-
-    return ctx.reply(
-      "❌ Не получилось забанить пользователя.\n\n" +
-      "Проверь, что бот админ и у него есть право «Блокировать пользователей»."
-    );
+    console.error('[ban]', err.message);
+    return ctx.reply('❌ Не получилось забанить. Проверь права бота.');
   }
 }
 
+// ── /kick ─────────────────────────────────────────────────────
 async function kickUser(ctx) {
-  const ok = await baseChecks(ctx);
-  if (!ok) return;
+  if (!await baseChecks(ctx)) return;
 
-  const { args } = getCommandAndArgs(ctx);
-  const target = getTargetFromReplyOrArgs(ctx, args);
+  const args   = parseArgs(ctx);
+  const target = await resolveTarget(ctx, args);
 
   if (!target) {
     return ctx.reply(
-      "👢 Чтобы кикнуть пользователя:\n\n" +
-      "1) Ответь на его сообщение командой:\n" +
-      "/kick причина\n" +
-      "или\n" +
-      "/кик причина\n\n" +
-      "2) Или укажи ID:\n" +
-      "/kick 123456789 причина"
+      '👢 Как кикнуть:\n\n' +
+      '• Ответь на сообщение: /kick причина\n' +
+      '• По @username: /kick @username причина\n' +
+      '• По ID: /kick 123456789 причина'
     );
   }
 
-  if (target.id === ctx.from.id) {
-    return ctx.reply("🤨 Самого себя кикать не надо.");
-  }
+  if (target.id === ctx.from.id) return ctx.reply('🤨 Самого себя кикать не надо.');
 
-  // *** ЗАЩИТА: администраторы, владелец чата, владелец бота ***
   const guard = await isProtected(ctx, target.id);
   if (guard.protected) return ctx.reply(guard.reason);
 
   const reason = getReason(args, target.fromReply);
 
   try {
-    // Telegram не имеет отдельного kick.
-    // Правильный кик = временно banChatMember + сразу unbanChatMember.
-    // Пользователь удаляется из группы, но сможет вступить обратно.
+    // Кик = бан + немедленный разбан (пользователь удаляется, но может вернуться)
     await ctx.telegram.banChatMember(ctx.chat.id, target.id);
-    await ctx.telegram.unbanChatMember(ctx.chat.id, target.id, {
-      only_if_banned: true,
-    });
+    await ctx.telegram.unbanChatMember(ctx.chat.id, target.id, { only_if_banned: true });
 
-    removeFromLocalDb(target.id, ctx.chat.id);
-    logModAction(ctx.chat.id, target.id, "kick", reason, ctx.from.id);
+    // Статус остаётся active — человек может вернуться
+    logModAction(ctx.chat.id, target.id, 'kick', reason, ctx.from.id);
 
     return ctx.reply(
-      `👢 <b>${formatUser(target)} кикнут из группы.</b>\n\n` +
-      `📝 <b>Причина:</b> ${reason}`,
-      { parse_mode: "HTML" }
+      `👢 <b>${formatUser(target)}</b> кикнут из группы.\n📝 Причина: ${reason}`,
+      { parse_mode: 'HTML' }
     );
   } catch (err) {
-    console.error("[removeUser:kick]", err.message);
-
-    return ctx.reply(
-      "❌ Не получилось кикнуть пользователя.\n\n" +
-      "Проверь, что бот админ и у него есть право «Блокировать пользователей»."
-    );
+    console.error('[kick]', err.message);
+    return ctx.reply('❌ Не получилось кикнуть. Проверь права бота.');
   }
 }
 
+// ── /unban ────────────────────────────────────────────────────
 async function unbanUser(ctx) {
-  const ok = await baseChecks(ctx);
-  if (!ok) return;
+  if (!await baseChecks(ctx)) return;
 
-  const { args } = getCommandAndArgs(ctx);
-  const userId = args[0];
+  const args   = parseArgs(ctx);
+  const target = await resolveTarget(ctx, args);
 
-  if (!userId || !/^-?\d+$/.test(userId)) {
+  if (!target) {
     return ctx.reply(
-      "🔓 Чтобы разбанить пользователя, укажи его ID:\n\n" +
-      "/unban 123456789\n" +
-      "или\n" +
-      "/разбан 123456789"
+      '🔓 Как разбанить:\n\n' +
+      '• По @username: /unban @username\n' +
+      '• По ID: /unban 123456789\n' +
+      '• Ответом на сообщение: /unban\n\n' +
+      '💡 Работает даже если человека нет в чате — бот помнит всех участников.'
     );
   }
 
   try {
-    await ctx.telegram.unbanChatMember(ctx.chat.id, Number(userId), {
-      only_if_banned: true,
-    });
+    await ctx.telegram.unbanChatMember(ctx.chat.id, target.id, { only_if_banned: true });
 
-    logModAction(ctx.chat.id, Number(userId), "unban", "Разбан", ctx.from.id);
+    // Восстанавливаем статус в базе
+    db.setUserStatus(target.id, ctx.chat.id, 'active');
+    logModAction(ctx.chat.id, target.id, 'unban', 'Разбан', ctx.from.id);
 
-    return ctx.reply(`🔓 Пользователь <code>${userId}</code> разбанен.`, {
-      parse_mode: "HTML",
-    });
+    return ctx.reply(
+      `✅ <b>${formatUser(target)}</b> разбанен. Теперь может вернуться в чат.`,
+      { parse_mode: 'HTML' }
+    );
   } catch (err) {
-    console.error("[removeUser:unban]", err.message);
-    return ctx.reply("❌ Не получилось разбанить пользователя. Проверь ID и права бота.");
+    console.error('[unban]', err.message);
+    return ctx.reply(
+      `❌ Не получилось разбанить.\n\n` +
+      `Проверь:\n` +
+      `• Бот является администратором\n` +
+      `• У бота есть право «Блокировать пользователей»\n` +
+      `• Пользователь действительно был забанен`
+    );
   }
 }
 
+// ── Регистрация ───────────────────────────────────────────────
 function register(bot) {
-  bot.command(["ban", "бан"], banUser);
-  bot.command(["kick", "кик"], kickUser);
-  bot.command(["unban", "разбан"], unbanUser);
 
-  // Дополнительно ловим русские команды через hears,
-  // если Telegram не распознает кириллицу как bot_command.
-  bot.hears(/^\/(бан)(@\w+)?(\s|$)/i, banUser);
-  bot.hears(/^\/(кик)(@\w+)?(\s|$)/i, kickUser);
+  // Запоминаем каждого участника при любом сообщении
+  bot.on('message', async (ctx, next) => {
+    try {
+      if (ctx.from && !ctx.from.is_bot && ctx.chat?.type !== 'private') {
+        db.rememberUser(ctx.from, ctx.chat.id);
+      }
+    } catch {}
+    return next();
+  });
+
+  bot.command(['ban',   'бан'],   banUser);
+  bot.command(['kick',  'кик'],   kickUser);
+  bot.command(['unban', 'разбан'], unbanUser);
+
+  // Дополнительно через hears — на случай если Telegram не распознаёт кириллицу как команду
+  bot.hears(/^\/(бан)(@\w+)?(\s|$)/i,    banUser);
+  bot.hears(/^\/(кик)(@\w+)?(\s|$)/i,    kickUser);
   bot.hears(/^\/(разбан)(@\w+)?(\s|$)/i, unbanUser);
 
-  console.log("✅ Модуль removeUser подключён");
+  console.log('✅ Модуль removeUser подключён');
 }
 
 module.exports = { register };
-
