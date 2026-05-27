@@ -189,7 +189,9 @@ bot.use(safetyMiddleware);
 // ── Запуск ────────────────────────────────────────────────────
 async function launchBotWithRetry(retries = 0) {
   try {
-    await bot.launch();
+    // dropPendingUpdates: true очищает старые обновления при перезапуске
+    // это решает ошибку 409 при деплое на Railway
+    await bot.launch({ dropPendingUpdates: true });
     console.log('✅ FunTalk Bot запущен!');
 
     // Команды для всех пользователей
@@ -285,11 +287,12 @@ async function launchBotWithRetry(retries = 0) {
     console.error('❌ Ошибка запуска бота:', err.message);
     
     // Если получена ошибка 409 (Conflict), попробуем перезагрузить через несколько секунд
-    if (err.message.includes('409') && retries < 5) {
-      console.log(`⏳ Ошибка конфликта. Попытка ${retries + 1}/5 через 3 секунды...`);
-      setTimeout(() => launchBotWithRetry(retries + 1), 3000);
-    } else if (retries >= 5) {
-      console.error('❌ Не удалось запустить бота после 5 попыток.');
+    if (err.message.includes('409') && retries < 10) {
+      const delaySeconds = 5 + (retries * 2); // 5, 7, 9, 11... секунд
+      console.log(`⏳ Ошибка конфликта. Попытка ${retries + 1}/10 через ${delaySeconds} сек...`);
+      setTimeout(() => launchBotWithRetry(retries + 1), delaySeconds * 1000);
+    } else if (retries >= 10) {
+      console.error('❌ Не удалось запустить бота после 10 попыток.');
       process.exit(1);
     } else {
       process.exit(1);
