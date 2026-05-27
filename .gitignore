@@ -2,10 +2,5 @@
 node_modules/
 downloads/
 data/database.broken.*.json
-data/*.sqlite
-data/*.sqlite.bak
-data/tg-users.json
 *.log
 .DS_Store
-*.pid
-*.bak

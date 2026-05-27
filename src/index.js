@@ -187,8 +187,9 @@ registerSafety(bot);
 bot.use(safetyMiddleware);
 
 // ── Запуск ────────────────────────────────────────────────────
-bot.launch()
-  .then(async () => {
+async function launchBotWithRetry(retries = 0) {
+  try {
+    await bot.launch();
     console.log('✅ FunTalk Bot запущен!');
 
     // Команды для всех пользователей
@@ -280,8 +281,20 @@ bot.launch()
     ], { scope: { type: 'all_chat_administrators' } });
 
     console.log('✅ Команды зарегистрированы в Telegram');
-  })
-  .catch((err) => {
+  } catch (err) {
     console.error('❌ Ошибка запуска бота:', err.message);
-    process.exit(1);
-  });
+    
+    // Если получена ошибка 409 (Conflict), попробуем перезагрузить через несколько секунд
+    if (err.message.includes('409') && retries < 5) {
+      console.log(`⏳ Ошибка конфликта. Попытка ${retries + 1}/5 через 3 секунды...`);
+      setTimeout(() => launchBotWithRetry(retries + 1), 3000);
+    } else if (retries >= 5) {
+      console.error('❌ Не удалось запустить бота после 5 попыток.');
+      process.exit(1);
+    } else {
+      process.exit(1);
+    }
+  }
+}
+
+launchBotWithRetry();

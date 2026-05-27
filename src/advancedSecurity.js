@@ -1,4 +1,3 @@
-
 /* ===== TG USERNAME RESOLVER PATCH START ===== */
 const __tgFs = require("fs");
 const __tgPath = require("path");
@@ -88,6 +87,10 @@ const db = require("./db");
 
 const captchaSessions = new Map();
 
+const DEFAULT_CAPTCHA_MINUTES = 5;
+const DEFAULT_CAPTCHA_ATTEMPTS = 3;
+const MAX_CAPTCHA_MINUTES = 30;
+
 function now() {
   return Date.now();
 }
@@ -130,17 +133,47 @@ function ensureSettings(chatId) {
       captcha_attempts,
       updated_at
     )
-    VALUES (?, 1, 1, 1, 3, 3, ?)
-  `).run(String(chatId), now());
+    VALUES (?, 1, 1, 1, ?, ?, ?)
+  `).run(String(chatId), DEFAULT_CAPTCHA_MINUTES, DEFAULT_CAPTCHA_ATTEMPTS, now());
 }
 
 function getSettings(chatId) {
   ensureSettings(chatId);
 
-  return db.prepare(`
+  const settings = db.prepare(`
     SELECT * FROM advanced_security_settings
     WHERE chat_id = ?
   `).get(String(chatId));
+
+  const captchaMinutes = Number(settings?.captcha_minutes);
+  const captchaAttempts = Number(settings?.captcha_attempts);
+
+  const fixedCaptchaMinutes =
+    Number.isInteger(captchaMinutes) && captchaMinutes >= 1
+      ? captchaMinutes
+      : DEFAULT_CAPTCHA_MINUTES;
+
+  const fixedCaptchaAttempts =
+    Number.isInteger(captchaAttempts) && captchaAttempts >= 1
+      ? captchaAttempts
+      : DEFAULT_CAPTCHA_ATTEMPTS;
+
+  if (
+    settings.captcha_minutes !== fixedCaptchaMinutes ||
+    settings.captcha_attempts !== fixedCaptchaAttempts
+  ) {
+    db.prepare(`
+      UPDATE advanced_security_settings
+      SET captcha_minutes = ?, captcha_attempts = ?, updated_at = ?
+      WHERE chat_id = ?
+    `).run(fixedCaptchaMinutes, fixedCaptchaAttempts, now(), String(chatId));
+  }
+
+  return {
+    ...settings,
+    captcha_minutes: fixedCaptchaMinutes,
+    captcha_attempts: fixedCaptchaAttempts,
+  };
 }
 
 function saveLog(chatId, userId, action, details = "") {
@@ -202,7 +235,22 @@ async function restrictNewUser(ctx, userId) {
   try {
     await ctx.telegram.restrictChatMember(ctx.chat.id, userId, {
       permissions: {
-        can_send_messages: false,
+        // ВАЖНО:
+        // Новичку нужно разрешить обычные текстовые сообщения,
+        // иначе он не сможет написать ответ на капчу.
+        can_send_messages: true,
+
+        // До прохождения капчи запрещаем всё лишнее.
+        can_send_audios: false,
+        can_send_documents: false,
+        can_send_photos: false,
+        can_send_videos: false,
+        can_send_video_notes: false,
+        can_send_voice_notes: false,
+        can_send_polls: false,
+        can_send_other_messages: false,
+        can_add_web_page_previews: false,
+        can_invite_users: false,
       },
     });
   } catch (error) {
@@ -500,7 +548,7 @@ function registerAdvancedSecurity(bot, helpers) {
         "/captcha_on /captcha_off\n" +
         "/antibot_on /antibot_off\n" +
         "/smartlinks_on /smartlinks_off\n" +
-        "/captcha_time 3\n" +
+        "/captcha_time 5\n" +
         "/captcha_attempts 3\n" +
         "/whitelist_add domain.com\n" +
         "/whitelist_remove domain.com\n" +
@@ -571,7 +619,6 @@ function registerAdvancedSecurity(bot, helpers) {
       WHERE chat_id = ?
     `).run(now(), String(ctx.chat.id));
 
-    // Отключаем старую анти-ссылку из security.js, чтобы не было конфликта с whitelist
     db.prepare(`
       CREATE TABLE IF NOT EXISTS security_settings (
         chat_id TEXT PRIMARY KEY,
@@ -622,8 +669,11 @@ function registerAdvancedSecurity(bot, helpers) {
 
     const minutes = Number(parseArgs(ctx)[0]);
 
-    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 15) {
-      return safeReply(ctx, "Укажи время от 1 до 15 минут. Например: /captcha_time 3");
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_CAPTCHA_MINUTES) {
+      return safeReply(
+        ctx,
+        `Укажи время от 1 до ${MAX_CAPTCHA_MINUTES} минут. Например: /captcha_time 5`
+      );
     }
 
     db.prepare(`
@@ -743,7 +793,6 @@ function registerAdvancedSecurity(bot, helpers) {
     return safeReply(ctx, "🧩 Лог расширенной защиты:\n\n" + text);
   });
 
-  // Запоминаем пользователей из каждого сообщения
   bot.on("message", (ctx, next) => {
     try {
       if (ctx.from) rememberTelegramUser(ctx.from);
@@ -756,7 +805,6 @@ function registerAdvancedSecurity(bot, helpers) {
     return next();
   });
 
-  // Команда /разбанить с поддержкой @username и ID
   bot.command(["разбанить"], async (ctx) => {
     if (!(await requireGroup(ctx, safeReply))) return;
     if (!(await requireAdmin(ctx, safeReply))) return;
@@ -767,10 +815,10 @@ function registerAdvancedSecurity(bot, helpers) {
       return safeReply(
         ctx,
         "❌ Укажи пользователя правильно:\n\n" +
-        "✅ /разбанить @username\n" +
-        "✅ /разбанить 588174634\n" +
-        "✅ или ответь /разбанить на сообщение пользователя\n\n" +
-        "⚠️ Через @username работает, если бот уже видел этого пользователя в чате."
+          "✅ /разбанить @username\n" +
+          "✅ /разбанить 588174634\n" +
+          "✅ или ответь /разбанить на сообщение пользователя\n\n" +
+          "⚠️ Через @username работает, если бот уже видел этого пользователя в чате."
       );
     }
 
@@ -782,11 +830,11 @@ function registerAdvancedSecurity(bot, helpers) {
       return safeReply(
         ctx,
         "❌ Не удалось разблокировать пользователя.\n\n" +
-        "Проверь:\n" +
-        "1. Бот администратор\n" +
-        "2. У бота есть право банить/разбанивать\n" +
-        "3. Пользователь реально был в бане\n" +
-        "4. Username уже был замечен ботом"
+          "Проверь:\n" +
+          "1. Бот администратор\n" +
+          "2. У бота есть право банить/разбанивать\n" +
+          "3. Пользователь реально был в бане\n" +
+          "4. Username уже был замечен ботом"
       );
     }
   });
@@ -797,4 +845,3 @@ module.exports = {
   rememberTelegramUser,
   resolveTelegramTarget,
 };
-
