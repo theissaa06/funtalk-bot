@@ -3,5 +3,221 @@
     "version": "3.0.1"
   },
   "globalAdmins": {},
-  "chats": {}
+  "chats": {
+    "-1003937839731": {
+      "title": "кайфарики",
+      "type": "supergroup",
+      "settings": {
+        "antispam": false,
+        "antilinks": false,
+        "antimat": false,
+        "welcome": true,
+        "goodbye": false,
+        "welcomeText": null,
+        "goodbyeText": null,
+        "rules": "1. Не оскорблять участников.\n2. Не спамить и не флудить.\n3. Не рекламировать без разрешения.\n4. Не провоцировать конфликты.\n5. Не отправлять запрещённый контент.\n6. Уважать администрацию.\n7. Не обходить наказания.",
+        "logChatId": null,
+        "badwords": [],
+        "morningEnabled": true,
+        "nightEnabled": true,
+        "weeklyReportEnabled": true,
+        "lastMorningDate": null,
+        "lastNightDate": null,
+        "lastWeeklyDate": null,
+        "callCooldown": 0,
+        "fridayPost": {
+          "enabled": false,
+          "time": "18:00",
+          "text": null,
+          "lastSentDate": null
+        }
+      },
+      "users": {
+        "7887217301": {
+          "id": 7887217301,
+          "firstName": "neZyven",
+          "username": "neZ3ven",
+          "isBot": false,
+          "canCall": true,
+          "leftChat": false,
+          "firstSeenAt": 1779722731128,
+          "lastSeenAt": 1779722731130,
+          "messages": 1,
+          "xp": 1,
+          "balance": 1,
+          "reputation": 0,
+          "title": null,
+          "adminRank": 0,
+          "warns": [],
+          "history": [],
+          "birthday": null,
+          "couple": null,
+          "inventory": {
+            "vip": false,
+            "premium": false,
+            "customTitle": false,
+            "warnShield": 0,
+            "coloredProfile": false
+          },
+          "cooldowns": {
+            "daily": 0,
+            "rep": {},
+            "action": 0
+          },
+          "stats": {
+            "daily": {
+              "2026-05-25": 1
+            },
+            "weekly": {
+              "2026-W22": 1
+            },
+            "monthly": {
+              "2026-05": 1
+            }
+          },
+          "msgTypes": {
+            "text": 0,
+            "voice": 0,
+            "circle": 0,
+            "photo": 0,
+            "video": 0,
+            "sticker": 0,
+            "document": 0,
+            "audio": 0,
+            "animation": 0,
+            "other": 1
+          },
+          "achievements": {},
+          "_lc": 1779722731130
+        }
+      },
+      "logs": [],
+      "reminders": [],
+      "pendingOwnerTransfer": null,
+      "messageLog": [
+        {
+          "messageId": 3292,
+          "userId": 7887217301,
+          "username": "neZ3ven",
+          "firstName": "neZyven",
+          "date": 1779722730,
+          "type": "other"
+        }
+      ]
+    },
+    "-1003378655557": {
+      "title": "тестовая хуйня",
+      "type": "supergroup",
+      "settings": {
+        "antispam": false,
+        "antilinks": false,
+        "antimat": false,
+        "welcome": true,
+        "goodbye": false,
+        "welcomeText": null,
+        "goodbyeText": null,
+        "rules": "1. Не оскорблять участников.\n2. Не спамить и не флудить.\n3. Не рекламировать без разрешения.\n4. Не провоцировать конфликты.\n5. Не отправлять запрещённый контент.\n6. Уважать администрацию.\n7. Не обходить наказания.",
+        "logChatId": null,
+        "badwords": [],
+        "morningEnabled": true,
+        "nightEnabled": true,
+        "weeklyReportEnabled": true,
+        "lastMorningDate": null,
+        "lastNightDate": null,
+        "lastWeeklyDate": null,
+        "callCooldown": 0,
+        "fridayPost": {
+          "enabled": false,
+          "time": "18:00",
+          "text": null,
+          "lastSentDate": null
+        }
+      },
+      "users": {
+        "588174634": {
+          "id": 588174634,
+          "firstName": "R.",
+          "username": "Kadyrbaevar",
+          "isBot": false,
+          "canCall": true,
+          "leftChat": false,
+          "firstSeenAt": 1779722929793,
+          "lastSeenAt": 1779723139590,
+          "messages": 2,
+          "xp": 2,
+          "balance": 2,
+          "reputation": 0,
+          "title": null,
+          "adminRank": 0,
+          "warns": [],
+          "history": [],
+          "birthday": null,
+          "couple": null,
+          "inventory": {
+            "vip": false,
+            "premium": false,
+            "customTitle": false,
+            "warnShield": 0,
+            "coloredProfile": false
+          },
+          "cooldowns": {
+            "daily": 0,
+            "rep": {},
+            "action": 0
+          },
+          "stats": {
+            "daily": {
+              "2026-05-25": 2
+            },
+            "weekly": {
+              "2026-W22": 2
+            },
+            "monthly": {
+              "2026-05": 2
+            }
+          },
+          "msgTypes": {
+            "text": 1,
+            "voice": 0,
+            "circle": 0,
+            "photo": 0,
+            "video": 0,
+            "sticker": 0,
+            "document": 0,
+            "audio": 0,
+            "animation": 0,
+            "other": 1
+          },
+          "achievements": {},
+          "_lc": 1779723139590
+        }
+      },
+      "logs": [
+        {
+          "time": 1779722929978,
+          "text": "➕ Вошёл: @Kadyrbaevar (588174634)"
+        }
+      ],
+      "reminders": [],
+      "pendingOwnerTransfer": null,
+      "messageLog": [
+        {
+          "messageId": 55,
+          "userId": 588174634,
+          "username": "Kadyrbaevar",
+          "firstName": "R.",
+          "date": 1779722930,
+          "type": "other"
+        },
+        {
+          "messageId": 57,
+          "userId": 588174634,
+          "username": "Kadyrbaevar",
+          "firstName": "R.",
+          "date": 1779723139,
+          "type": "text"
+        }
+      ]
+    }
+  }
 }

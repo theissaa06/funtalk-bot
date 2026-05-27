@@ -244,8 +244,76 @@ function clearAiHistory(userId) {
   saveDb(data);
 }
 
+// ── Функции для магазина и инвентаря ────────────────────────
+function getInventory(telegramId) {
+  const data = loadDb();
+  const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
+  if (!user) return [];
+  return user.inventory || [];
+}
+
+function addToInventory(telegramId, itemId) {
+  const data = loadDb();
+  const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
+  if (!user) return;
+  if (!user.inventory) user.inventory = [];
+  if (!user.inventory.includes(itemId)) user.inventory.push(itemId);
+  saveDb(data);
+}
+
+function getCoins(telegramId) {
+  const data = loadDb();
+  const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
+  return user?.coins || 0;
+}
+
+function setCoins(telegramId, amount) {
+  const data = loadDb();
+  const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
+  if (!user) return;
+  user.coins = Math.max(0, amount);
+  user.updated_at = now();
+  saveDb(data);
+}
+
+function addCoins(telegramId, amount) {
+  const data = loadDb();
+  const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
+  if (!user) return;
+  user.coins = (user.coins || 0) + amount;
+  user.updated_at = now();
+  saveDb(data);
+}
+
+function removeCoins(telegramId, amount) {
+  addCoins(telegramId, -amount);
+}
+
+function getActiveTitle(telegramId) {
+  const data = loadDb();
+  const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
+  return user?.active_title || null;
+}
+
+function setActiveTitle(telegramId, titleId) {
+  const data = loadDb();
+  const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
+  if (!user) return;
+  user.active_title = titleId;
+  user.updated_at = now();
+  saveDb(data);
+}
+
+function hasInventoryItem(telegramId, itemId) {
+  const inv = getInventory(telegramId);
+  return inv.includes(itemId);
+}
+
 module.exports = {
   dbPath,
+  loadDb,
+  saveDb,
+  now,
   upsertUser,
   upsertSettings,
   updateSetting,
@@ -256,4 +324,14 @@ module.exports = {
   saveAiMessage,
   getAiHistory,
   clearAiHistory,
+  // Функции магазина
+  getInventory,
+  addToInventory,
+  getCoins,
+  setCoins,
+  addCoins,
+  removeCoins,
+  getActiveTitle,
+  setActiveTitle,
+  hasInventoryItem,
 };

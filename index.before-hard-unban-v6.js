@@ -4223,61 +4223,297 @@ console.log('🤖  FulTalchik_Botik v3.0 запущен!');
 
 
 
+/* ================= BUTTONS CALLBACK FIX START ================= */
 
+if (typeof bot !== "undefined" && !global.__BUTTONS_CALLBACK_FIX_V2__) {
+  global.__BUTTONS_CALLBACK_FIX_V2__ = true;
 
+  console.log("✅ BUTTONS CALLBACK FIX V2 ACTIVE");
 
+  bot.on("callback_query", async (query) => {
+    try {
+      const msg = query.message;
+      const data = String(query.data || "").trim();
 
+      if (!msg) {
+        return bot.answerCallbackQuery(query.id, {
+          text: "Сообщение не найдено",
+          show_alert: false,
+        });
+      }
 
+      await bot.answerCallbackQuery(query.id).catch(() => {});
 
+      const chatId = msg.chat.id;
 
+      console.log("🔘 Нажата кнопка:", data);
 
+      if (
+        data === "help:moder" ||
+        data === "help:moderation" ||
+        data === "moderation" ||
+        data === "mod" ||
+        data === "menu_moderation"
+      ) {
+        return bot.sendMessage(
+          chatId,
+          "🛡 Модерация\n\n" +
+          "Команды:\n" +
+          "• /ban или /забанить — забанить пользователя\n" +
+          "• /unban или /разбанить — разбанить пользователя\n" +
+          "• /kick или /кик — кикнуть пользователя\n" +
+          "• /mute или /мут — выдать мут\n" +
+          "• /unmute или /размут — снять мут\n" +
+          "• /clear или /очистить — очистить чат\n\n" +
+          "Примеры:\n" +
+          "/разбанить 588174634\n" +
+          "/разбанить @username\n" +
+          "/мут @username 10м причина"
+        );
+      }
 
+      if (
+        data === "help:ranks" ||
+        data === "help:rank" ||
+        data === "ranks" ||
+        data === "rank" ||
+        data === "menu_ranks"
+      ) {
+        return bot.sendMessage(
+          chatId,
+          "👑 Ранги\n\n" +
+          "Команды:\n" +
+          "• /профиль — посмотреть профиль\n" +
+          "• /ранг — посмотреть свой ранг\n" +
+          "• /выдатьранг @username ранг — выдать ранг\n" +
+          "• /снятьранг @username — снять ранг\n" +
+          "• /topranks — топ рангов\n\n" +
+          "Важно: повторно выдавать один и тот же ранг нельзя."
+        );
+      }
 
+      if (
+        data === "help:profile" ||
+        data === "profile" ||
+        data === "menu_profile"
+      ) {
+        return bot.sendMessage(
+          chatId,
+          "👤 Профиль\n\n" +
+          "Команды:\n" +
+          "• /профиль\n" +
+          "• профиль\n\n" +
+          "Профиль показывает ID, username, ранг, активность и статистику пользователя."
+        );
+      }
 
+      if (
+        data === "help:rules" ||
+        data === "rules" ||
+        data === "menu_rules"
+      ) {
+        return bot.sendMessage(
+          chatId,
+          "📜 Правила\n\n" +
+          "Команды:\n" +
+          "• /rules\n" +
+          "• /правила\n\n" +
+          "Администраторы могут обновлять правила через команду управления правилами."
+        );
+      }
 
+      if (
+        data === "help:settings" ||
+        data === "settings" ||
+        data === "menu_settings"
+      ) {
+        return bot.sendMessage(
+          chatId,
+          "⚙️ Настройки\n\n" +
+          "Раздел для настроек беседы и функций бота.\n\n" +
+          "Сюда можно добавить включение/выключение модулей, антиспам, приветствие и права."
+        );
+      }
 
+      if (
+        data === "help:shop" ||
+        data === "shop" ||
+        data === "menu_shop"
+      ) {
+        return bot.sendMessage(
+          chatId,
+          "🎁 Магазин\n\n" +
+          "Раздел магазина пока в разработке.\n\n" +
+          "Можно добавить покупку ролей, титулов, кейсов, монет и бонусов."
+        );
+      }
 
+      if (
+        data === "help:summon" ||
+        data === "help:call" ||
+        data === "summon" ||
+        data === "call" ||
+        data === "menu_summon"
+      ) {
+        return bot.sendMessage(
+          chatId,
+          "📣 Созыв\n\n" +
+          "Команды:\n" +
+          "• /созыв — созвать участников\n" +
+          "• /call — созыв\n\n" +
+          "Эту функцию лучше оставить только для админов, чтобы не было спама."
+        );
+      }
 
+      if (
+        data === "help:relations" ||
+        data === "relations" ||
+        data === "menu_relations"
+      ) {
+        return bot.sendMessage(
+          chatId,
+          "❤️ Отношения\n\n" +
+          "Команды:\n" +
+          "• отношения\n" +
+          "• отношения @username\n" +
+          "• отношения reply\n\n" +
+          "Можно сделать дружбу, пары, симпатии и статистику отношений."
+        );
+      }
 
+      if (
+        data === "help:tops" ||
+        data === "tops" ||
+        data === "top" ||
+        data === "menu_tops"
+      ) {
+        return bot.sendMessage(
+          chatId,
+          "🏆 Топы\n\n" +
+          "Команды:\n" +
+          "• /топ\n" +
+          "• /топ сообщений\n" +
+          "• /топ монет\n" +
+          "• /топ рангов"
+        );
+      }
 
+      if (
+        data === "help:friday" ||
+        data === "friday" ||
+        data === "menu_friday"
+      ) {
+        return bot.sendMessage(
+          chatId,
+          "🎉 Пятница\n\n" +
+          "Раздел для развлекательных функций.\n\n" +
+          "Можно добавить пятничные бонусы, активности, розыгрыши и мини-ивенты."
+        );
+      }
 
+      if (
+        data === "help:global_ranks" ||
+        data === "help:global" ||
+        data === "global_ranks" ||
+        data === "menu_global_ranks"
+      ) {
+        return bot.sendMessage(
+          chatId,
+          "🌍 Глобальные ранги\n\n" +
+          "Глобальные ранги могут работать между разными чатами.\n\n" +
+          "Команды:\n" +
+          "• /глобранги\n" +
+          "• /globalranks"
+        );
+      }
 
+      if (
+        data === "help:coins" ||
+        data === "coins" ||
+        data === "money" ||
+        data === "menu_coins"
+      ) {
+        return bot.sendMessage(
+          chatId,
+          "💰 Монеты\n\n" +
+          "Команды:\n" +
+          "• /баланс\n" +
+          "• /монеты\n" +
+          "• /топмонет\n\n" +
+          "Можно добавить награды за активность, магазин и переводы монет."
+        );
+      }
 
-/* ================= FULL BOT CONTROL FIX START ================= */
+      return bot.sendMessage(
+        chatId,
+        "⚠️ Эта кнопка пока не настроена.\n\n" +
+        "Callback data: " + data
+      );
+    } catch (error) {
+      console.error("❌ BUTTONS CALLBACK FIX V2 ERROR:", error);
 
-const __fcFs = require("fs");
-const __fcPath = require("path");
+      try {
+        await bot.answerCallbackQuery(query.id, {
+          text: "Ошибка кнопки",
+          show_alert: false,
+        });
+      } catch {}
 
-const __fcDataDir = __fcPath.join(process.cwd(), "data");
-const __fcUsersFile = __fcPath.join(__fcDataDir, "full-control-users.json");
-
-if (!__fcFs.existsSync(__fcDataDir)) {
-  __fcFs.mkdirSync(__fcDataDir, { recursive: true });
+      try {
+        if (query.message && query.message.chat) {
+          await bot.sendMessage(
+            query.message.chat.id,
+            "❌ Ошибка обработки кнопки. Проверь Railway Logs."
+          );
+        }
+      } catch {}
+    }
+  });
 }
 
-function __fcReadJson(file, fallback) {
+/* ================= BUTTONS CALLBACK FIX END ================= */
+
+
+
+
+
+
+
+/* ================= ONLY UNBAN FIX V5 START ================= */
+
+const __unbanOnlyFs = require("fs");
+const __unbanOnlyPath = require("path");
+
+const __unbanOnlyDataDir = __unbanOnlyPath.join(process.cwd(), "data");
+const __unbanOnlyUsersFile = __unbanOnlyPath.join(__unbanOnlyDataDir, "unban-users.json");
+
+if (!__unbanOnlyFs.existsSync(__unbanOnlyDataDir)) {
+  __unbanOnlyFs.mkdirSync(__unbanOnlyDataDir, { recursive: true });
+}
+
+function __unbanOnlyReadUsers() {
   try {
-    return JSON.parse(__fcFs.readFileSync(file, "utf8"));
+    return JSON.parse(__unbanOnlyFs.readFileSync(__unbanOnlyUsersFile, "utf8"));
   } catch {
-    return fallback;
+    return {};
   }
 }
 
-function __fcWriteJson(file, data) {
-  __fcFs.writeFileSync(file, JSON.stringify(data, null, 2), "utf8");
+function __unbanOnlyWriteUsers(data) {
+  __unbanOnlyFs.writeFileSync(__unbanOnlyUsersFile, JSON.stringify(data, null, 2), "utf8");
 }
 
-function __fcRememberUser(user) {
+function __unbanOnlyRememberUser(user) {
   if (!user || !user.id) return;
 
-  const db = __fcReadJson(__fcUsersFile, {});
+  const db = __unbanOnlyReadUsers();
 
   db[String(user.id)] = {
     id: user.id,
     username: user.username || null,
     first_name: user.first_name || "",
     last_name: user.last_name || "",
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
   };
 
   if (user.username) {
@@ -4286,110 +4522,63 @@ function __fcRememberUser(user) {
     db["@" + username] = user.id;
   }
 
-  __fcWriteJson(__fcUsersFile, db);
+  __unbanOnlyWriteUsers(db);
 }
 
-function __fcFindUser(username) {
-  const clean = String(username || "").replace(/^@/, "").toLowerCase();
+function __unbanOnlyIsCommand(text) {
+  const t = String(text || "").trim().toLowerCase();
 
-  const files = [
-    "full-control-users.json",
-    "hard-unban-users.json",
-    "unban-users.json",
-    "username-users.json",
-    "telegram-users.json",
-    "telegram-users-main.json",
-    "tg-users.json"
-  ];
-
-  for (const name of files) {
-    const db = __fcReadJson(__fcPath.join(__fcDataDir, name), null);
-    if (!db) continue;
-
-    if (db[clean]) return Number(db[clean]);
-    if (db["@" + clean]) return Number(db["@" + clean]);
-
-    for (const key of Object.keys(db)) {
-      const item = db[key];
-      if (
-        item &&
-        typeof item === "object" &&
-        item.username &&
-        String(item.username).toLowerCase() === clean &&
-        item.id
-      ) {
-        return Number(item.id);
-      }
-    }
-  }
-
-  return null;
+  return (
+    t === "/разбанить" ||
+    t.startsWith("/разбанить ") ||
+    t.startsWith("/разбанить@") ||
+    t === "/unban" ||
+    t.startsWith("/unban ") ||
+    t.startsWith("/unban@")
+  );
 }
 
-function __fcCommand(text) {
-  const first = String(text || "").trim().split(/\s+/)[0] || "";
-  return first.replace(/@\w+Bot$/i, "").toLowerCase();
-}
-
-function __fcArgs(text) {
-  const parts = String(text || "").trim().split(/\s+/).filter(Boolean);
-  parts.shift();
-  return parts;
-}
-
-function __fcIsHelpCommand(cmd) {
-  return [
-    "/start", "/help", "/menu", "/commands",
-    "/старт", "/помощь", "/меню", "/команды",
-    "помощь", "меню", "команды"
-  ].includes(cmd);
-}
-
-function __fcResolveTarget(msg) {
+function __unbanOnlyResolveTarget(msg) {
   if (msg.reply_to_message && msg.reply_to_message.from) {
-    __fcRememberUser(msg.reply_to_message.from);
+    __unbanOnlyRememberUser(msg.reply_to_message.from);
+
     return {
-      ok: true,
       id: msg.reply_to_message.from.id,
-      label: msg.reply_to_message.from.username
-        ? "@" + msg.reply_to_message.from.username
-        : String(msg.reply_to_message.from.id)
+      username: msg.reply_to_message.from.username || null,
     };
   }
 
-  const args = __fcArgs(msg.text);
-  const raw = args[0];
+  const text = String(msg.text || "").trim();
+  const parts = text.split(/\s+/).filter(Boolean);
 
-  if (!raw) {
+  if (parts.length < 2) {
     return {
-      ok: false,
       error:
-        "❌ Пользователь не указан.\n\n" +
-        "Используй:\n" +
-        "• /ban @username reason\n" +
-        "• /бан @username причина\n" +
-        "• /unban @username\n" +
-        "• /разбанить @username\n\n" +
-        "Или ответь командой на сообщение пользователя."
+        "❌ Укажи пользователя.\n\n" +
+        "Правильно:\n" +
+        "/разбанить @username\n\n" +
+        "Или ответь на сообщение пользователя командой:\n" +
+        "/разбанить"
     };
   }
+
+  let raw = parts[1].trim();
 
   if (!raw.startsWith("@")) {
     return {
-      ok: false,
       error:
-        "❌ Нужно указать через @username.\n\n" +
+        "❌ Нужно указывать через @username.\n\n" +
         "Пример:\n" +
         "/разбанить @username"
     };
   }
 
   const username = raw.replace(/^@/, "").toLowerCase();
-  const id = __fcFindUser(username);
+  const db = __unbanOnlyReadUsers();
+  const userId = db[username] || db["@" + username];
 
-  if (!id) {
+  if (!userId) {
     return {
-      ok: false,
       error:
         "❌ Я ещё не знаю @" + username + ".\n\n" +
         "Пусть этот пользователь напишет любое сообщение в чат, потом команда заработает.\n\n" +
@@ -4398,495 +4587,71 @@ function __fcResolveTarget(msg) {
   }
 
   return {
-    ok: true,
-    id,
-    label: "@" + username
+    id: Number(userId),
+    username,
   };
 }
 
-function __fcReason(text, skip = 2) {
-  const parts = String(text || "").trim().split(/\s+/).filter(Boolean);
-  return parts.slice(skip).join(" ") || "Причина не указана";
-}
+if (typeof bot !== "undefined" && !global.__ONLY_UNBAN_FIX_V5__) {
+  global.__ONLY_UNBAN_FIX_V5__ = true;
 
-function __fcMute(text) {
-  const args = __fcArgs(text);
-  const time = args[1] || "10м";
-  const m = time.match(/^(\d+)(м|m|ч|h|д|d)$/i);
+  console.log("✅ ONLY UNBAN FIX V5 ACTIVE");
 
-  if (!m) {
-    return {
-      text: "10м",
-      until: Math.floor(Date.now() / 1000) + 10 * 60,
-      reasonSkip: 2
-    };
+  // Отключаем только старые onText-обработчики /разбанить и /unban
+  if (Array.isArray(bot._textRegexpCallbacks)) {
+    bot._textRegexpCallbacks = bot._textRegexpCallbacks.filter((item) => {
+      const regexpText = String(item.regexp || "").toLowerCase();
+
+      return !(
+        regexpText.includes("разбанить") ||
+        regexpText.includes("unban")
+      );
+    });
+
+    console.log("✅ Старые обработчики /разбанить отключены");
   }
 
-  const amount = Number(m[1]);
-  const unit = m[2].toLowerCase();
+  bot.prependListener("message", async (msg) => {
+    try {
+      if (msg.from) {
+        __unbanOnlyRememberUser(msg.from);
+      }
 
-  let seconds = amount * 60;
-  if (unit === "ч" || unit === "h") seconds = amount * 60 * 60;
-  if (unit === "д" || unit === "d") seconds = amount * 24 * 60 * 60;
+      if (msg.reply_to_message && msg.reply_to_message.from) {
+        __unbanOnlyRememberUser(msg.reply_to_message.from);
+      }
 
-  return {
-    text: time,
-    until: Math.floor(Date.now() / 1000) + seconds,
-    reasonSkip: 3
-  };
-}
+      if (!__unbanOnlyIsCommand(msg.text)) return;
 
-async function __fcSend(chatId, text) {
-  return bot.sendMessage(chatId, text).catch((e) => {
-    console.error("sendMessage error:", e);
+      const target = __unbanOnlyResolveTarget(msg);
+
+      if (!target || target.error) {
+        return bot.sendMessage(msg.chat.id, target?.error || "❌ Укажи @username.");
+      }
+
+      await bot.unbanChatMember(msg.chat.id, target.id, {
+        only_if_banned: true,
+      });
+
+      return bot.sendMessage(
+        msg.chat.id,
+        "✅ @" + (target.username || target.id) + " разблокирован."
+      );
+    } catch (error) {
+      console.error("❌ ONLY UNBAN FIX V5 ERROR:", error);
+
+      return bot.sendMessage(
+        msg.chat.id,
+        "❌ Не удалось разблокировать пользователя.\n\n" +
+        "Проверь:\n" +
+        "1. Бот администратор\n" +
+        "2. У бота есть право банить/разбанивать\n" +
+        "3. Пользователь реально был заблокирован\n" +
+        "4. Бот уже видел этого @username в чате"
+      );
+    }
   });
 }
 
-async function __fcSendMenu(chatId) {
-  return bot.sendMessage(chatId,
-    "🤖 FulTalchik_Botik — меню команд\n\n" +
-    "⚙️ Все команды работают со слешем и без!\n\n" +
-    "Выбери раздел:",
-    {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "🛡 Модерация", callback_data: "help:moder" },
-            { text: "👑 Ранги", callback_data: "help:ranks" }
-          ],
-          [
-            { text: "👤 Профиль", callback_data: "help:profile" },
-            { text: "📜 Правила", callback_data: "help:rules" }
-          ],
-          [
-            { text: "⚙️ Настройки", callback_data: "help:settings" },
-            { text: "🎁 Магазин", callback_data: "help:shop" }
-          ],
-          [
-            { text: "📣 Созыв", callback_data: "help:call" },
-            { text: "❤️ Отношения", callback_data: "help:social" }
-          ],
-          [
-            { text: "🏆 Топы", callback_data: "help:tops" },
-            { text: "🎉 Пятница", callback_data: "help:friday" }
-          ],
-          [
-            { text: "🌍 Глоб.ранги", callback_data: "help:global" },
-            { text: "💰 Монеты", callback_data: "help:coins" }
-          ]
-        ]
-      }
-    }
-  );
-}
-
-const __fcSections = {
-  "help:moder":
-    "🛡 Модерация\n\n" +
-    "Русские команды:\n" +
-    "• /бан @username причина\n" +
-    "• /разбанить @username\n" +
-    "• /кик @username причина\n" +
-    "• /мут @username 10м причина\n" +
-    "• /размут @username\n" +
-    "• /очистить 20\n\n" +
-    "English commands:\n" +
-    "• /ban @username reason\n" +
-    "• /unban @username\n" +
-    "• /kick @username reason\n" +
-    "• /mute @username 10m reason\n" +
-    "• /unmute @username\n" +
-    "• /clear 20\n\n" +
-    "Также работает reply на сообщение пользователя.",
-
-  "help:ranks":
-    "👑 Ранги\n\n" +
-    "Русские команды:\n" +
-    "• /ранг\n" +
-    "• /профиль\n" +
-    "• /выдатьранг @username ранг\n" +
-    "• /снятьранг @username\n" +
-    "• /топрангов\n\n" +
-    "English commands:\n" +
-    "• /rank\n" +
-    "• /profile\n" +
-    "• /setrank @username rank\n" +
-    "• /removerank @username\n" +
-    "• /topranks",
-
-  "help:profile":
-    "👤 Профиль\n\n" +
-    "Команды:\n" +
-    "• /профиль\n" +
-    "• /profile\n" +
-    "• профиль\n\n" +
-    "Показывает ID, username, ранг и статистику.",
-
-  "help:rules":
-    "📜 Правила\n\n" +
-    "Команды:\n" +
-    "• /правила\n" +
-    "• /rules\n\n" +
-    "Показывает правила чата.",
-
-  "help:settings":
-    "⚙️ Настройки\n\n" +
-    "Команды:\n" +
-    "• /settings\n" +
-    "• /настройки\n\n" +
-    "Можно добавить антиспам, приветствие, права и модули.",
-
-  "help:shop":
-    "🎁 Магазин\n\n" +
-    "Команды:\n" +
-    "• /shop\n" +
-    "• /магазин\n\n" +
-    "Раздел для ролей, титулов, бонусов и монет.",
-
-  "help:call":
-    "📣 Созыв\n\n" +
-    "Команды:\n" +
-    "• /созыв\n" +
-    "• /call\n\n" +
-    "Функция для созыва участников.",
-
-  "help:social":
-    "❤️ Отношения\n\n" +
-    "Команды:\n" +
-    "• отношения @username\n" +
-    "• отношения reply\n" +
-    "• relationship @username\n\n" +
-    "Можно добавить дружбу, пары и симпатии.",
-
-  "help:tops":
-    "🏆 Топы\n\n" +
-    "Команды:\n" +
-    "• /топ\n" +
-    "• /top\n" +
-    "• /топ сообщений\n" +
-    "• /top messages\n" +
-    "• /топ монет\n" +
-    "• /top coins",
-
-  "help:friday":
-    "🎉 Пятница\n\n" +
-    "Развлекательный раздел:\n" +
-    "• бонусы\n" +
-    "• мини-ивенты\n" +
-    "• розыгрыши\n" +
-    "• активности",
-
-  "help:global":
-    "🌍 Глобальные ранги\n\n" +
-    "Команды:\n" +
-    "• /глобранги\n" +
-    "• /globalranks",
-
-  "help:coins":
-    "💰 Монеты\n\n" +
-    "Команды:\n" +
-    "• /баланс\n" +
-    "• /balance\n" +
-    "• /монеты\n" +
-    "• /coins\n" +
-    "• /топмонет\n" +
-    "• /topcoins"
-};
-
-function __fcNormalizeCallback(data) {
-  const d = String(data || "").trim();
-
-  const map = {
-    "help:moderation": "help:moder",
-    "help:mod": "help:moder",
-    "help:ranks": "help:ranks",
-    "help:rank": "help:ranks",
-    "help:profile": "help:profile",
-    "help:rules": "help:rules",
-    "help:settings": "help:settings",
-    "help:shop": "help:shop",
-    "help:call": "help:call",
-    "help:summon": "help:call",
-    "help:social": "help:social",
-    "help:relations": "help:social",
-    "help:tops": "help:tops",
-    "help:top": "help:tops",
-    "help:friday": "help:friday",
-    "help:global": "help:global",
-    "help:global_ranks": "help:global",
-    "help:coins": "help:coins",
-    "help:money": "help:coins",
-
-    "moder": "help:moder",
-    "moderation": "help:moder",
-    "ranks": "help:ranks",
-    "rank": "help:ranks",
-    "profile": "help:profile",
-    "rules": "help:rules",
-    "settings": "help:settings",
-    "shop": "help:shop",
-    "call": "help:call",
-    "summon": "help:call",
-    "social": "help:social",
-    "relations": "help:social",
-    "tops": "help:tops",
-    "friday": "help:friday",
-    "global": "help:global",
-    "global_ranks": "help:global",
-    "coins": "help:coins",
-    "money": "help:coins"
-  };
-
-  return map[d] || d;
-}
-
-async function __fcHandleCallback(query) {
-  const msg = query.message;
-  const rawData = String(query.data || "").trim();
-  const data = __fcNormalizeCallback(rawData);
-
-  await bot.answerCallbackQuery(query.id).catch(() => {});
-
-  if (!msg || !msg.chat) return true;
-
-  const chatId = msg.chat.id;
-
-  console.log("🔘 FULL CONTROL CALLBACK:", rawData, "=>", data);
-
-  if (__fcSections[data]) {
-    await __fcSend(chatId, __fcSections[data]);
-    return true;
-  }
-
-  await __fcSend(chatId, "⚠️ Кнопка пока не настроена.\n\nCallback data: " + rawData);
-  return true;
-}
-
-async function __fcHandleMessage(msg) {
-  if (!msg || !msg.text) return false;
-
-  if (msg.from) __fcRememberUser(msg.from);
-  if (msg.reply_to_message && msg.reply_to_message.from) {
-    __fcRememberUser(msg.reply_to_message.from);
-  }
-
-  const chatId = msg.chat.id;
-  const cmd = __fcCommand(msg.text);
-
-  if (__fcIsHelpCommand(cmd)) {
-    await __fcSendMenu(chatId);
-    return true;
-  }
-
-  if (cmd === "/разбанить" || cmd === "/unban") {
-    const target = __fcResolveTarget(msg);
-
-    if (!target.ok) {
-      await __fcSend(chatId, target.error);
-      return true;
-    }
-
-    try {
-      await bot.unbanChatMember(chatId, target.id, { only_if_banned: true });
-      await __fcSend(chatId, "✅ " + target.label + " разблокирован.");
-    } catch (e) {
-      console.error("unban error:", e);
-      await __fcSend(chatId, "❌ Не удалось разблокировать " + target.label + ". Проверь права бота.");
-    }
-
-    return true;
-  }
-
-  if (cmd === "/бан" || cmd === "/забанить" || cmd === "/ban") {
-    const target = __fcResolveTarget(msg);
-
-    if (!target.ok) {
-      await __fcSend(chatId, target.error);
-      return true;
-    }
-
-    const reason = __fcReason(msg.text, 2);
-
-    try {
-      await bot.banChatMember(chatId, target.id);
-      await __fcSend(chatId, "🚫 " + target.label + " забанен.\nПричина: " + reason);
-    } catch (e) {
-      console.error("ban error:", e);
-      await __fcSend(chatId, "❌ Не удалось забанить " + target.label + ". Проверь права бота.");
-    }
-
-    return true;
-  }
-
-  if (cmd === "/кик" || cmd === "/kick") {
-    const target = __fcResolveTarget(msg);
-
-    if (!target.ok) {
-      await __fcSend(chatId, target.error);
-      return true;
-    }
-
-    const reason = __fcReason(msg.text, 2);
-
-    try {
-      await bot.banChatMember(chatId, target.id);
-      await bot.unbanChatMember(chatId, target.id, { only_if_banned: true });
-      await __fcSend(chatId, "👢 " + target.label + " кикнут.\nПричина: " + reason);
-    } catch (e) {
-      console.error("kick error:", e);
-      await __fcSend(chatId, "❌ Не удалось кикнуть " + target.label + ". Проверь права бота.");
-    }
-
-    return true;
-  }
-
-  if (cmd === "/мут" || cmd === "/mute") {
-    const target = __fcResolveTarget(msg);
-
-    if (!target.ok) {
-      await __fcSend(chatId, target.error);
-      return true;
-    }
-
-    const mute = __fcMute(msg.text);
-    const reason = __fcReason(msg.text, mute.reasonSkip);
-
-    try {
-      await bot.restrictChatMember(chatId, target.id, {
-        permissions: {
-          can_send_messages: false,
-          can_send_audios: false,
-          can_send_documents: false,
-          can_send_photos: false,
-          can_send_videos: false,
-          can_send_video_notes: false,
-          can_send_voice_notes: false,
-          can_send_polls: false,
-          can_send_other_messages: false,
-          can_add_web_page_previews: false
-        },
-        until_date: mute.until
-      });
-
-      await __fcSend(chatId, "🔇 " + target.label + " получил мут на " + mute.text + ".\nПричина: " + reason);
-    } catch (e) {
-      console.error("mute error:", e);
-      await __fcSend(chatId, "❌ Не удалось выдать мут " + target.label + ". Проверь права бота.");
-    }
-
-    return true;
-  }
-
-  if (cmd === "/размут" || cmd === "/unmute") {
-    const target = __fcResolveTarget(msg);
-
-    if (!target.ok) {
-      await __fcSend(chatId, target.error);
-      return true;
-    }
-
-    try {
-      await bot.restrictChatMember(chatId, target.id, {
-        permissions: {
-          can_send_messages: true,
-          can_send_audios: true,
-          can_send_documents: true,
-          can_send_photos: true,
-          can_send_videos: true,
-          can_send_video_notes: true,
-          can_send_voice_notes: true,
-          can_send_polls: true,
-          can_send_other_messages: true,
-          can_add_web_page_previews: true
-        }
-      });
-
-      await __fcSend(chatId, "🔊 " + target.label + " размучен.");
-    } catch (e) {
-      console.error("unmute error:", e);
-      await __fcSend(chatId, "❌ Не удалось снять мут " + target.label + ". Проверь права бота.");
-    }
-
-    return true;
-  }
-
-  if (cmd === "/очистить" || cmd === "/clear") {
-    await __fcSend(chatId, "🧹 Очистка будет работать через твой старый модуль, если он включён.");
-    return true;
-  }
-
-  if (cmd === "/правила" || cmd === "/rules") {
-    await __fcSend(chatId, __fcSections["help:rules"]);
-    return true;
-  }
-
-  if (cmd === "/профиль" || cmd === "/profile" || cmd === "профиль") {
-    await __fcSend(
-      chatId,
-      "👤 Профиль\n\n" +
-      "ID: " + msg.from.id + "\n" +
-      "Username: " + (msg.from.username ? "@" + msg.from.username : "нет")
-    );
-    return true;
-  }
-
-  return false;
-}
-
-if (typeof bot !== "undefined" && !global.__FULL_BOT_CONTROL_FIX__) {
-  global.__FULL_BOT_CONTROL_FIX__ = true;
-
-  console.log("✅ FULL BOT CONTROL FIX ACTIVE");
-
-  const __fcOriginalEmit = bot.emit.bind(bot);
-
-  bot.emit = function(eventName, ...args) {
-    try {
-      if (eventName === "message") {
-        const msg = args[0];
-
-        if (msg && msg.from) __fcRememberUser(msg.from);
-        if (msg && msg.reply_to_message && msg.reply_to_message.from) {
-          __fcRememberUser(msg.reply_to_message.from);
-        }
-
-        const cmd = __fcCommand(msg && msg.text);
-
-        const interceptCommands = [
-          "/start", "/help", "/menu", "/commands",
-          "/старт", "/помощь", "/меню", "/команды",
-          "/разбанить", "/unban",
-          "/бан", "/забанить", "/ban",
-          "/кик", "/kick",
-          "/мут", "/mute",
-          "/размут", "/unmute",
-          "/правила", "/rules",
-          "/профиль", "/profile",
-          "/очистить", "/clear",
-          "помощь", "меню", "команды", "профиль"
-        ];
-
-        if (msg && interceptCommands.includes(cmd)) {
-          __fcHandleMessage(msg).catch((e) => console.error("FULL CONTROL MESSAGE ERROR:", e));
-          return true;
-        }
-      }
-
-      if (eventName === "callback_query") {
-        const query = args[0];
-
-        if (query && query.data) {
-          __fcHandleCallback(query).catch((e) => console.error("FULL CONTROL CALLBACK ERROR:", e));
-          return true;
-        }
-      }
-    } catch (e) {
-      console.error("FULL CONTROL EMIT ERROR:", e);
-    }
-
-    return __fcOriginalEmit(eventName, ...args);
-  };
-}
-
-/* ================= FULL BOT CONTROL FIX END ================= */
+/* ================= ONLY UNBAN FIX V5 END ================= */
 

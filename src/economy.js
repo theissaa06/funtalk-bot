@@ -3,179 +3,167 @@
 // Монеты, ежедневный бонус, перевод монет.
 // ============================================================
 
-const db = require('./db');
-const { formatName, isUserAdmin } = require('./utils');
+const {
+  upsertUser,
+  getCoins,
+  addCoins,
+  removeCoins,
+  hasInventoryItem,
+  loadDb,
+  saveDb,
+  now
+} = require('./database/db');
 
 const DAILY_MIN    = 50;
 const DAILY_MAX    = 200;
 const DAILY_HOURS  = 24;
 
-function getUser(userId, chatId) {
-  return db.prepare(
-    'SELECT * FROM users WHERE id = ? AND chat_id = ?'
-  ).get(userId, chatId);
+// Вспомогательные функции
+function formatName(user) {
+  return user.first_name ? `*${user.first_name}*` : `[${user.id}]`;
 }
 
-function upsertUser(user, chatId) {
-  db.prepare(`
-    INSERT INTO users (id, username, first_name, chat_id)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      username   = excluded.username,
-      first_name = excluded.first_name
-  `).run(user.id, user.username || null, user.first_name || null, chatId);
-}
-
-function addCoins(userId, chatId, amount) {
-  db.prepare(
-    'UPDATE users SET coins = coins + ? WHERE id = ? AND chat_id = ?'
-  ).run(amount, userId, chatId);
-}
-
-function removeCoins(userId, chatId, amount) {
-  db.prepare(
-    'UPDATE users SET coins = MAX(0, coins - ?) WHERE id = ? AND chat_id = ?'
-  ).run(amount, userId, chatId);
-}
-
-// Хранит время последнего /daily: Map<chatId_userId, timestamp>
+// Хранит время последнего /daily: Map<userId, timestamp>
 const dailyCooldown = new Map();
 
 function register(bot) {
 
   // ── /daily — ежедневный бонус ─────────────────────────────────
   bot.command(['daily', 'ежедневный', 'бонус'], async (ctx) => {
-    const userId = ctx.from.id;
-    const chatId = ctx.chat.type === 'private' ? userId : ctx.chat.id;
+    try {
+      const userId = ctx.from.id;
 
-    upsertUser(ctx.from, chatId);
+      upsertUser(userId, ctx.from.username, ctx.from.first_name);
 
-    const key     = `${chatId}_${userId}`;
-    const now     = Date.now();
-    const last    = dailyCooldown.get(key) || 0;
-    const elapsed = now - last;
-    const cooldownMs = DAILY_HOURS * 3600 * 1000;
+      const key     = String(userId);
+      const nowTime = Date.now();
+      const last    = dailyCooldown.get(key) || 0;
+      const elapsed = nowTime - last;
+      const cooldownMs = DAILY_HOURS * 3600 * 1000;
 
-    if (elapsed < cooldownMs) {
-      const remaining = cooldownMs - elapsed;
-      const h = Math.floor(remaining / 3600000);
-      const m = Math.floor((remaining % 3600000) / 60000);
-      return ctx.reply(
-        `⏳ Ежедневный бонус уже получен.\n\nПриходи через: <b>${h}ч ${m}м</b>`,
+      if (elapsed < cooldownMs) {
+        const remaining = cooldownMs - elapsed;
+        const h = Math.floor(remaining / 3600000);
+        const m = Math.floor((remaining % 3600000) / 60000);
+        return ctx.reply(
+          `⏳ Ежедневный бонус уже получен.\n\nПриходи через: <b>${h}ч ${m}м</b>`,
+          { parse_mode: 'HTML' }
+        );
+      }
+
+      const bonus = Math.floor(Math.random() * (DAILY_MAX - DAILY_MIN + 1)) + DAILY_MIN;
+
+      // Проверяем наличие daily_boost в инвентаре
+      let finalBonus = bonus;
+      if (hasInventoryItem(userId, 'daily_boost')) {
+        finalBonus = bonus * 2;
+        // Удаляем буст из инвентаря после использования
+        const data = loadDb();
+        const user = data.users.find(u => u.telegram_id === userId);
+        if (user && user.inventory) {
+          user.inventory = user.inventory.filter(id => id !== 'daily_boost');
+          saveDb(data);
+        }
+      }
+
+      addCoins(userId, finalBonus);
+      dailyCooldown.set(key, nowTime);
+
+      const updatedCoins = getCoins(userId);
+      await ctx.reply(
+        `💰 <b>${formatName(ctx.from)}</b>, ты получаешь <b>+${finalBonus} монет</b>!` +
+        (finalBonus > bonus ? ` (x2 буст!)` : '') + `\n\n` +
+        `💼 Всего монет: <b>${updatedCoins}</b>`,
         { parse_mode: 'HTML' }
       );
+    } catch (err) {
+      console.error('[economy daily]', err.message);
+      await ctx.reply('❌ Ошибка при получении бонуса.');
     }
-
-    const bonus = Math.floor(Math.random() * (DAILY_MAX - DAILY_MIN + 1)) + DAILY_MIN;
-
-    // Проверяем daily_boost из магазина
-    let finalBonus = bonus;
-    try {
-      const fsLib  = require('fs');
-      const dbPath = process.env.DB_PATH || './data/bot_data.json';
-      const data   = JSON.parse(fsLib.readFileSync(dbPath, 'utf8'));
-      const dbUser = (data.users || []).find(u => u.id === userId && String(u.chat_id) === String(chatId));
-      if (dbUser?.daily_boost_next) {
-        finalBonus = bonus * 2;
-        dbUser.daily_boost_next = false;
-        fsLib.writeFileSync(dbPath, JSON.stringify(data, null, 2), 'utf8');
-      }
-      // Обновляем streak
-      const today    = new Date().toISOString().slice(0, 10);
-      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      if (dbUser) {
-        if (dbUser.last_daily_date === yesterday) {
-          dbUser.daily_streak = (dbUser.daily_streak || 0) + 1;
-        } else if (dbUser.last_daily_date !== today) {
-          dbUser.daily_streak = 1;
-        }
-        dbUser.last_daily_date = today;
-        fsLib.writeFileSync(dbPath, JSON.stringify(data, null, 2), 'utf8');
-      }
-    } catch {}
-
-    addCoins(userId, chatId, finalBonus);
-    dailyCooldown.set(key, now);
-
-    const user = getUser(userId, chatId);
-    await ctx.reply(
-      `💰 <b>${formatName(ctx.from)}</b>, ты получаешь <b>+${finalBonus} монет</b>!` +
-      (finalBonus > bonus ? ` (x2 буст!)` : '') + `\n\n` +
-      `💼 Всего монет: <b>${user.coins}</b>`,
-      { parse_mode: 'HTML' }
-    );
   });
 
   // ── /coins — баланс ──────────────────────────────────────────
   bot.command(['coins', 'монеты', 'баланс', 'balance'], async (ctx) => {
-    const userId = ctx.from.id;
-    const chatId = ctx.chat.type === 'private' ? userId : ctx.chat.id;
+    try {
+      upsertUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+      const coins = getCoins(ctx.from.id);
 
-    upsertUser(ctx.from, chatId);
-    const user = getUser(userId, chatId);
-
-    await ctx.reply(
-      `💼 <b>${formatName(ctx.from)}</b>\n\n💰 Монеты: <b>${user ? user.coins : 0}</b>`,
-      { parse_mode: 'HTML' }
-    );
+      await ctx.reply(
+        `💼 <b>${formatName(ctx.from)}</b>\n\n💰 Монеты: <b>${coins}</b>`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('[economy coins]', err.message);
+      await ctx.reply('❌ Ошибка.');
+    }
   });
 
   // ── /give [@user|reply] [сумма] — перевод монет ──────────────
   bot.command(['give', 'перевести', 'transfer'], async (ctx) => {
-    const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
+    try {
+      // Цель
+      let target = ctx.message.reply_to_message?.from;
 
-    // Цель
-    let target = ctx.message.reply_to_message?.from;
-    const args = ctx.message.text.split(' ').slice(1).filter(Boolean);
+      if (!target) {
+        return ctx.reply('⚠️ Ответь на сообщение человека, которому хочешь перевести монеты.');
+      }
 
-    if (!target) {
-      return ctx.reply('⚠️ Ответь на сообщение человека, которому хочешь перевести монеты.');
+      if (target.id === ctx.from.id) {
+        return ctx.reply('😅 Нельзя переводить монеты самому себе.');
+      }
+
+      const args = ctx.message.text.split(' ').slice(1).filter(Boolean);
+      const amount = parseInt(args[0]);
+
+      if (!amount || amount <= 0) {
+        return ctx.reply('⚠️ Укажи сумму: ответь на сообщение и напиши /give 100');
+      }
+
+      upsertUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+      upsertUser(target.id, target.username, target.first_name);
+
+      const senderCoins = getCoins(ctx.from.id);
+
+      if (senderCoins < amount) {
+        return ctx.reply(`❌ Недостаточно монет. У тебя: <b>${senderCoins}</b>`, { parse_mode: 'HTML' });
+      }
+
+      removeCoins(ctx.from.id, amount);
+      addCoins(target.id, amount);
+
+      await ctx.reply(
+        `✅ <b>${formatName(ctx.from)}</b> перевёл <b>${amount} монет</b> → <b>${formatName(target)}</b>`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('[economy give]', err.message);
+      await ctx.reply('❌ Ошибка при переводе.');
     }
-
-    if (target.id === ctx.from.id) {
-      return ctx.reply('😅 Нельзя переводить монеты самому себе.');
-    }
-
-    const amount = parseInt(args[0]);
-    if (!amount || amount <= 0) {
-      return ctx.reply('⚠️ Укажи сумму: ответь на сообщение и напиши /give 100');
-    }
-
-    upsertUser(ctx.from, chatId);
-    upsertUser(target, chatId);
-
-    const sender = getUser(ctx.from.id, chatId);
-    if (!sender || sender.coins < amount) {
-      return ctx.reply(`❌ Недостаточно монет. У тебя: <b>${sender?.coins || 0}</b>`, { parse_mode: 'HTML' });
-    }
-
-    removeCoins(ctx.from.id, chatId, amount);
-    addCoins(target.id, chatId, amount);
-
-    await ctx.reply(
-      `✅ <b>${formatName(ctx.from)}</b> перевёл <b>${amount} монет</b> → <b>${formatName(target)}</b>`,
-      { parse_mode: 'HTML' }
-    );
   });
 
   // ── /richest — топ по монетам ─────────────────────────────────
   bot.command(['richest', 'богатые'], async (ctx) => {
-    const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
+    try {
+      const data = loadDb();
+      const users = (data.users || [])
+        .filter(u => u.coins > 0)
+        .sort((a, b) => (b.coins || 0) - (a.coins || 0))
+        .slice(0, 10);
 
-    const rows = db.prepare(
-      'SELECT * FROM users WHERE chat_id = ? ORDER BY coins DESC LIMIT 10'
-    ).all(chatId);
+      if (!users.length) return ctx.reply('💼 Пока нет данных.');
 
-    if (!rows.length) return ctx.reply('💼 Пока нет данных.');
+      const medals = ['🥇', '🥈', '🥉'];
+      const lines = users.map((u, i) => {
+        const medal = medals[i] || `${i + 1}.`;
+        const name  = u.username ? `@${u.username}` : (u.first_name || `User${u.id}`);
+        return `${medal} ${name} — ${u.coins || 0} монет`;
+      });
 
-    const medals = ['🥇', '🥈', '🥉'];
-    const lines = rows.map((u, i) => {
-      const medal = medals[i] || `${i + 1}.`;
-      const name  = u.username ? `@${u.username}` : (u.first_name || `User${u.id}`);
-      return `${medal} ${name} — ${u.coins} монет`;
-    });
-
-    await ctx.reply(`💰 <b>Топ по монетам:</b>\n\n${lines.join('\n')}`, { parse_mode: 'HTML' });
+      await ctx.reply(`💰 <b>Топ по монетам:</b>\n\n${lines.join('\n')}`, { parse_mode: 'HTML' });
+    } catch (err) {
+      console.error('[economy richest]', err.message);
+      await ctx.reply('❌ Ошибка.');
+    }
   });
 
   console.log('✅ Модуль economy подключён');
