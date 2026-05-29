@@ -4652,6 +4652,21 @@ async function __fcHandleCallback(query) {
   const chatId = msg.chat.id;
 
   console.log("🔘 FULL CONTROL CALLBACK:", rawData, "=>", data);
+  // Special-case: show interactive shop when user presses help:shop
+  if (data === 'help:shop' || data === 'shop') {
+    try {
+      let text = '🛍 <b>Магазин</b>\n\n';
+      for (const [id,item] of Object.entries(SHOP)) {
+        text += `• <b>${item.name}</b> — ${item.price} монет\n  <i>${item.desc}</i>\n`;
+      }
+      text += '\n💬 Купить: <code>купить название</code>';
+      await __fcSend(chatId, text);
+    } catch (e) {
+      console.error('shop send error:', e);
+      await __fcSend(chatId, __fcSections['help:shop']);
+    }
+    return true;
+  }
 
   if (__fcSections[data]) {
     await __fcSend(chatId, __fcSections[data]);
@@ -4876,8 +4891,14 @@ if (typeof bot !== "undefined" && !global.__FULL_BOT_CONTROL_FIX__) {
         const query = args[0];
 
         if (query && query.data) {
-          __fcHandleCallback(query).catch((e) => console.error("FULL CONTROL CALLBACK ERROR:", e));
-          return true;
+          // Only intercept known FULL CONTROL callbacks (help:*, topic:*).
+          // Let other callback_query handlers run normally to avoid breaking module-specific buttons (e.g., shop items).
+          const raw = String(query.data || '');
+          if (raw.startsWith('help:') || raw.startsWith('topic:')) {
+            __fcHandleCallback(query).catch((e) => console.error("FULL CONTROL CALLBACK ERROR:", e));
+            return true;
+          }
+          // otherwise do not intercept — allow original emit to handle it
         }
       }
     } catch (e) {

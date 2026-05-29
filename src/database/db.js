@@ -17,12 +17,14 @@ const defaultData = {
     settings: 0,
     reports: 0,
     ai_messages: 0,
+    coin_logs: 0,
   },
   users: [],
   profiles: [],
   settings: [],
   reports: [],
   ai_messages: [],
+  coin_logs: [], // Логирование всех операций с монетами
 };
 
 function ensureDbFile() {
@@ -47,6 +49,7 @@ function loadDb() {
       settings: Array.isArray(data.settings) ? data.settings : [],
       reports: Array.isArray(data.reports) ? data.reports : [],
       ai_messages: Array.isArray(data.ai_messages) ? data.ai_messages : [],
+      coin_logs: Array.isArray(data.coin_logs) ? data.coin_logs : [],
     };
   } catch (error) {
     console.error('[DB] Файл базы повреждён. Создаю новый database.json:', error.message);
