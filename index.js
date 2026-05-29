@@ -3270,8 +3270,13 @@ async function doCall(msg, target, chatId) {
 //  CALLBACK QUERY HANDLER
 // ═══════════════════════════════════════════════════════════════
 bot.on('callback_query', async (query) => {
-    // ── PRIVATE TOPIC MENU BUTTONS ─────────────────────
-    if (data.startsWith('topic:')) {
+  const msg = query.message;
+  const data = String(query.data || '').trim();
+  const chatId = msg && msg.chat ? msg.chat.id : null;
+  const userId = query.from && query.from.id ? query.from.id : null;
+
+  // ── PRIVATE TOPIC MENU BUTTONS ─────────────────────
+  if (data.startsWith('topic:')) {
       const topic = data.split(':')[1];
 
       if (topic === 'back') {
@@ -3316,17 +3321,40 @@ bot.on('callback_query', async (query) => {
 
 
   try {
+    // Buy via callback: buy:ITEMKEY
+    if (data.startsWith('buy:')) {
+      const key = data.split(':')[1];
+      const item = SHOP[key];
+      if (!item) {
+        await bot.answerCallbackQuery(query.id, { text: '❌ Товар не найден.' }).catch(() => {});
+        return;
+      }
+
+      const u = getUser(chatId, userId);
+      const bal = Number(u.balance || 0);
+      if (bal < item.price) {
+        await bot.answerCallbackQuery(query.id, { text: `❌ Недостаточно монет. У тебя: ${bal}` }).catch(() => {});
+        await bot.sendMessage(chatId, `❌ <b>Недостаточно монет.</b>\nНужно: <b>${item.price}</b> монет\nУ тебя: <b>${bal}</b>`, { parse_mode: 'HTML' }).catch(() => {});
+        return;
+      }
+
+      u.balance = bal - item.price;
+      if (key === 'reputationboost') u.reputation = (u.reputation || 0) + 5;
+      else if (key === 'warnshield') u.inventory.warnShield = (u.inventory.warnShield || 0) + 1;
+      else if (key === 'customtitle') u.inventory.customTitle = true;
+      else u.inventory[key] = true;
+      saveDB();
+
+      await bot.answerCallbackQuery(query.id, { text: '✅ Куплено!' }).catch(() => {});
+      await bot.sendMessage(chatId, `✅ <b>Куплено!</b>\n${item.name} — ${item.price} монет\n🪙 Баланс: ${u.balance}`, { parse_mode: 'HTML' }).catch(() => {});
+      return;
+    }
     // FINAL RELATIONSHIP CALLBACK HOOK
     if ((query.data || '').startsWith('finalrel:')) {
-      const data = query.data || '';
-      const msg = query.message;
-      const chatId = msg.chat.id;
-      const userId = query.from.id;
-
-      const parts = data.split(':');
+      const partsData = query.data || '';
+      const parts = partsData.split(':');
       const requestId = parts[1];
       const action = parts[2];
-
       const chat = finalRelEnsure(getChat(chatId));
       const request = chat.pendingRelationshipRequests?.[requestId];
 
@@ -3511,11 +3539,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-
-    const data   = query.data;
-    const msg    = query.message;
-    const chatId = msg.chat.id;
-    const userId = query.from.id;
 
     // ── HELP SECTIONS ─────────────────────────────────────────
     if (data.startsWith('help:') && data !== 'help:back') {
@@ -4656,11 +4679,13 @@ async function __fcHandleCallback(query) {
   if (data === 'help:shop' || data === 'shop') {
     try {
       let text = '🛍 <b>Магазин</b>\n\n';
+      const rows = [];
       for (const [id,item] of Object.entries(SHOP)) {
         text += `• <b>${item.name}</b> — ${item.price} монет\n  <i>${item.desc}</i>\n`;
+        rows.push([{ text: `Купить ${item.name} — ${item.price}`, callback_data: `buy:${id}` }]);
       }
       text += '\n💬 Купить: <code>купить название</code>';
-      await __fcSend(chatId, text);
+      await bot.sendMessage(chatId, text, { parse_mode: 'HTML', reply_markup: { inline_keyboard: rows } });
     } catch (e) {
       console.error('shop send error:', e);
       await __fcSend(chatId, __fcSections['help:shop']);

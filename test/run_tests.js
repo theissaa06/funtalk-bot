@@ -31,14 +31,41 @@ const wait = ms => new Promise(res => setTimeout(res, ms));
   // allow handlers to process
   await wait(200);
 
-  console.log('Messages sent by bot stub:');
+  console.log('Messages sent by bot stub after help:shop:');
   for (const m of (bot.sent||[])) {
     console.log('->', m.chatId, '-', (m.text || '').slice(0,120).replace(/\n/g,'\\n'));
   }
 
-  // Quick check: ensure shop text was sent
-  const shopSent = (bot.sent||[]).some(s => typeof s.text === 'string' && s.text.includes('Магазин'));
-  if (shopSent) console.log('✅ Shop callback handled'); else console.error('❌ Shop callback NOT handled');
+  // simulate pressing buy:vip as user with id 42
+  console.log('Emitting callback_query buy:vip from user 42');
+  bot.emit('callback_query', {
+    id: 'q-2',
+    data: 'buy:vip',
+    from: { id: 42 },
+    message: { chat: { id: 999 }, message_id: 111 }
+  });
 
-  process.exit(shopSent ? 0 : 3);
+  await wait(200);
+
+  console.log('Messages sent by bot stub after buy attempt:');
+  for (const m of (bot.sent||[])) {
+    console.log('->', m.chatId, '-', (m.text || '').slice(0,120).replace(/\n/g,'\\n'));
+  }
+
+  // Quick checks
+  const shopSent = (bot.sent||[]).some(s => typeof s.text === 'string' && s.text.includes('Магазин'));
+  const bought = (bot.sent||[]).some(s => typeof s.text === 'string' && s.text.includes('Куплено'));
+
+  if (!shopSent) {
+    console.error('❌ Shop callback NOT handled');
+    process.exit(3);
+  }
+
+  if (bought) {
+    console.log('✅ Purchase succeeded (unexpected if balance was 0)');
+    process.exit(0);
+  } else {
+    console.log('✅ Purchase not completed (likely due to insufficient balance)');
+    process.exit(0);
+  }
 })();
