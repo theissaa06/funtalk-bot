@@ -444,6 +444,9 @@ function registerAdvancedSecurity(bot, helpers) {
 
   bot.use(async (ctx, next) => {
     try {
+      // Пропускаем callback_query (нажатия кнопок) — они не являются сообщениями
+      if (ctx.callbackQuery) return next();
+
       if (!isGroup(ctx)) return next();
 
       const message = ctx.message;

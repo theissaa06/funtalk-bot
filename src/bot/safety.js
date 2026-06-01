@@ -58,6 +58,9 @@ function registerSafety(bot) {
 }
 
 async function safetyMiddleware(ctx, next) {
+  // Пропускаем callback_query (нажатия кнопок)
+  if (ctx.callbackQuery) return next();
+
   if (ctx.message?.text) {
     const text = ctx.message.text;
 

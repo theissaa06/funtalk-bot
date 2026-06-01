@@ -184,6 +184,9 @@ function registerSecurity(bot, helpers) {
 
   bot.use(async (ctx, next) => {
     try {
+      // Пропускаем callback_query (нажатия кнопок)
+      if (ctx.callbackQuery) return next();
+
       if (!isGroup(ctx)) return next();
 
       const message = ctx.message;
