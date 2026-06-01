@@ -1,32 +1,30 @@
 // ============================================================
 // src/bot/shop.js
 // Магазин: покупка титулов и бустов за монеты + инвентарь
-// Использует src/db.js (основная база с chat_id)
 // ============================================================
 
 const { Markup } = require('telegraf');
 const fs   = require('fs');
 const path = require('path');
 
-// Путь к основной базе (src/db.js)
 const DB_PATH = process.env.DB_PATH
   ? path.resolve(process.env.DB_PATH)
   : path.join(process.cwd(), 'data', 'bot_data.json');
 
 // ── Товары магазина ───────────────────────────────────────────
 const SHOP_ITEMS = [
-  { id: 'title_vip',    name: '⭐ VIP',              price: 500,  type: 'title', desc: 'Титул VIP в профиле' },
-  { id: 'title_pro',    name: '🔥 Про игрок',        price: 800,  type: 'title', desc: 'Титул Про игрок' },
-  { id: 'title_legend', name: '👑 Легенда',          price: 2000, type: 'title', desc: 'Легендарный титул' },
-  { id: 'title_rich',   name: '💎 Богач',            price: 1500, type: 'title', desc: 'Титул Богач' },
-  { id: 'title_shadow', name: '🌑 Тень',             price: 1000, type: 'title', desc: 'Таинственный титул' },
-  { id: 'title_star',   name: '🌟 Звезда чата',      price: 1200, type: 'title', desc: 'Звезда этого чата' },
-  { id: 'title_ghost',  name: '👻 Призрак',          price: 700,  type: 'title', desc: 'Тихий, но заметный' },
-  { id: 'title_king',   name: '🤴 Король',           price: 3000, type: 'title', desc: 'Король чата' },
-  { id: 'title_queen',  name: '👸 Королева',         price: 3000, type: 'title', desc: 'Королева чата' },
-  { id: 'title_hacker', name: '💻 Хакер',            price: 900,  type: 'title', desc: 'Технарь и хакер' },
-  { id: 'xp_boost',     name: '⚡ XP x2 (1 час)',    price: 300,  type: 'boost', desc: 'Двойной XP на 1 час' },
-  { id: 'daily_boost',  name: '🎁 Бонус x2 (1 раз)', price: 200,  type: 'boost', desc: 'Следующий /daily x2' },
+  { id: 'vip',    name: '⭐ VIP',              price: 500,  type: 'title', desc: 'Титул VIP в профиле' },
+  { id: 'pro',    name: '🔥 Про игрок',        price: 800,  type: 'title', desc: 'Титул Про игрок' },
+  { id: 'legend', name: '👑 Легенда',          price: 2000, type: 'title', desc: 'Легендарный титул' },
+  { id: 'rich',   name: '💎 Богач',            price: 1500, type: 'title', desc: 'Титул Богач' },
+  { id: 'shadow', name: '🌑 Тень',             price: 1000, type: 'title', desc: 'Таинственный титул' },
+  { id: 'star',   name: '🌟 Звезда чата',      price: 1200, type: 'title', desc: 'Звезда этого чата' },
+  { id: 'ghost',  name: '👻 Призрак',          price: 700,  type: 'title', desc: 'Тихий, но заметный' },
+  { id: 'king',   name: '🤴 Король',           price: 3000, type: 'title', desc: 'Король чата' },
+  { id: 'queen',  name: '👸 Королева',         price: 3000, type: 'title', desc: 'Королева чата' },
+  { id: 'hacker', name: '💻 Хакер',            price: 900,  type: 'title', desc: 'Технарь и хакер' },
+  { id: 'xpx2',   name: '⚡ XP x2 (1 час)',    price: 300,  type: 'boost', desc: 'Двойной XP на 1 час' },
+  { id: 'bonusx2',name: '🎁 Бонус x2 (1 раз)', price: 200,  type: 'boost', desc: 'Следующий /daily x2' },
 ];
 
 // ── Работа с базой ────────────────────────────────────────────
@@ -39,23 +37,14 @@ function loadData() {
 
 function saveData(data) {
   try { fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf8'); }
-  catch (e) { console.error('[shop] saveData error:', e.message); }
-}
-
-// Найти запись пользователя в чате (берём первую активную запись)
-function findUserRow(telegramId, chatId) {
-  const data = loadData();
-  // Если chatId передан — ищем точно, иначе любую запись этого пользователя
-  if (chatId) {
-    return (data.users || []).find(
-      u => u.id === telegramId && String(u.chat_id) === String(chatId)
-    );
-  }
-  return (data.users || []).find(u => u.id === telegramId);
+  catch (e) { console.error('[shop] saveData:', e.message); }
 }
 
 function getCoins(telegramId, chatId) {
-  const row = findUserRow(telegramId, chatId);
+  const data = loadData();
+  const row  = chatId
+    ? (data.users || []).find(u => u.id === telegramId && String(u.chat_id) === String(chatId))
+    : (data.users || []).find(u => u.id === telegramId);
   return row?.coins || 0;
 }
 
@@ -64,31 +53,27 @@ function removeCoins(telegramId, chatId, amount) {
   const rows = (data.users || []).filter(
     u => u.id === telegramId && (!chatId || String(u.chat_id) === String(chatId))
   );
-  for (const row of rows) {
-    row.coins = Math.max(0, (row.coins || 0) - amount);
-  }
+  for (const row of rows) row.coins = Math.max(0, (row.coins || 0) - amount);
   saveData(data);
 }
 
 function getInventory(telegramId) {
-  // Инвентарь глобальный (не привязан к чату)
   const data = loadData();
   const row  = (data.users || []).find(u => u.id === telegramId);
-  return row?.inventory || [];
+  return Array.isArray(row?.inventory) ? row.inventory : [];
 }
 
 function addToInventory(telegramId, itemId) {
   const data = loadData();
-  // Обновляем все записи этого пользователя (во всех чатах)
-  let updated = false;
+  let saved  = false;
   for (const row of (data.users || [])) {
     if (row.id === telegramId) {
-      if (!row.inventory) row.inventory = [];
+      if (!Array.isArray(row.inventory)) row.inventory = [];
       if (!row.inventory.includes(itemId)) row.inventory.push(itemId);
-      updated = true;
+      saved = true;
     }
   }
-  if (updated) saveData(data);
+  if (saved) saveData(data);
 }
 
 function getActiveTitle(telegramId) {
@@ -97,64 +82,57 @@ function getActiveTitle(telegramId) {
   return row?.active_title || null;
 }
 
-function setActiveTitle(telegramId, titleId) {
+function setActiveTitle(telegramId, itemId) {
   const data = loadData();
-  let updated = false;
+  let saved  = false;
   for (const row of (data.users || [])) {
-    if (row.id === telegramId) {
-      row.active_title = titleId;
-      updated = true;
-    }
+    if (row.id === telegramId) { row.active_title = itemId; saved = true; }
   }
-  if (updated) saveData(data);
+  if (saved) saveData(data);
 }
 
-function applyBoost(telegramId, boostType) {
+function applyBoost(telegramId, itemId) {
   const data = loadData();
   for (const row of (data.users || [])) {
     if (row.id === telegramId) {
-      if (boostType === 'xp_boost')    row.xp_boost_until  = Date.now() + 3600000;
-      if (boostType === 'daily_boost') row.daily_boost_next = true;
+      if (itemId === 'xpx2')    row.xp_boost_until  = Date.now() + 3600000;
+      if (itemId === 'bonusx2') row.daily_boost_next = true;
     }
   }
   saveData(data);
 }
 
-// ── Клавиатура магазина ───────────────────────────────────────
-function shopKeyboard(page = 0) {
-  const perPage = 5;
-  const start   = page * perPage;
-  const items   = SHOP_ITEMS.slice(start, start + perPage);
+// ── Построить текст и клавиатуру магазина ─────────────────────
+const PER_PAGE = 4;
 
-  const buttons = items.map(item =>
-    [Markup.button.callback(`${item.name} — ${item.price}💰`, `shop_buy_${item.id}`)]
-  );
+function buildShopPage(page, coins) {
+  const start = page * PER_PAGE;
+  const items = SHOP_ITEMS.slice(start, start + PER_PAGE);
+  const total = Math.ceil(SHOP_ITEMS.length / PER_PAGE);
 
-  const nav = [];
-  if (page > 0)                          nav.push(Markup.button.callback('⬅️', `shop_page_${page - 1}`));
-  if (start + perPage < SHOP_ITEMS.length) nav.push(Markup.button.callback('➡️', `shop_page_${page + 1}`));
-  if (nav.length) buttons.push(nav);
-  buttons.push([Markup.button.callback('🎒 Мой инвентарь', 'shop_inventory')]);
-
-  return Markup.inlineKeyboard(buttons);
-}
-
-function shopText(page = 0, coins = 0) {
-  const perPage = 5;
-  const start   = page * perPage;
-  const items   = SHOP_ITEMS.slice(start, start + perPage);
-  const total   = Math.ceil(SHOP_ITEMS.length / perPage);
-
-  const lines = items.map(item =>
-    `${item.name} — <b>${item.price}💰</b>\n  └ ${item.desc}`
+  const lines = items.map(i =>
+    `${i.name} — <b>${i.price}💰</b>\n  └ ${i.desc}`
   ).join('\n\n');
 
-  return (
+  const text = (
     `🏪 <b>Магазин FunTalk</b> (стр. ${page + 1}/${total})\n\n` +
     `${lines}\n\n` +
-    `💼 Твой баланс: <b>${coins} монет</b>\n` +
-    `Нажми на товар чтобы купить.`
+    `💼 Твой баланс: <b>${coins} монет</b>`
   );
+
+  // Кнопки товаров — короткие ID без префикса title_
+  const buttons = items.map(i => [
+    Markup.button.callback(`${i.name} — ${i.price}💰`, `sb${i.id}`),
+  ]);
+
+  // Навигация
+  const nav = [];
+  if (page > 0)                              nav.push(Markup.button.callback('⬅️', `sp${page - 1}`));
+  if (start + PER_PAGE < SHOP_ITEMS.length)  nav.push(Markup.button.callback('➡️', `sp${page + 1}`));
+  if (nav.length) buttons.push(nav);
+  buttons.push([Markup.button.callback('🎒 Инвентарь', 'sinv')]);
+
+  return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
 
 // ── Регистрация ───────────────────────────────────────────────
@@ -165,37 +143,31 @@ function registerShop(bot) {
     try {
       const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
       const coins  = getCoins(ctx.from.id, chatId);
-
-      await ctx.reply(
-        shopText(0, coins),
-        { parse_mode: 'HTML', ...shopKeyboard(0) }
-      );
+      const { text, keyboard } = buildShopPage(0, coins);
+      await ctx.reply(text, { parse_mode: 'HTML', ...keyboard });
     } catch (err) {
       console.error('[shop /shop]', err.message);
-      await ctx.reply('❌ Ошибка при открытии магазина. Попробуй ещё раз.');
+      await ctx.reply('❌ Ошибка при открытии магазина.');
     }
   });
 
-  // Пагинация
-  bot.action(/^shop_page_(\d+)$/, async (ctx) => {
+  // Пагинация: sp0, sp1, sp2...
+  bot.action(/^sp(\d+)$/, async (ctx) => {
     try {
       await ctx.answerCbQuery();
-      const page  = parseInt(ctx.match[1]);
+      const page   = parseInt(ctx.match[1]);
       const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
-      const coins = getCoins(ctx.from.id, chatId);
-
-      await ctx.editMessageText(
-        shopText(page, coins),
-        { parse_mode: 'HTML', ...shopKeyboard(page) }
-      );
+      const coins  = getCoins(ctx.from.id, chatId);
+      const { text, keyboard } = buildShopPage(page, coins);
+      await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
     } catch (err) {
       console.error('[shop pagination]', err.message);
-      await ctx.answerCbQuery('Ошибка обновления.', { show_alert: true });
+      await ctx.answerCbQuery('Ошибка.', { show_alert: true });
     }
   });
 
-  // Покупка товара
-  bot.action(/^shop_buy_(.+)$/, async (ctx) => {
+  // Покупка: sbvip, sbpro, sblegend...
+  bot.action(/^sb(.+)$/, async (ctx) => {
     try {
       await ctx.answerCbQuery();
       const itemId = ctx.match[1];
@@ -220,35 +192,25 @@ function registerShop(bot) {
         return ctx.answerCbQuery('У тебя уже есть этот титул!', { show_alert: true });
       }
 
-      // Списываем монеты и добавляем в инвентарь
       removeCoins(ctx.from.id, chatId, item.price);
       addToInventory(ctx.from.id, itemId);
 
-      // Применяем буст сразу
-      if (item.type === 'boost') {
-        applyBoost(ctx.from.id, itemId);
-      }
+      if (item.type === 'boost') applyBoost(ctx.from.id, itemId);
 
       const newCoins = getCoins(ctx.from.id, chatId);
 
       let extra = '';
-      if (item.type === 'title') {
-        extra = `\n\n💡 Активируй командой: /usetitle ${itemId}`;
-      } else if (itemId === 'xp_boost') {
-        extra = '\n\n⚡ Буст активирован! XP x2 на 1 час.';
-      } else if (itemId === 'daily_boost') {
-        extra = '\n\n🎁 Буст активирован! Следующий /daily даст x2 монет.';
-      }
+      if (item.type === 'title')      extra = `\n\n💡 Активируй: /usetitle ${itemId}`;
+      else if (itemId === 'xpx2')     extra = '\n\n⚡ Буст активирован! XP x2 на 1 час.';
+      else if (itemId === 'bonusx2')  extra = '\n\n🎁 Буст активирован! Следующий /daily даст x2 монет.';
 
       await ctx.editMessageText(
-        `✅ <b>Куплено: ${item.name}</b>\n\n` +
-        `${item.desc}${extra}\n\n` +
-        `💼 Остаток: <b>${newCoins} монет</b>`,
+        `✅ <b>Куплено: ${item.name}</b>\n\n${item.desc}${extra}\n\n💼 Остаток: <b>${newCoins} монет</b>`,
         {
           parse_mode: 'HTML',
           ...Markup.inlineKeyboard([
-            [Markup.button.callback('🏪 Назад в магазин', 'shop_page_0')],
-            [Markup.button.callback('🎒 Мой инвентарь', 'shop_inventory')],
+            [Markup.button.callback('🏪 Назад в магазин', 'sp0')],
+            [Markup.button.callback('🎒 Инвентарь', 'sinv')],
           ]),
         }
       );
@@ -259,78 +221,37 @@ function registerShop(bot) {
   });
 
   // Инвентарь через кнопку
-  bot.action('shop_inventory', async (ctx) => {
+  bot.action('sinv', async (ctx) => {
     try {
       await ctx.answerCbQuery();
-      await showInventory(ctx, true);
+      const { text, keyboard } = buildInventoryMessage(ctx.from);
+      await ctx.editMessageText(text, { parse_mode: 'HTML', ...keyboard });
     } catch (err) {
-      console.error('[shop inventory action]', err.message);
+      console.error('[shop sinv]', err.message);
+      await ctx.answerCbQuery('Ошибка.', { show_alert: true });
     }
   });
 
   // /inventory — инвентарь командой
   bot.command(['inventory', 'инвентарь', 'inv'], async (ctx) => {
     try {
-      await showInventory(ctx, false);
+      const { text, keyboard } = buildInventoryMessage(ctx.from);
+      await ctx.reply(text, { parse_mode: 'HTML', ...keyboard });
     } catch (err) {
       console.error('[shop inventory]', err.message);
       await ctx.reply('❌ Ошибка при открытии инвентаря.');
     }
   });
 
-  async function showInventory(ctx, isEdit = false) {
-    const inventory   = getInventory(ctx.from.id);
-    const activeTitle = getActiveTitle(ctx.from.id);
-    const name        = ctx.from.first_name || ctx.from.username || 'Участник';
-
-    if (!inventory.length) {
-      const text    = `🎒 <b>Инвентарь пуст</b>\n\nКупи что-нибудь в /shop!`;
-      const options = {
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([[Markup.button.callback('🏪 В магазин', 'shop_page_0')]]),
-      };
-      if (isEdit) await ctx.editMessageText(text, options);
-      else        await ctx.reply(text, options);
-      return;
-    }
-
-    const lines = inventory.map(id => {
-      const item = SHOP_ITEMS.find(i => i.id === id);
-      if (!item) return null;
-      const active = id === activeTitle ? ' ✅ (активен)' : '';
-      return `• ${item.name}${active}`;
-    }).filter(Boolean).join('\n');
-
-    // Кнопки для надевания титулов
-    const titleButtons = inventory
-      .filter(id => {
-        const item = SHOP_ITEMS.find(i => i.id === id);
-        return item && item.type === 'title';
-      })
-      .map(id => {
-        const item = SHOP_ITEMS.find(i => i.id === id);
-        const active = id === activeTitle ? ' ✅' : '';
-        return [Markup.button.callback(`Надеть: ${item.name}${active}`, `inv_use_${id}`)];
-      });
-
-    titleButtons.push([Markup.button.callback('🏪 В магазин', 'shop_page_0')]);
-
-    const text    = `🎒 <b>Инвентарь ${name}:</b>\n\n${lines}`;
-    const options = { parse_mode: 'HTML', ...Markup.inlineKeyboard(titleButtons) };
-
-    if (isEdit) await ctx.editMessageText(text, options);
-    else        await ctx.reply(text, options);
-  }
-
-  // Надеть титул (кнопка)
-  bot.action(/^inv_use_(.+)$/, async (ctx) => {
+  // Надеть титул: siuvip, siupro...
+  bot.action(/^siu(.+)$/, async (ctx) => {
     try {
       await ctx.answerCbQuery();
       const itemId    = ctx.match[1];
       const item      = SHOP_ITEMS.find(i => i.id === itemId);
       const inventory = getInventory(ctx.from.id);
 
-      if (!item) return ctx.answerCbQuery('Товар не найден.', { show_alert: true });
+      if (!item)                       return ctx.answerCbQuery('Товар не найден.', { show_alert: true });
       if (!inventory.includes(itemId)) return ctx.answerCbQuery('У тебя нет этого предмета!', { show_alert: true });
 
       setActiveTitle(ctx.from.id, itemId);
@@ -340,47 +261,79 @@ function registerShop(bot) {
         {
           parse_mode: 'HTML',
           ...Markup.inlineKeyboard([
-            [Markup.button.callback('🎒 Инвентарь', 'shop_inventory')],
-            [Markup.button.callback('🏪 Магазин', 'shop_page_0')],
+            [Markup.button.callback('🎒 Инвентарь', 'sinv')],
+            [Markup.button.callback('🏪 Магазин', 'sp0')],
           ]),
         }
       );
     } catch (err) {
-      console.error('[shop use title]', err.message);
+      console.error('[shop siu]', err.message);
       await ctx.answerCbQuery('Ошибка.', { show_alert: true });
     }
   });
 
-  // /usetitle [id] — активировать по команде
+  // /usetitle [id]
   bot.command(['usetitle', 'титул'], async (ctx) => {
     try {
       const args   = ctx.message.text.split(' ').slice(1);
       const itemId = args[0];
 
-      if (!itemId) {
-        return ctx.reply(
-          '💡 Укажи ID титула: /usetitle title_vip\n\nСписок твоих предметов: /inventory'
-        );
-      }
+      if (!itemId) return ctx.reply('Укажи ID: /usetitle vip\nСписок: /inventory');
 
       const item      = SHOP_ITEMS.find(i => i.id === itemId);
       const inventory = getInventory(ctx.from.id);
 
-      if (!item)                    return ctx.reply('❌ Такого титула не существует.');
+      if (!item)                       return ctx.reply('❌ Такого титула не существует.');
       if (!inventory.includes(itemId)) return ctx.reply('❌ У тебя нет этого предмета. Купи в /shop');
 
       setActiveTitle(ctx.from.id, itemId);
       await ctx.reply(`✅ Титул <b>${item.name}</b> активирован! Виден в /rank`, { parse_mode: 'HTML' });
     } catch (err) {
       console.error('[shop usetitle]', err.message);
-      await ctx.reply('❌ Ошибка при активации титула.');
+      await ctx.reply('❌ Ошибка.');
     }
   });
 
   console.log('✅ Модуль shop подключён');
 }
 
-// Публичная функция — получить активный титул пользователя
+// ── Построить сообщение инвентаря ─────────────────────────────
+function buildInventoryMessage(from) {
+  const inventory   = getInventory(from.id);
+  const activeTitle = getActiveTitle(from.id);
+  const name        = from.first_name || from.username || 'Участник';
+
+  if (!inventory.length) {
+    return {
+      text: `🎒 <b>Инвентарь пуст</b>\n\nКупи что-нибудь в /shop!`,
+      keyboard: Markup.inlineKeyboard([[Markup.button.callback('🏪 В магазин', 'sp0')]]),
+    };
+  }
+
+  const lines = inventory.map(id => {
+    const item = SHOP_ITEMS.find(i => i.id === id);
+    if (!item) return null;
+    const active = id === activeTitle ? ' ✅' : '';
+    return `• ${item.name}${active}`;
+  }).filter(Boolean).join('\n');
+
+  const titleButtons = inventory
+    .filter(id => SHOP_ITEMS.find(i => i.id === id && i.type === 'title'))
+    .map(id => {
+      const item   = SHOP_ITEMS.find(i => i.id === id);
+      const active = id === activeTitle ? ' ✅' : '';
+      return [Markup.button.callback(`Надеть: ${item.name}${active}`, `siu${id}`)];
+    });
+
+  titleButtons.push([Markup.button.callback('🏪 В магазин', 'sp0')]);
+
+  return {
+    text: `🎒 <b>Инвентарь ${name}:</b>\n\n${lines}`,
+    keyboard: Markup.inlineKeyboard(titleButtons),
+  };
+}
+
+// Публичная функция — получить активный титул
 function getUserTitle(telegramId) {
   const titleId = getActiveTitle(telegramId);
   if (!titleId) return null;

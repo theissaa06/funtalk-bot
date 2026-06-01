@@ -443,23 +443,30 @@ function registerMenu(bot) {
 
   // ── Кнопка "🏪 Магазин" ──────────────────────────────────────
   bot.hears('🏪 Магазин', async (ctx) => {
-    const { SHOP_ITEMS } = require('./shop');
-    const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
-    const db     = require('../db');
-    const user   = db.prepare('SELECT * FROM users WHERE id = ? AND chat_id = ?').get(ctx.from.id, chatId);
+    try {
+      const { SHOP_ITEMS } = require('./shop');
+      const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
+      const db     = require('../db');
+      const user   = db.prepare('SELECT coins FROM users WHERE id = ? AND chat_id = ?').get(ctx.from.id, chatId);
+      const coins  = user?.coins || 0;
 
-    const perPage = 5;
-    const items   = SHOP_ITEMS.slice(0, perPage);
-    const total   = Math.ceil(SHOP_ITEMS.length / perPage);
-    const lines   = items.map(i => `${i.name}\n  💰 ${i.price} монет — ${i.desc}`).join('\n\n');
+      const PER_PAGE = 4;
+      const items    = SHOP_ITEMS.slice(0, PER_PAGE);
+      const total    = Math.ceil(SHOP_ITEMS.length / PER_PAGE);
+      const lines    = items.map(i => `${i.name} — <b>${i.price}💰</b>\n  └ ${i.desc}`).join('\n\n');
 
-    const buttons = items.map(i => [Markup.button.callback(`${i.name} — ${i.price}💰`, `shop_buy_${i.id}`)]);
-    buttons.push([Markup.button.callback('➡️', 'shop_page_1')]);
+      const buttons = items.map(i => [Markup.button.callback(`${i.name} — ${i.price}💰`, `sb${i.id}`)]);
+      buttons.push([Markup.button.callback('➡️', 'sp1')]);
+      buttons.push([Markup.button.callback('🎒 Инвентарь', 'sinv')]);
 
-    await ctx.reply(
-      `🏪 <b>Магазин FunTalk</b> (стр. 1/${total})\n\n${lines}\n\n💼 Твой баланс: <b>${user?.coins || 0} монет</b>`,
-      { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
-    );
+      await ctx.reply(
+        `🏪 <b>Магазин FunTalk</b> (стр. 1/${total})\n\n${lines}\n\n💼 Твой баланс: <b>${coins} монет</b>`,
+        { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
+      );
+    } catch (err) {
+      console.error('[menu shop]', err.message);
+      await ctx.reply('❌ Ошибка при открытии магазина.');
+    }
   });
 }
 
