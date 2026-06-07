@@ -59,8 +59,12 @@ function getCoins(tgId, chatId) {
   const data = load();
   // Ищем запись с совпадением chat_id если передан, иначе первую
   const row = chatId
-    ? data.users.find(u => u.id === tgId && String(u.chat_id) === String(chatId))
-    : data.users.find(u => u.id === tgId);
+    ? data.users.find(u =>
+        (String(u.id) === String(tgId) || String(u.telegram_id) === String(tgId)) &&
+        (String(u.chat_id) === String(chatId) || String(u.chatId) === String(chatId))
+      )
+    : data.users.find(u => String(u.id) === String(tgId) || String(u.telegram_id) === String(tgId));
+
   return row ? (row.coins || 0) : 0;
 }
 
@@ -69,7 +73,9 @@ function deductCoins(tgId, chatId, amount) {
   const data = load();
   let changed = false;
   for (const row of data.users) {
-    if (row.id === tgId && (!chatId || String(row.chat_id) === String(chatId))) {
+    const matchId = String(row.id) === String(tgId) || String(row.telegram_id) === String(tgId);
+    const matchChat = !chatId || String(row.chat_id) === String(chatId) || String(row.chatId) === String(chatId);
+    if (matchId && matchChat) {
       row.coins = Math.max(0, (row.coins || 0) - amount);
       changed = true;
     }
@@ -80,7 +86,7 @@ function deductCoins(tgId, chatId, amount) {
 /** Инвентарь (глобальный — не привязан к чату) */
 function getInv(tgId) {
   const data = load();
-  const row  = data.users.find(u => u.id === tgId);
+  const row  = data.users.find(u => String(u.id) === String(tgId) || String(u.telegram_id) === String(tgId));
   return Array.isArray(row?.inventory) ? [...row.inventory] : [];
 }
 
@@ -88,7 +94,7 @@ function addInv(tgId, itemId) {
   const data = load();
   let changed = false;
   for (const row of data.users) {
-    if (row.id === tgId) {
+    if (String(row.id) === String(tgId) || String(row.telegram_id) === String(tgId)) {
       if (!Array.isArray(row.inventory)) row.inventory = [];
       if (!row.inventory.includes(itemId)) {
         row.inventory.push(itemId);
@@ -102,14 +108,15 @@ function addInv(tgId, itemId) {
 /** Активный титул */
 function getTitle(tgId) {
   const data = load();
-  return data.users.find(u => u.id === tgId)?.active_title || null;
+  const row = data.users.find(u => String(u.id) === String(tgId) || String(u.telegram_id) === String(tgId));
+  return row ? row.active_title || null : null;
 }
 
 function setTitle(tgId, itemId) {
   const data = load();
   let changed = false;
   for (const row of data.users) {
-    if (row.id === tgId) {
+    if (String(row.id) === String(tgId) || String(row.telegram_id) === String(tgId)) {
       row.active_title = itemId;
       changed = true;
     }
@@ -121,7 +128,7 @@ function setTitle(tgId, itemId) {
 function applyBoost(tgId, itemId) {
   const data = load();
   for (const row of data.users) {
-    if (row.id === tgId) {
+    if (String(row.id) === String(tgId) || String(row.telegram_id) === String(tgId)) {
       if (itemId === 'xpx2')  row.xp_boost_until  = Date.now() + 3600000; // 1 час
       if (itemId === 'bonx2') row.daily_boost_next = true;
     }
