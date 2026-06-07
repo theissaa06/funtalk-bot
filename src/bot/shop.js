@@ -450,6 +450,12 @@ function registerShop(bot) {
             ]),
           }
         );
+        try {
+          await ctx.reply(`✅ Вы успешно купили ${item.name}. Остаток: ${newCoins} FunMoney`);
+        } catch (e) { /* игнорируем ошибки отправки личного сообщения */ }
+          try {
+            await ctx.reply(`✅ Вы успешно купили ${item.name}. Остаток: ${newCoins} FunMoney`);
+          } catch (e) { /* игнорируем ошибки отправки личного сообщения */ }
         return;
       }
 
