@@ -172,20 +172,7 @@ function register(bot) {
         }
       }
 
-      // Если к боту обратились, но он не понял фразу
-      await ctx.reply(
-        "🤖 Я понял, что ты обращаешься ко мне.\n\n" +
-          "Попробуй написать:\n" +
-          "• бот привет\n" +
-          "• бот как дела\n" +
-          "• бот скучно\n\n" +
-          "Или используй команды: /commands",
-        {
-          reply_to_message_id: ctx.message.message_id,
-          allow_sending_without_reply: true,
-        }
-      );
-
+      // Если к боту обратились, но он не понял фразу, не отправляем подсказку.
       return next();
     } catch (error) {
       console.error("Ошибка autoResponder:", error.message);

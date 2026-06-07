@@ -3,26 +3,33 @@
 //  Railway 24/7  |  data/database.json
 // ═══════════════════════════════════════════════════════════════
 'use strict';
+
 require('dotenv').config();
+
 const TelegramBot = require('node-telegram-bot-api');
-const fs   = require('fs');
+const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
+
 const execFileAsync = promisify(execFile);
 
 // ── ENV ──────────────────────────────────────────────────────────
-const BOT_TOKEN    = process.env.BOT_TOKEN;
+const BOT_TOKEN = process.env.BOT_TOKEN;
 const BOT_USERNAME = (process.env.BOT_USERNAME || '').toLowerCase();
-const OWNER_ID     = parseInt(process.env.OWNER_ID || '0', 10);
+const OWNER_ID = parseInt(process.env.OWNER_ID || '0', 10);
 
 if (!BOT_TOKEN) {
-  console.error('❌  BOT_TOKEN не найден. Добавь его в .env или Railway Variables.');
+  console.error('❌ BOT_TOKEN не найден. Проверь .env');
   process.exit(1);
 }
 
+if (!OWNER_ID) {
+  console.warn('⚠️ OWNER_ID не указан. Владелец бота может не определяться.');
+}
+
 // ── DATABASE ──────────────────────────────────────────────────────
-const DB_DIR  = path.join(__dirname, 'data');
+const DB_DIR = path.join(__dirname, 'data');
 const DB_PATH = path.join(DB_DIR, 'database.json');
 const DOWNLOAD_DIR = path.join(__dirname, 'downloads');
 

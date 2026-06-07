@@ -137,10 +137,10 @@ function pageText(page, coins) {
   const total = Math.ceil(ITEMS.length / PER_PAGE);
 
   const list = items
-    .map(i => `${i.name} — <b>${i.price}💰</b>\n  └ ${i.desc}`)
+    .map(i => `${i.name} — <b>${i.price}</b> FunMoney\n  └ ${i.desc}`)
     .join('\n\n');
 
-  return `🏪 <b>Магазин FunTalk</b> (стр. ${page + 1}/${total})\n\n${list}\n\n💼 Баланс: <b>${coins}💰</b>`;
+  return `🏪 <b>Магазин FunTalk</b> (стр. ${page + 1}/${total})\n\n${list}\n\n💼 Баланс: <b>${coins}</b> FunMoney`;
 }
 
 function pageKeyboard(page) {
@@ -149,7 +149,7 @@ function pageKeyboard(page) {
   const total   = Math.ceil(ITEMS.length / PER_PAGE);
 
   // Кнопки товаров
-  const rows = items.map(i => [Markup.button.callback(`${i.name} — ${i.price}💰`, `sb_${i.id}`)]);
+  const rows = items.map(i => [Markup.button.callback(`${i.name} — ${i.price} FunMoney`, `sb_${i.id}`)]);
 
   // Навигация
   const nav = [];
@@ -199,13 +199,20 @@ function invKeyboard(tgId) {
   return Markup.inlineKeyboard(titleButtons);
 }
 
+function getChatId(ctx) {
+  const chat = ctx.chat || ctx.callbackQuery?.message?.chat;
+  if (!chat) return null;
+  return chat.type === 'private' ? ctx.from.id : chat.id;
+}
+
 // ── Регистрация ───────────────────────────────────────────────
 function registerShop(bot) {
 
   // ── /shop — открыть магазин ───────────────────────────────────
   bot.command(['shop', 'магазин'], async (ctx) => {
     try {
-      const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
+      const chatId = getChatId(ctx);
+      if (!chatId) throw new Error('Не удалось определить чат');
       const coins  = getCoins(ctx.from.id, chatId);
       await ctx.reply(pageText(0, coins), {
         parse_mode: 'HTML',
@@ -222,7 +229,8 @@ function registerShop(bot) {
     try {
       await ctx.answerCbQuery();
       const page   = parseInt(ctx.match[1], 10);
-      const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
+      const chatId = getChatId(ctx);
+      if (!chatId) throw new Error('Не удалось определить чат');
       const coins  = getCoins(ctx.from.id, chatId);
       await ctx.editMessageText(pageText(page, coins), {
         parse_mode: 'HTML',
@@ -243,14 +251,15 @@ function registerShop(bot) {
       const item   = ITEMS.find(i => i.id === itemId);
       if (!item) return ctx.answerCbQuery('❌ Товар не найден.', { show_alert: true });
 
-      const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
+      const chatId = getChatId(ctx);
+      if (!chatId) throw new Error('Не удалось определить чат');
       const coins  = getCoins(ctx.from.id, chatId);
       const inv    = getInv(ctx.from.id);
 
       // Проверка баланса
       if (coins < item.price) {
         return ctx.answerCbQuery(
-          `❌ Недостаточно монет\nНужно: ${item.price}💰  Есть: ${coins}💰`,
+          `❌ Недостаточно FunMoney\nНужно: ${item.price} FunMoney  Есть: ${coins} FunMoney`,
           { show_alert: true }
         );
       }
@@ -278,7 +287,7 @@ function registerShop(bot) {
       await ctx.editMessageText(
         `✅ <b>Куплено: ${item.name}</b>\n\n` +
         `${item.desc}${note}\n\n` +
-        `💼 Остаток: <b>${newCoins}💰</b>`,
+        `💼 Остаток: <b>${newCoins}</b> FunMoney`,
         {
           parse_mode: 'HTML',
           ...Markup.inlineKeyboard([
@@ -363,6 +372,111 @@ function registerShop(bot) {
     } catch (e) {
       console.error('[shop su]', e.message);
       await ctx.answerCbQuery('Ошибка.', { show_alert: true });
+    }
+  });
+
+  bot.on('callback_query', async (ctx, next) => {
+    const data = ctx.callbackQuery?.data;
+    if (!data) return next();
+    if (!/^sp_\d+$/.test(data) && !/^sb_.+$/.test(data) && data !== 'sinv' && !/^su_.+$/.test(data)) return next();
+
+    try {
+      await ctx.answerCbQuery();
+      const chatId = getChatId(ctx);
+      if (!chatId) return ctx.answerCbQuery('Не удалось определить чат.', { show_alert: true });
+
+      if (data === 'sinv') {
+        const { text, empty } = invText(ctx.from.id, ctx.from.first_name);
+        if (empty) {
+          await ctx.editMessageText(text, {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([[Markup.button.callback('🏪 В магазин', 'sp_0')]]),
+          });
+        } else {
+          await ctx.editMessageText(text, {
+            parse_mode: 'HTML',
+            ...invKeyboard(ctx.from.id),
+          });
+        }
+        return;
+      }
+
+      const [type, arg] = data.split('_');
+      if (type === 'sp') {
+        const page = parseInt(arg, 10);
+        const coins = getCoins(ctx.from.id, chatId);
+        await ctx.editMessageText(pageText(page, coins), {
+          parse_mode: 'HTML',
+          ...pageKeyboard(page),
+        });
+        return;
+      }
+
+      if (type === 'sb') {
+        const itemId = arg;
+        const item = ITEMS.find(i => i.id === itemId);
+        if (!item) return ctx.answerCbQuery('❌ Товар не найден.', { show_alert: true });
+
+        const coins = getCoins(ctx.from.id, chatId);
+        const inv   = getInv(ctx.from.id);
+        if (coins < item.price) {
+          return ctx.answerCbQuery(
+            `❌ Недостаточно FunMoney\nНужно: ${item.price} FunMoney  Есть: ${coins} FunMoney`,
+            { show_alert: true }
+          );
+        }
+        if (item.type === 'title' && inv.includes(itemId)) {
+          return ctx.answerCbQuery('Этот титул у тебя уже есть!', { show_alert: true });
+        }
+
+        deductCoins(ctx.from.id, chatId, item.price);
+        addInv(ctx.from.id, itemId);
+        if (item.type === 'boost') applyBoost(ctx.from.id, itemId);
+        const newCoins = getCoins(ctx.from.id, chatId);
+        let note = '';
+        if (item.type === 'title') note = `\n\n💡 Надень командой /usetitle ${itemId} или через инвентарь.`;
+        else if (itemId === 'xpx2') note = '\n\n⚡ XP x2 активирован на 1 час!';
+        else if (itemId === 'bonx2') note = '\n\n🎁 Буст активирован! Следующий /daily даст x2 монет.';
+
+        await ctx.editMessageText(
+          `✅ <b>Куплено: ${item.name}</b>\n\n` +
+          `${item.desc}${note}\n\n` +
+          `💼 Остаток: <b>${newCoins}</b> FunMoney`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('🏪 Назад в магазин', 'sp_0')],
+              [Markup.button.callback('🎒 Мой инвентарь', 'sinv')],
+            ]),
+          }
+        );
+        return;
+      }
+
+      if (type === 'su') {
+        const itemId = arg;
+        const item = ITEMS.find(i => i.id === itemId);
+        const inv  = getInv(ctx.from.id);
+        if (!item) return ctx.answerCbQuery('Товар не найден.', { show_alert: true });
+        if (!inv.includes(itemId)) return ctx.answerCbQuery('Нет в инвентаре.', { show_alert: true });
+        if (item.type !== 'title') return ctx.answerCbQuery('Это не титул.', { show_alert: true });
+
+        setTitle(ctx.from.id, itemId);
+        await ctx.editMessageText(
+          `✅ Титул <b>${item.name}</b> надет!\n\nОн отображается в /rank`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([
+              [Markup.button.callback('🎒 Инвентарь', 'sinv')],
+              [Markup.button.callback('🏪 Магазин',   'sp_0')],
+            ]),
+          }
+        );
+        return;
+      }
+    } catch (err) {
+      console.error('[shop callback]', err.message);
+      await ctx.answerCbQuery('Ошибка обработки кнопки.', { show_alert: true });
     }
   });
 

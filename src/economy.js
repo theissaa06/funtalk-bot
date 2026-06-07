@@ -1,6 +1,6 @@
 // ============================================================
 // src/economy.js
-// Монеты, ежедневный бонус, перевод монет.
+// FunMoney, ежедневный бонус, перевод FunMoney.
 // ============================================================
 
 const {
@@ -13,6 +13,12 @@ const {
   saveDb,
   now
 } = require('./database/db');
+
+const OWNER_ID = parseInt(process.env.OWNER_ID || '0', 10);
+
+function formatCurrency(amount) {
+  return `${amount} FunMoney`;
+}
 
 const DAILY_MIN    = 50;
 const DAILY_MAX    = 200;
@@ -71,9 +77,9 @@ function register(bot) {
 
       const updatedCoins = getCoins(userId);
       await ctx.reply(
-        `💰 <b>${formatName(ctx.from)}</b>, ты получаешь <b>+${finalBonus} монет</b>!` +
+        `💰 <b>${formatName(ctx.from)}</b>, ты получаешь <b>+${formatCurrency(finalBonus)}</b>!` +
         (finalBonus > bonus ? ` (x2 буст!)` : '') + `\n\n` +
-        `💼 Всего монет: <b>${updatedCoins}</b>`,
+        `💼 Всего: <b>${formatCurrency(updatedCoins)}</b>`,
         { parse_mode: 'HTML' }
       );
     } catch (err) {
@@ -89,7 +95,7 @@ function register(bot) {
       const coins = getCoins(ctx.from.id);
 
       await ctx.reply(
-        `💼 <b>${formatName(ctx.from)}</b>\n\n💰 Монеты: <b>${coins}</b>`,
+        `💼 <b>${formatName(ctx.from)}</b>\n\n💰 FunMoney: <b>${coins}</b>`,
         { parse_mode: 'HTML' }
       );
     } catch (err) {
@@ -98,14 +104,14 @@ function register(bot) {
     }
   });
 
-  // ── /give [@user|reply] [сумма] — перевод монет ──────────────
+  // ── /give [@user|reply] [сумма] — перевод FunMoney ──────────────
   bot.command(['give', 'перевести', 'transfer'], async (ctx) => {
     try {
       // Цель
       let target = ctx.message.reply_to_message?.from;
 
       if (!target) {
-        return ctx.reply('⚠️ Ответь на сообщение человека, которому хочешь перевести монеты.');
+        return ctx.reply('⚠️ Ответь на сообщение человека, которому хочешь перевести FunMoney.');
       }
 
       if (target.id === ctx.from.id) {
@@ -125,14 +131,14 @@ function register(bot) {
       const senderCoins = getCoins(ctx.from.id);
 
       if (senderCoins < amount) {
-        return ctx.reply(`❌ Недостаточно монет. У тебя: <b>${senderCoins}</b>`, { parse_mode: 'HTML' });
+        return ctx.reply(`❌ Недостаточно FunMoney. У тебя: <b>${senderCoins}</b>`, { parse_mode: 'HTML' });
       }
 
       removeCoins(ctx.from.id, amount);
       addCoins(target.id, amount);
 
       await ctx.reply(
-        `✅ <b>${formatName(ctx.from)}</b> перевёл <b>${amount} монет</b> → <b>${formatName(target)}</b>`,
+        `✅ <b>${formatName(ctx.from)}</b> перевёл <b>${formatCurrency(amount)}</b> → <b>${formatName(target)}</b>`,
         { parse_mode: 'HTML' }
       );
     } catch (err) {
@@ -156,13 +162,41 @@ function register(bot) {
       const lines = users.map((u, i) => {
         const medal = medals[i] || `${i + 1}.`;
         const name  = u.username ? `@${u.username}` : (u.first_name || `User${u.id}`);
-        return `${medal} ${name} — ${u.coins || 0} монет`;
+        return `${medal} ${name} — ${formatCurrency(u.coins || 0)}`;
       });
 
-      await ctx.reply(`💰 <b>Топ по монетам:</b>\n\n${lines.join('\n')}`, { parse_mode: 'HTML' });
+      await ctx.reply(`💰 <b>Топ по FunMoney:</b>\n\n${lines.join('\n')}`, { parse_mode: 'HTML' });
     } catch (err) {
       console.error('[economy richest]', err.message);
       await ctx.reply('❌ Ошибка.');
+    }
+  });
+
+  // ── /grant [@user|reply] [сумма] — выдать FunMoney разработчиком ──
+  bot.command(['grant', 'givecoins', 'addcoins'], async (ctx) => {
+    try {
+      if (ctx.from.id !== OWNER_ID) {
+        return ctx.reply('❌ Только разработчик может использовать эту команду.');
+      }
+
+      const target = ctx.message.reply_to_message?.from;
+      const args = ctx.message.text.split(' ').slice(1).filter(Boolean);
+      const amount = parseInt(args[0], 10);
+
+      if (!target || !amount || amount <= 0) {
+        return ctx.reply('⚠️ Использование: ответь на сообщение пользователя и напиши /grant 100');
+      }
+
+      upsertUser(target.id, target.username, target.first_name);
+      addCoins(target.id, amount);
+
+      await ctx.reply(
+        `✅ <b>${formatName(target)}</b> получил <b>${formatCurrency(amount)}</b> от разработчика.`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('[economy grant]', err.message);
+      await ctx.reply('❌ Ошибка при выдаче FunMoney.');
     }
   });
 
