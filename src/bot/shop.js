@@ -177,10 +177,15 @@ function registerShop(bot) {
 
       // Проверка баланса
       if (coins < item.price) {
-          return ctx.answerCbQuery(
+          await ctx.answerCbQuery(
             `У вас, к сожалению, недостаточно средств на покупку: ${item.name}`,
             { show_alert: true }
           );
+          await ctx.editMessageText(pageText(0, coins), {
+            parse_mode: 'HTML',
+            ...pageKeyboard(0),
+          });
+          return ctx.reply(`❌ У вас, к сожалению, недостаточно средств на покупку: ${item.name}`);
       }
 
       // Титул уже куплен?
@@ -337,10 +342,15 @@ function registerShop(bot) {
         const coins = getCoins(ctx.from.id);
         const inv   = getInventory(ctx.from.id);
         if (coins < item.price) {
-            return ctx.answerCbQuery(
+            await ctx.answerCbQuery(
               `У вас, к сожалению, недостаточно средств на покупку: ${item.name}`,
               { show_alert: true }
             );
+            await ctx.editMessageText(pageText(0, coins), {
+              parse_mode: 'HTML',
+              ...pageKeyboard(0),
+            });
+            return ctx.reply(`❌ У вас, к сожалению, недостаточно средств на покупку: ${item.name}`);
         }
         if (item.type === 'title' && inv.includes(itemId)) {
           return ctx.answerCbQuery('Этот титул у тебя уже есть!', { show_alert: true });
