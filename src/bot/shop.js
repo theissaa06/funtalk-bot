@@ -7,13 +7,19 @@
 'use strict';
 
 const { Markup } = require('telegraf');
-const fs   = require('fs');
-const path = require('path');
-
-// ── Путь к основной базе (bot_data.json) ─────────────────────
-const DB_PATH = process.env.DB_PATH
-  ? path.resolve(process.env.DB_PATH)
-  : path.join(process.cwd(), 'data', 'bot_data.json');
+const {
+  upsertUser,
+  getCoins,
+  addCoins,
+  removeCoins,
+  hasInventoryItem,
+  getInventory,
+  addToInventory,
+  getActiveTitle,
+  setActiveTitle,
+  loadDb,
+  saveDb,
+} = require('../database/db');
 
 // ── Товары ────────────────────────────────────────────────────
 // id должны быть короткими (нет пробелов, нет спецсимволов)
@@ -34,106 +40,15 @@ const ITEMS = [
 
 const PER_PAGE = 4;
 
-// ── Чтение / запись JSON-базы ─────────────────────────────────
-function load() {
-  try {
-    if (!fs.existsSync(DB_PATH)) return { users: [] };
-    return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-  } catch {
-    return { users: [] };
-  }
-}
-
-function save(data) {
-  try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf8');
-  } catch (e) {
-    console.error('[shop save]', e.message);
-  }
-}
-
-// ── Хелперы базы ──────────────────────────────────────────────
-
-/** Получить монеты пользователя (берём первую запись с этим telegram id) */
-function getCoins(tgId, chatId) {
-  const data = load();
-  // Ищем запись с совпадением chat_id если передан, иначе первую
-  const row = chatId
-    ? data.users.find(u =>
-        (String(u.id) === String(tgId) || String(u.telegram_id) === String(tgId)) &&
-        (String(u.chat_id) === String(chatId) || String(u.chatId) === String(chatId))
-      )
-    : data.users.find(u => String(u.id) === String(tgId) || String(u.telegram_id) === String(tgId));
-
-  return row ? (row.coins || 0) : 0;
-}
-
-/** Списать монеты во ВСЕХ записях пользователя (он может быть в нескольких чатах) */
-function deductCoins(tgId, chatId, amount) {
-  const data = load();
-  let changed = false;
-  for (const row of data.users) {
-    const matchId = String(row.id) === String(tgId) || String(row.telegram_id) === String(tgId);
-    const matchChat = !chatId || String(row.chat_id) === String(chatId) || String(row.chatId) === String(chatId);
-    if (matchId && matchChat) {
-      row.coins = Math.max(0, (row.coins || 0) - amount);
-      changed = true;
-    }
-  }
-  if (changed) save(data);
-}
-
-/** Инвентарь (глобальный — не привязан к чату) */
-function getInv(tgId) {
-  const data = load();
-  const row  = data.users.find(u => String(u.id) === String(tgId) || String(u.telegram_id) === String(tgId));
-  return Array.isArray(row?.inventory) ? [...row.inventory] : [];
-}
-
-function addInv(tgId, itemId) {
-  const data = load();
-  let changed = false;
-  for (const row of data.users) {
-    if (String(row.id) === String(tgId) || String(row.telegram_id) === String(tgId)) {
-      if (!Array.isArray(row.inventory)) row.inventory = [];
-      if (!row.inventory.includes(itemId)) {
-        row.inventory.push(itemId);
-        changed = true;
-      }
-    }
-  }
-  if (changed) save(data);
-}
-
-/** Активный титул */
-function getTitle(tgId) {
-  const data = load();
-  const row = data.users.find(u => String(u.id) === String(tgId) || String(u.telegram_id) === String(tgId));
-  return row ? row.active_title || null : null;
-}
-
-function setTitle(tgId, itemId) {
-  const data = load();
-  let changed = false;
-  for (const row of data.users) {
-    if (String(row.id) === String(tgId) || String(row.telegram_id) === String(tgId)) {
-      row.active_title = itemId;
-      changed = true;
-    }
-  }
-  if (changed) save(data);
-}
-
-/** Применить буст */
 function applyBoost(tgId, itemId) {
-  const data = load();
-  for (const row of data.users) {
-    if (String(row.id) === String(tgId) || String(row.telegram_id) === String(tgId)) {
-      if (itemId === 'xpx2')  row.xp_boost_until  = Date.now() + 3600000; // 1 час
-      if (itemId === 'bonx2') row.daily_boost_next = true;
-    }
-  }
-  save(data);
+  const data = loadDb();
+  const user = data.users.find(u => String(u.telegram_id) === String(tgId) || String(u.id) === String(tgId));
+  if (!user) return;
+
+  if (itemId === 'xpx2')  user.xp_boost_until  = Date.now() + 3600000; // 1 час
+  if (itemId === 'bonx2') user.daily_boost_next = true;
+
+  saveDb(data);
 }
 
 // ── Построители сообщений ─────────────────────────────────────
@@ -171,8 +86,8 @@ function pageKeyboard(page) {
 }
 
 function invText(tgId, firstName) {
-  const inv    = getInv(tgId);
-  const active = getTitle(tgId);
+  const inv    = getInventory(tgId);
+  const active = getActiveTitle(tgId);
   const name   = firstName || 'Участник';
 
   if (!inv.length) {
@@ -191,8 +106,8 @@ function invText(tgId, firstName) {
 }
 
 function invKeyboard(tgId) {
-  const inv    = getInv(tgId);
-  const active = getTitle(tgId);
+  const inv    = getInventory(tgId);
+  const active = getActiveTitle(tgId);
 
   const titleButtons = inv
     .filter(id => ITEMS.find(i => i.id === id && i.type === 'title'))
@@ -218,9 +133,8 @@ function registerShop(bot) {
   // ── /shop — открыть магазин ───────────────────────────────────
   bot.command(['shop', 'магазин'], async (ctx) => {
     try {
-      const chatId = getChatId(ctx);
-      if (!chatId) throw new Error('Не удалось определить чат');
-      const coins  = getCoins(ctx.from.id, chatId);
+      upsertUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+      const coins  = getCoins(ctx.from.id);
       await ctx.reply(pageText(0, coins), {
         parse_mode: 'HTML',
         ...pageKeyboard(0),
@@ -236,9 +150,8 @@ function registerShop(bot) {
     try {
       await ctx.answerCbQuery();
       const page   = parseInt(ctx.match[1], 10);
-      const chatId = getChatId(ctx);
-      if (!chatId) throw new Error('Не удалось определить чат');
-      const coins  = getCoins(ctx.from.id, chatId);
+      upsertUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+      const coins  = getCoins(ctx.from.id);
       await ctx.editMessageText(pageText(page, coins), {
         parse_mode: 'HTML',
         ...pageKeyboard(page),
@@ -258,10 +171,9 @@ function registerShop(bot) {
       const item   = ITEMS.find(i => i.id === itemId);
       if (!item) return ctx.answerCbQuery('❌ Товар не найден.', { show_alert: true });
 
-      const chatId = getChatId(ctx);
-      if (!chatId) throw new Error('Не удалось определить чат');
-      const coins  = getCoins(ctx.from.id, chatId);
-      const inv    = getInv(ctx.from.id);
+      upsertUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+      const coins  = getCoins(ctx.from.id);
+      const inv    = getInventory(ctx.from.id);
 
       // Проверка баланса
       if (coins < item.price) {
@@ -277,13 +189,13 @@ function registerShop(bot) {
       }
 
       // Списываем и добавляем в инвентарь
-      deductCoins(ctx.from.id, chatId, item.price);
-      addInv(ctx.from.id, itemId);
+      removeCoins(ctx.from.id, item.price);
+      addToInventory(ctx.from.id, itemId);
 
       // Применяем буст сразу
       if (item.type === 'boost') applyBoost(ctx.from.id, itemId);
 
-      const newCoins = getCoins(ctx.from.id, chatId);
+      const newCoins = getCoins(ctx.from.id);
 
       // Сообщение о покупке
       let note = '';
@@ -358,13 +270,13 @@ function registerShop(bot) {
       await ctx.answerCbQuery();
       const itemId = ctx.match[1];
       const item   = ITEMS.find(i => i.id === itemId);
-      const inv    = getInv(ctx.from.id);
+      const inv    = getInventory(ctx.from.id);
 
       if (!item)                    return ctx.answerCbQuery('Товар не найден.',    { show_alert: true });
       if (!inv.includes(itemId))    return ctx.answerCbQuery('Нет в инвентаре.',    { show_alert: true });
       if (item.type !== 'title')    return ctx.answerCbQuery('Это не титул.',        { show_alert: true });
 
-      setTitle(ctx.from.id, itemId);
+      setActiveTitle(ctx.from.id, itemId);
 
       await ctx.editMessageText(
         `✅ Титул <b>${item.name}</b> надет!\n\nОн отображается в /rank`,
@@ -389,8 +301,6 @@ function registerShop(bot) {
 
     try {
       await ctx.answerCbQuery();
-      const chatId = getChatId(ctx);
-      if (!chatId) return ctx.answerCbQuery('Не удалось определить чат.', { show_alert: true });
 
       if (data === 'sinv') {
         const { text, empty } = invText(ctx.from.id, ctx.from.first_name);
@@ -411,7 +321,7 @@ function registerShop(bot) {
       const [type, arg] = data.split('_');
       if (type === 'sp') {
         const page = parseInt(arg, 10);
-        const coins = getCoins(ctx.from.id, chatId);
+        const coins = getCoins(ctx.from.id);
         await ctx.editMessageText(pageText(page, coins), {
           parse_mode: 'HTML',
           ...pageKeyboard(page),
@@ -424,8 +334,8 @@ function registerShop(bot) {
         const item = ITEMS.find(i => i.id === itemId);
         if (!item) return ctx.answerCbQuery('❌ Товар не найден.', { show_alert: true });
 
-        const coins = getCoins(ctx.from.id, chatId);
-        const inv   = getInv(ctx.from.id);
+        const coins = getCoins(ctx.from.id);
+        const inv   = getInventory(ctx.from.id);
         if (coins < item.price) {
             return ctx.answerCbQuery(
               `У вас, к сожалению, недостаточно средств на покупку: ${item.name}`,
@@ -436,10 +346,10 @@ function registerShop(bot) {
           return ctx.answerCbQuery('Этот титул у тебя уже есть!', { show_alert: true });
         }
 
-        deductCoins(ctx.from.id, chatId, item.price);
-        addInv(ctx.from.id, itemId);
+        removeCoins(ctx.from.id, item.price);
+        addToInventory(ctx.from.id, itemId);
         if (item.type === 'boost') applyBoost(ctx.from.id, itemId);
-        const newCoins = getCoins(ctx.from.id, chatId);
+        const newCoins = getCoins(ctx.from.id);
         let note = '';
         if (item.type === 'title') note = `\n\n💡 Надень командой /usetitle ${itemId} или через инвентарь.`;
         else if (itemId === 'xpx2') note = '\n\n⚡ XP x2 активирован на 1 час!';
@@ -469,12 +379,12 @@ function registerShop(bot) {
       if (type === 'su') {
         const itemId = arg;
         const item = ITEMS.find(i => i.id === itemId);
-        const inv  = getInv(ctx.from.id);
+        const inv  = getInventory(ctx.from.id);
         if (!item) return ctx.answerCbQuery('Товар не найден.', { show_alert: true });
         if (!inv.includes(itemId)) return ctx.answerCbQuery('Нет в инвентаре.', { show_alert: true });
         if (item.type !== 'title') return ctx.answerCbQuery('Это не титул.', { show_alert: true });
 
-        setTitle(ctx.from.id, itemId);
+        setActiveTitle(ctx.from.id, itemId);
         await ctx.editMessageText(
           `✅ Титул <b>${item.name}</b> надет!\n\nОн отображается в /rank`,
           {
@@ -504,12 +414,12 @@ function registerShop(bot) {
         );
       }
       const item = ITEMS.find(i => i.id === itemId);
-      const inv  = getInv(ctx.from.id);
+      const inv  = getInventory(ctx.from.id);
 
       if (!item)                 return ctx.reply('❌ Такого титула не существует.');
       if (!inv.includes(itemId)) return ctx.reply('❌ У тебя нет этого предмета. Купи в /shop');
 
-      setTitle(ctx.from.id, itemId);
+      setActiveTitle(ctx.from.id, itemId);
       await ctx.reply(`✅ Титул <b>${item.name}</b> надет! Виден в /rank`, { parse_mode: 'HTML' });
     } catch (e) {
       console.error('[shop usetitle]', e.message);
@@ -522,7 +432,7 @@ function registerShop(bot) {
 
 // ── Публичная функция: получить активный титул ────────────────
 function getUserTitle(tgId) {
-  const id   = getTitle(tgId);
+  const id   = getActiveTitle(tgId);
   const item = ITEMS.find(i => i.id === id);
   return item ? item.name : null;
 }
