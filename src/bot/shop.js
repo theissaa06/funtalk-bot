@@ -282,10 +282,15 @@ function registerShop(bot) {
               `У вас, к сожалению, недостаточно средств на покупку: ${item.name}`,
               { show_alert: true }
             );
-            await ctx.editMessageText(pageText(0, coins), {
-              parse_mode: 'HTML',
-              ...pageKeyboard(0),
-            });
+            try {
+              await ctx.editMessageText(pageText(0, coins), {
+                parse_mode: 'HTML',
+                ...pageKeyboard(0),
+              });
+            } catch (e) {
+              // Игнорируем ошибку "message is not modified" при повторных кликах
+              if (!e.message.includes('message is not modified')) throw e;
+            }
             return ctx.reply(`❌ У вас, к сожалению, недостаточно средств на покупку: ${item.name}`);
         }
         if (item.type === 'title' && inv.includes(itemId)) {
@@ -316,9 +321,6 @@ function registerShop(bot) {
         try {
           await ctx.reply(`✅ Вы успешно купили ${item.name}. Остаток: ${newCoins} FunMoney`);
         } catch (e) { /* игнорируем ошибки отправки личного сообщения */ }
-          try {
-            await ctx.reply(`✅ Вы успешно купили ${item.name}. Остаток: ${newCoins} FunMoney`);
-          } catch (e) { /* игнорируем ошибки отправки личного сообщения */ }
         return;
       }
 
