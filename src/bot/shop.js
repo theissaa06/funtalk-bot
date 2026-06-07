@@ -258,10 +258,10 @@ function registerShop(bot) {
 
       // Проверка баланса
       if (coins < item.price) {
-        return ctx.answerCbQuery(
-          `❌ Недостаточно FunMoney\nНужно: ${item.price} FunMoney  Есть: ${coins} FunMoney`,
-          { show_alert: true }
-        );
+          return ctx.answerCbQuery(
+            `У вас, к сожалению, недостаточно средств на покупку: ${item.name}`,
+            { show_alert: true }
+          );
       }
 
       // Титул уже куплен?
@@ -420,10 +420,10 @@ function registerShop(bot) {
         const coins = getCoins(ctx.from.id, chatId);
         const inv   = getInv(ctx.from.id);
         if (coins < item.price) {
-          return ctx.answerCbQuery(
-            `❌ Недостаточно FunMoney\nНужно: ${item.price} FunMoney  Есть: ${coins} FunMoney`,
-            { show_alert: true }
-          );
+            return ctx.answerCbQuery(
+              `У вас, к сожалению, недостаточно средств на покупку: ${item.name}`,
+              { show_alert: true }
+            );
         }
         if (item.type === 'title' && inv.includes(itemId)) {
           return ctx.answerCbQuery('Этот титул у тебя уже есть!', { show_alert: true });
