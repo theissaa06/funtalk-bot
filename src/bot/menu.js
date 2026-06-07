@@ -441,31 +441,35 @@ function registerMenu(bot) {
     );
   });
 
-  // ── Кнопка "🏪 Магазин" ──────────────────────────────────────
+  // ── Кнопка "🏪 Магазин" — открывает магазин из shop.js ──────
   bot.hears('🏪 Магазин', async (ctx) => {
     try {
-      const { SHOP_ITEMS } = require('./shop');
+      const { SHOP_ITEMS, registerShop } = require('./shop');
       const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
       const db     = require('../db');
       const user   = db.prepare('SELECT coins FROM users WHERE id = ? AND chat_id = ?').get(ctx.from.id, chatId);
       const coins  = user?.coins || 0;
 
       const PER_PAGE = 4;
-      const items    = SHOP_ITEMS.slice(0, PER_PAGE);
+      const start    = 0;
+      const items    = SHOP_ITEMS.slice(start, start + PER_PAGE);
       const total    = Math.ceil(SHOP_ITEMS.length / PER_PAGE);
-      const lines    = items.map(i => `${i.name} — <b>${i.price}💰</b>\n  └ ${i.desc}`).join('\n\n');
 
-      const buttons = items.map(i => [Markup.button.callback(`${i.name} — ${i.price}💰`, `sb${i.id}`)]);
-      buttons.push([Markup.button.callback('➡️', 'sp1')]);
-      buttons.push([Markup.button.callback('🎒 Инвентарь', 'sinv')]);
+      const list = items
+        .map(i => `${i.name} — <b>${i.price}💰</b>\n  └ ${i.desc}`)
+        .join('\n\n');
+
+      const rows = items.map(i => [Markup.button.callback(`${i.name} — ${i.price}💰`, `sb_${i.id}`)]);
+      rows.push([Markup.button.callback('Вперёд ▶️', 'sp_1')]);
+      rows.push([Markup.button.callback('🎒 Мой инвентарь', 'sinv')]);
 
       await ctx.reply(
-        `🏪 <b>Магазин FunTalk</b> (стр. 1/${total})\n\n${lines}\n\n💼 Твой баланс: <b>${coins} монет</b>`,
-        { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
+        `🏪 <b>Магазин FunTalk</b> (стр. 1/${total})\n\n${list}\n\n💼 Баланс: <b>${coins}💰</b>`,
+        { parse_mode: 'HTML', ...Markup.inlineKeyboard(rows) }
       );
     } catch (err) {
-      console.error('[menu shop]', err.message);
-      await ctx.reply('❌ Ошибка при открытии магазина.');
+      console.error('[menu 🏪]', err.message);
+      await ctx.reply('❌ Ошибка при открытии магазина. Попробуй /shop');
     }
   });
 }
