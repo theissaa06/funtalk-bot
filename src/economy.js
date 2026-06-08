@@ -59,15 +59,15 @@ function register(bot) {
 
       const bonus = Math.floor(Math.random() * (DAILY_MAX - DAILY_MIN + 1)) + DAILY_MIN;
 
-      // Проверяем наличие буста bonx2 в инвентаре
+      // Проверяем наличие буста bonusx2 в инвентаре
       let finalBonus = bonus;
-      if (hasInventoryItem(userId, 'bonx2')) {
+      if (hasInventoryItem(userId, 'bonusx2')) {
         finalBonus = bonus * 2;
         // Удаляем буст из инвентаря после использования
         const data = loadDb();
         const user = data.users.find(u => u.telegram_id === userId);
         if (user && user.inventory) {
-          user.inventory = user.inventory.filter(id => id !== 'bonx2');
+          user.inventory = user.inventory.filter(id => id !== 'bonusx2');
           saveDb(data);
         }
       }

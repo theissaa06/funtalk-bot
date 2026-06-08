@@ -4,6 +4,7 @@
 // ============================================================
 
 const { Markup } = require('telegraf');
+const { upsertUser, getCoins } = require('../database/db');
 
 // ── Клавиатура главного меню (reply-кнопки) ──────────────────
 const mainMenuKeyboard = Markup.keyboard([
@@ -445,10 +446,8 @@ function registerMenu(bot) {
   bot.hears('🏪 Магазин', async (ctx) => {
     try {
       const { pageText, pageKeyboard } = require('./shop');
-      const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
-      const db     = require('../db');
-      const user   = db.prepare('SELECT coins FROM users WHERE id = ? AND chat_id = ?').get(ctx.from.id, chatId);
-      const coins  = user?.coins || 0;
+      upsertUser(ctx.from.id, ctx.from.username, ctx.from.first_name);
+      const coins = getCoins(ctx.from.id);
 
       await ctx.reply(
         pageText(0, coins),
