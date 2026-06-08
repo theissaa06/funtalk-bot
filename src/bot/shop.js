@@ -385,4 +385,4 @@ function getUserTitle(tgId) {
   return item ? item.name : null;
 }
 
-module.exports = { registerShop, getUserTitle, SHOP_ITEMS: ITEMS };
+module.exports = { registerShop, getUserTitle, SHOP_ITEMS: ITEMS, pageText, pageKeyboard };
