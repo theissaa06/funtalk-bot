@@ -887,7 +887,7 @@ async function checkAchievements(chatId, userId) {
         hits.push(a);
       }
     }
-    if (!hits.length) { saveDB(); return; }
+    if (!hits.length) return;
     saveDB();
     const total = hits.reduce((s, a) => s + a.reward, 0);
     const list  = hits.map(a => `✨ ${a.emoji} ${a.label}\n   🎁 +${a.reward} монет`).join('\n');
