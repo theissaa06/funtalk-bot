@@ -61,15 +61,26 @@ function getUserAchievements(userId, chatId) {
 function grantAchievement(userId, chatId, achievementId) {
   const data = db.loadDb();
   const user = data.users.find(u => String(u.telegram_id) === String(userId));
-  if (!user) return false;
+  if (!user) {
+    console.log(`[Achievements] ❌ Пользователь ${userId} не найден в базе`);
+    return false;
+  }
   if (!user.achievements) user.achievements = [];
-  if (user.achievements.includes(achievementId)) return false;
+  
+  console.log(`[Achievements] Проверка достижения ${achievementId} для пользователя ${userId}`);
+  console.log(`[Achievements] Текущие достижения: ${JSON.stringify(user.achievements)}`);
+  
+  if (user.achievements.includes(achievementId)) {
+    console.log(`[Achievements] ⚠️ Достижение ${achievementId} уже выдано, пропускаем`);
+    return false;
+  }
   
   user.achievements.push(achievementId);
   user.updated_at = db.now();
   
   db.saveDb(data);
-  console.log(`[Achievements] Выдано достижение ${achievementId} пользователю ${userId}`);
+  console.log(`[Achievements] ✅ Выдано достижение ${achievementId} пользователю ${userId}`);
+  console.log(`[Achievements] Новые достижения: ${JSON.stringify(user.achievements)}`);
   return true;
 }
 
