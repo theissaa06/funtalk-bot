@@ -4,7 +4,7 @@
 // ============================================================
 
 const { Markup } = require('telegraf');
-const db = require('../db');
+const db = require('../database/db');
 const { formatName } = require('../utils');
 
 // ── Список достижений ─────────────────────────────────────────
@@ -49,7 +49,8 @@ const ACHIEVEMENTS = [
 
 // ── Вспомогательные ──────────────────────────────────────────
 function getDbUser(userId, chatId) {
-  return db.findUser(chatId, userId);
+  const data = db.loadDb();
+  return data.users.find(u => String(u.telegram_id) === String(userId));
 }
 
 function getUserAchievements(userId, chatId) {
@@ -58,30 +59,39 @@ function getUserAchievements(userId, chatId) {
 }
 
 function grantAchievement(userId, chatId, achievementId) {
-  const user = getDbUser(userId, chatId);
+  const data = db.loadDb();
+  const user = data.users.find(u => String(u.telegram_id) === String(userId));
   if (!user) return false;
   if (!user.achievements) user.achievements = [];
   if (user.achievements.includes(achievementId)) return false;
   
   user.achievements.push(achievementId);
+  user.updated_at = db.now();
   
-  // Сохраняем через db.js
-  db.prepare('UPDATE users SET achievements = ? WHERE id = ? AND chat_id = ?')
-    .run(JSON.stringify(user.achievements), userId, chatId);
-  
+  db.saveDb(data);
+  console.log(`[Achievements] Выдано достижение ${achievementId} пользователю ${userId}`);
   return true;
 }
 
 // ── Увеличить счётчик сообщений ───────────────────────────────
 function incrementMessageCount(userId, chatId) {
-  db.prepare('UPDATE users SET messages_count = messages_count + 1 WHERE id = ? AND chat_id = ?')
-    .run(userId, chatId);
+  const data = db.loadDb();
+  const user = data.users.find(u => String(u.telegram_id) === String(userId));
+  if (!user) return;
+  
+  user.messages_count = (user.messages_count || 0) + 1;
+  user.updated_at = db.now();
+  
+  db.saveDb(data);
+  console.log(`[Achievements] messages_count пользователя ${userId}: ${user.messages_count}`);
 }
 
 // ── Проверить и выдать новые достижения ───────────────────────
 async function checkAchievements(ctx, userId, chatId) {
   const user = getDbUser(userId, chatId);
   if (!user) return;
+
+  console.log(`[Achievements] Проверка достижений для пользователя ${userId}, messages_count: ${user.messages_count || 0}, achievements: ${user.achievements?.length || 0}`);
 
   for (const ach of ACHIEVEMENTS) {
     try {
@@ -91,8 +101,7 @@ async function checkAchievements(ctx, userId, chatId) {
 
       // Выдаём награду
       if (ach.reward > 0) {
-        db.prepare('UPDATE users SET coins = coins + ? WHERE id = ? AND chat_id = ?')
-          .run(ach.reward, userId, chatId);
+        db.addCoins(userId, ach.reward);
       }
 
       // Уведомляем в чат

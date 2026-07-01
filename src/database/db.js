@@ -91,6 +91,8 @@ function upsertUser(telegramId, username, firstName) {
       first_name: firstName || null,
       created_at: now(),
       updated_at: now(),
+      messages_count: 0,
+      achievements: [],
     };
     data.users.push(user);
   }
