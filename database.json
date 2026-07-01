@@ -13,9 +13,10 @@
       "username": "neZ3ven",
       "first_name": "neZyven",
       "created_at": "2026-05-22T15:43:09.785Z",
-      "updated_at": "2026-07-01T08:20:58.506Z",
+      "updated_at": "2026-07-01T08:26:55.852Z",
       "messages_count": 1,
-      "achievements": []
+      "achievements": [],
+      "coins": 0
     },
     {
       "id": 2,
@@ -23,9 +24,10 @@
       "username": "k_beze",
       "first_name": "киль корабля",
       "created_at": "2026-05-22T15:49:12.782Z",
-      "updated_at": "2026-05-22T15:49:12.795Z",
+      "updated_at": "2026-07-01T08:26:55.854Z",
       "messages_count": 0,
-      "achievements": []
+      "achievements": [],
+      "coins": 0
     },
     {
       "id": 3,
@@ -33,9 +35,10 @@
       "username": null,
       "first_name": "ぞ Mirchik",
       "created_at": "2026-05-22T15:50:03.907Z",
-      "updated_at": "2026-05-22T15:50:33.001Z",
+      "updated_at": "2026-07-01T08:26:55.854Z",
       "messages_count": 0,
-      "achievements": []
+      "achievements": [],
+      "coins": 0
     },
     {
       "id": 4,
@@ -43,9 +46,10 @@
       "username": "Kadyrbaevar",
       "first_name": "R.",
       "created_at": "2026-05-25T15:28:49.793Z",
-      "updated_at": "2026-05-25T15:32:19.590Z",
+      "updated_at": "2026-07-01T08:26:55.854Z",
       "messages_count": 2,
-      "achievements": []
+      "achievements": [],
+      "coins": 0
     }
   ],
   "profiles": [],

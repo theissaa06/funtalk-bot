@@ -58,6 +58,81 @@ function getUserAchievements(userId, chatId) {
   return u?.achievements || [];
 }
 
+// ── Синхронизация пользователей при запуске ────────────────────
+function syncUsers() {
+  const data = db.loadDb();
+  let synced = 0;
+  
+  for (const user of data.users) {
+    let changed = false;
+    
+    // Добавляем messages_count если отсутствует
+    if (user.messages_count === undefined) {
+      user.messages_count = 0;
+      changed = true;
+    }
+    
+    // Добавляем achievements если отсутствует
+    if (!user.achievements || !Array.isArray(user.achievements)) {
+      user.achievements = [];
+      changed = true;
+    }
+    
+    // Добавляем coins если отсутствует
+    if (user.coins === undefined) {
+      user.coins = 0;
+      changed = true;
+    }
+    
+    if (changed) {
+      synced++;
+    }
+  }
+  
+  if (synced > 0) {
+    db.saveDb(data);
+    console.log(`[Achievements] Синхронизировано ${synced} пользователей`);
+  }
+  
+  return synced;
+}
+
+// ── Создание профиля достижений для пользователя ───────────────
+function ensureAchievementProfile(userId) {
+  const data = db.loadDb();
+  const user = data.users.find(u => String(u.telegram_id) === String(userId));
+  
+  if (!user) {
+    console.log(`[Achievements] Пользователь ${userId} не найден, создаём профиль`);
+    return false;
+  }
+  
+  let changed = false;
+  
+  if (user.messages_count === undefined) {
+    user.messages_count = 0;
+    changed = true;
+  }
+  
+  if (!user.achievements || !Array.isArray(user.achievements)) {
+    user.achievements = [];
+    changed = true;
+  }
+  
+  if (user.coins === undefined) {
+    user.coins = 0;
+    changed = true;
+  }
+  
+  if (changed) {
+    user.updated_at = db.now();
+    db.saveDb(data);
+    console.log(`[Achievements] Профиль достижений создан/обновлён для пользователя ${userId}`);
+  }
+  
+  return true;
+}
+
 function grantAchievement(userId, chatId, achievementId) {
   const data = db.loadDb();
   const user = data.users.find(u => String(u.telegram_id) === String(userId));
@@ -106,7 +181,15 @@ async function checkAchievements(ctx, userId, chatId) {
 
   for (const ach of ACHIEVEMENTS) {
     try {
+      // Сначала проверяем условия достижения
       if (!ach.check(user)) continue;
+      
+      // Затем проверяем, не выдано ли уже это достижение
+      if (user.achievements && user.achievements.includes(ach.id)) {
+        console.log(`[Achievements] ⚠️ Достижение ${ach.id} уже выдано, пропускаем`);
+        continue;
+      }
+      
       const granted = grantAchievement(userId, chatId, ach.id);
       if (!granted) continue;
 
@@ -129,6 +212,8 @@ async function checkAchievements(ctx, userId, chatId) {
 
 // ── Регистрация ───────────────────────────────────────────────
 function registerAchievements(bot) {
+  // Синхронизируем пользователей при запуске
+  syncUsers();
 
   // /achievements — список достижений
   bot.command(['achievements', 'ачивки', 'достижения'], async (ctx) => {
@@ -192,6 +277,9 @@ function registerAchievements(bot) {
   bot.on('message', async (ctx, next) => {
     try {
       if (ctx.from && !ctx.from.is_bot && ctx.chat?.type !== 'private') {
+        // Убеждаемся что профиль достижений существует
+        ensureAchievementProfile(ctx.from.id);
+        
         // Сначала увеличиваем счётчик сообщений
         incrementMessageCount(ctx.from.id, ctx.chat.id);
         // Затем проверяем достижения
