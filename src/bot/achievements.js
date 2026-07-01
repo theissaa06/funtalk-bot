@@ -6,10 +6,6 @@
 const { Markup } = require('telegraf');
 const db = require('../db');
 const { formatName } = require('../utils');
-const fs   = require('fs');
-const path = require('path');
-
-const DB_PATH = process.env.DB_PATH || './data/bot_data.json';
 
 // ── Список достижений ─────────────────────────────────────────
 const ACHIEVEMENTS = [
@@ -52,19 +48,8 @@ const ACHIEVEMENTS = [
 ];
 
 // ── Вспомогательные ──────────────────────────────────────────
-function loadData() {
-  try {
-    return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-  } catch { return { users: [] }; }
-}
-
-function saveData(data) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf8');
-}
-
 function getDbUser(userId, chatId) {
-  const data = loadData();
-  return (data.users || []).find(u => u.id === userId && String(u.chat_id) === String(chatId));
+  return db.findUser(chatId, userId);
 }
 
 function getUserAchievements(userId, chatId) {
@@ -73,14 +58,24 @@ function getUserAchievements(userId, chatId) {
 }
 
 function grantAchievement(userId, chatId, achievementId) {
-  const data = loadData();
-  const user = (data.users || []).find(u => u.id === userId && String(u.chat_id) === String(chatId));
+  const user = getDbUser(userId, chatId);
   if (!user) return false;
   if (!user.achievements) user.achievements = [];
   if (user.achievements.includes(achievementId)) return false;
+  
   user.achievements.push(achievementId);
-  saveData(data);
+  
+  // Сохраняем через db.js
+  db.prepare('UPDATE users SET achievements = ? WHERE id = ? AND chat_id = ?')
+    .run(JSON.stringify(user.achievements), userId, chatId);
+  
   return true;
+}
+
+// ── Увеличить счётчик сообщений ───────────────────────────────
+function incrementMessageCount(userId, chatId) {
+  db.prepare('UPDATE users SET messages_count = messages_count + 1 WHERE id = ? AND chat_id = ?')
+    .run(userId, chatId);
 }
 
 // ── Проверить и выдать новые достижения ───────────────────────
@@ -177,6 +172,9 @@ function registerAchievements(bot) {
   bot.on('message', async (ctx, next) => {
     try {
       if (ctx.from && !ctx.from.is_bot && ctx.chat?.type !== 'private') {
+        // Сначала увеличиваем счётчик сообщений
+        incrementMessageCount(ctx.from.id, ctx.chat.id);
+        // Затем проверяем достижения
         await checkAchievements(ctx, ctx.from.id, ctx.chat.id);
       }
     } catch {}
@@ -186,4 +184,4 @@ function registerAchievements(bot) {
   console.log('✅ Модуль achievements подключён');
 }
 
-module.exports = { registerAchievements, checkAchievements, ACHIEVEMENTS };
+module.exports = { registerAchievements, checkAchievements, ACHIEVEMENTS, incrementMessageCount };

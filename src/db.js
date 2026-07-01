@@ -120,6 +120,8 @@ function rememberUser(user, chatId) {
       status:      'active',
       joined_at:   now,
       last_active: now,
+      messages_count: 0,
+      achievements: [],
     };
     data.users.push(row);
   }
