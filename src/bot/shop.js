@@ -37,6 +37,8 @@ const SHOP_ITEMS = [
   { id: 'custom_title',  name: '🎭 Кастомный титул 24ч',  price: 300, type: 'consumable', desc: 'Свой текст в /rank на 24 часа', minLevel: null, unlockType: 'purchase', sellPrice: null },
   { id: 'mute_shield',   name: '🚫 Анти-мут',             price: 400, type: 'consumable', desc: 'Блокирует следующий мут', minLevel: null, unlockType: 'purchase', sellPrice: null },
   { id: 'daily_reroll',  name: '🎲 Реролл /daily',        price: 120, type: 'consumable', desc: 'Повторный /daily сегодня', minLevel: null, unlockType: 'purchase', sellPrice: null },
+  // Легендарный предмет
+  { id: 'legendary_gem', name: '💎 Легендарный камень', price: 99999, type: 'title', desc: 'Самый редкий и дорогой титул', minLevel: 50, unlockType: 'purchase', sellPrice: 40000 },
 ];
 
 // ══════════════════════════════════════════════════════════════
@@ -134,6 +136,18 @@ function useConsumable(ctx, itemId) {
         customUser.updated_at = now();
         saveDb(customData);
         result.effect = '🎭 Введи текст для титула (максимум 20 символов) в следующем сообщении.';
+      }
+      break;
+      
+    case 'legendary_gem':
+      // Легендарный титул даёт постоянный бонус +10% к монетам
+      const legendData = loadDb();
+      const legendUser = legendData.users.find(u => String(u.telegram_id) === String(telegramId));
+      if (legendUser) {
+        legendUser.legendaryBonus = true;
+        legendUser.updated_at = now();
+        saveDb(legendData);
+        result.effect = '💎 Легендарный статус активирован! Ты получаешь +10% ко всем монетам!';
       }
       break;
       

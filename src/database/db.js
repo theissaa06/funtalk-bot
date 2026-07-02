@@ -354,7 +354,14 @@ function addCoins(telegramId, amount) {
   const data = loadDb();
   const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
   if (!user) return;
-  user.coins = (user.coins || 0) + amount;
+  
+  // Применяем легендарный бонус +10%
+  let finalAmount = amount;
+  if (user.legendaryBonus) {
+    finalAmount = Math.floor(amount * 1.1);
+  }
+  
+  user.coins = (user.coins || 0) + finalAmount;
   user.updated_at = now();
   saveDb(data);
 }
