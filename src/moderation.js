@@ -6,6 +6,7 @@
 
 const db = require('./db');
 const { isUserAdmin, isBotAdmin, isProtected, formatName, formatNameLink, formatDuration, deleteAfter } = require('./utils');
+const { hasShield, consumeShield } = require('./database/db');
 
 // ── Антифлуд: хранит timestamp последних сообщений ───────────
 // Map<chatId_userId, number[]>
@@ -68,6 +69,18 @@ function resetWarnings(userId, chatId) {
   db.prepare(
     'DELETE FROM warnings WHERE user_id = ? AND chat_id = ?'
   ).run(userId, chatId);
+}
+
+function removeWarning(userId, chatId) {
+  db.prepare(
+    'UPDATE users SET warnings = MAX(warnings - 1, 0) WHERE id = ? AND chat_id = ?'
+  ).run(userId, chatId);
+
+  const row = db.prepare(
+    'SELECT warnings FROM users WHERE id = ? AND chat_id = ?'
+  ).get(userId, chatId);
+
+  return row ? row.warnings : 0;
 }
 
 function logAction(chatId, userId, action, reason, byUserId) {
@@ -137,6 +150,16 @@ function register(bot) {
     // *** ЗАЩИТА: администраторы, владелец чата, владелец бота ***
     const guard = await isProtected(ctx, target.id);
     if (guard.protected) return ctx.reply(guard.reason);
+
+    // *** ИММУНИТЕТ: проверяем mute_shield ***
+    if (hasShield(target.id, 'mute')) {
+      consumeShield(target.id, 'mute');
+      logAction(ctx.chat.id, target.id, 'mute_blocked', 'заблокировано иммунитетом', ctx.from.id);
+      return ctx.reply(
+        `⚡ <b>${formatName(target)}</b> защищён иммунитетом — мут не применён.`,
+        { parse_mode: 'HTML' }
+      );
+    }
 
     // Парсим аргументы: /mute [@user] [10m] [причина]
     const args = ctx.message.text.split(' ').slice(1);
@@ -277,6 +300,16 @@ function register(bot) {
     const guard = await isProtected(ctx, target.id);
     if (guard.protected) return ctx.reply(guard.reason);
 
+    // *** ИММУНИТЕТ: проверяем warn_shield ***
+    if (hasShield(target.id, 'warn')) {
+      consumeShield(target.id, 'warn');
+      logAction(ctx.chat.id, target.id, 'warn_blocked', 'заблокировано иммунитетом', ctx.from.id);
+      return ctx.reply(
+        `⚡ <b>${formatName(target)}</b> защищён иммунитетом — варн не засчитан.`,
+        { parse_mode: 'HTML' }
+      );
+    }
+
     const args   = ctx.message.text.split(' ').slice(1);
     const reason = args.filter(a => !a.startsWith('@')).join(' ') || 'нарушение правил';
 
@@ -416,4 +449,4 @@ function register(bot) {
   console.log('✅ Модуль moderation подключён');
 }
 
-module.exports = { register };
+module.exports = { register, removeWarning };

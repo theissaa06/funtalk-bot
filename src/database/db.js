@@ -258,6 +258,22 @@ function getInventory(telegramId) {
   const data = loadDb();
   const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
   if (!user) return [];
+  
+  // Если inventory ещё в старом формате (массив ID), конвертируем
+  if (user.inventory && Array.isArray(user.inventory) && user.inventory.length > 0) {
+    const firstItem = user.inventory[0];
+    if (typeof firstItem === 'string') {
+      // Конвертируем в новый формат [{id, qty}]
+      const oldInventory = user.inventory;
+      const newInventory = {};
+      for (const id of oldInventory) {
+        newInventory[id] = (newInventory[id] || 0) + 1;
+      }
+      user.inventory = Object.entries(newInventory).map(([id, qty]) => ({ id, qty }));
+      saveDb(data);
+    }
+  }
+  
   return user.inventory || [];
 }
 
@@ -266,8 +282,57 @@ function addToInventory(telegramId, itemId) {
   const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
   if (!user) return;
   if (!user.inventory) user.inventory = [];
-  if (!user.inventory.includes(itemId)) user.inventory.push(itemId);
+  
+  // Конвертируем если в старом формате
+  if (user.inventory.length > 0 && typeof user.inventory[0] === 'string') {
+    const oldInventory = user.inventory;
+    const newInventory = {};
+    for (const id of oldInventory) {
+      newInventory[id] = (newInventory[id] || 0) + 1;
+    }
+    user.inventory = Object.entries(newInventory).map(([id, qty]) => ({ id, qty }));
+  }
+  
+  // Добавляем или увеличиваем qty
+  const existing = user.inventory.find(i => i.id === itemId);
+  if (existing) {
+    existing.qty++;
+  } else {
+    user.inventory.push({ id: itemId, qty: 1 });
+  }
+  
   saveDb(data);
+}
+
+function removeFromInventory(telegramId, itemId, qty = 1) {
+  const data = loadDb();
+  const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
+  if (!user || !user.inventory) return;
+  
+  // Конвертируем если в старом формате
+  if (user.inventory.length > 0 && typeof user.inventory[0] === 'string') {
+    const oldInventory = user.inventory;
+    const newInventory = {};
+    for (const id of oldInventory) {
+      newInventory[id] = (newInventory[id] || 0) + 1;
+    }
+    user.inventory = Object.entries(newInventory).map(([id, qty]) => ({ id, qty }));
+  }
+  
+  const existing = user.inventory.find(i => i.id === itemId);
+  if (existing) {
+    existing.qty -= qty;
+    if (existing.qty <= 0) {
+      user.inventory = user.inventory.filter(i => i.id !== itemId);
+    }
+  }
+  
+  saveDb(data);
+}
+
+function hasInventoryItem(telegramId, itemId) {
+  const inventory = getInventory(telegramId);
+  return inventory.some(i => (typeof i === 'string' ? i === itemId : i.id === itemId));
 }
 
 function getCoins(telegramId) {
@@ -427,6 +492,36 @@ function hasUserAchievement(userId, chatId, achievementId) {
   );
 }
 
+// ── Функции для иммунитетов (consumable) ───────────────────────
+function hasShield(telegramId, shieldType) {
+  const data = loadDb();
+  const user = data.users.find(u => String(u.telegram_id) === String(telegramId));
+  const field = shieldType === 'warn' ? 'warnShieldActive' : 'muteShieldActive';
+  return !!(user && user[field]);
+}
+
+function consumeShield(telegramId, shieldType) {
+  const data = loadDb();
+  const user = data.users.find(u => String(u.telegram_id) === String(telegramId));
+  const field = shieldType === 'warn' ? 'warnShieldActive' : 'muteShieldActive';
+  if (user) {
+    user[field] = false;
+    user.updated_at = now();
+    saveDb(data);
+  }
+}
+
+function setShield(telegramId, shieldType, value) {
+  const data = loadDb();
+  const user = data.users.find(u => String(u.telegram_id) === String(telegramId));
+  const field = shieldType === 'warn' ? 'warnShieldActive' : 'muteShieldActive';
+  if (user) {
+    user[field] = value;
+    user.updated_at = now();
+    saveDb(data);
+  }
+}
+
 module.exports = {
   dbPath,
   loadDb,
@@ -445,6 +540,7 @@ module.exports = {
   // Функции магазина
   getInventory,
   addToInventory,
+  removeFromInventory,
   getCoins,
   setCoins,
   addCoins,
@@ -461,4 +557,8 @@ module.exports = {
   getUserAchievements,
   grantUserAchievement,
   hasUserAchievement,
+  // Функции для иммунитетов (consumable)
+  hasShield,
+  consumeShield,
+  setShield,
 };

@@ -203,4 +203,8 @@ function register(bot) {
   console.log('✅ Модуль economy подключён');
 }
 
-module.exports = { register };
+function resetDailyCooldown(userId) {
+  dailyCooldown.delete(String(userId));
+}
+
+module.exports = { register, resetDailyCooldown };
