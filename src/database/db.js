@@ -18,6 +18,8 @@ const defaultData = {
     reports: 0,
     ai_messages: 0,
     coin_logs: 0,
+    members: 0,
+    user_achievements: 0,
   },
   users: [],
   profiles: [],
@@ -25,6 +27,8 @@ const defaultData = {
   reports: [],
   ai_messages: [],
   coin_logs: [], // Логирование всех операций с монетами
+  members: [], // Данные участников per-чат (userId + chatId)
+  user_achievements: [], // Достижения per-чат (userId + chatId + achievementId)
 };
 
 function ensureDbFile() {
@@ -50,6 +54,8 @@ function loadDb() {
       reports: Array.isArray(data.reports) ? data.reports : [],
       ai_messages: Array.isArray(data.ai_messages) ? data.ai_messages : [],
       coin_logs: Array.isArray(data.coin_logs) ? data.coin_logs : [],
+      members: Array.isArray(data.members) ? data.members : [],
+      user_achievements: Array.isArray(data.user_achievements) ? data.user_achievements : [],
     };
   } catch (error) {
     console.error('[DB] Файл базы повреждён. Создаю новый database.json:', error.message);
@@ -91,8 +97,6 @@ function upsertUser(telegramId, username, firstName) {
       first_name: firstName || null,
       created_at: now(),
       updated_at: now(),
-      messages_count: 0,
-      achievements: [],
     };
     data.users.push(user);
   }
@@ -314,6 +318,115 @@ function hasInventoryItem(telegramId, itemId) {
   return inv.includes(itemId);
 }
 
+// ── Функции для members (per-чат данные) ─────────────────────
+function getMember(userId, chatId) {
+  const data = loadDb();
+  return clone(data.members.find(m => 
+    String(m.user_id) === String(userId) && String(m.chat_id) === String(chatId)
+  ));
+}
+
+function upsertMember(userId, chatId) {
+  const data = loadDb();
+  let member = data.members.find(m => 
+    String(m.user_id) === String(userId) && String(m.chat_id) === String(chatId)
+  );
+
+  if (member) {
+    member.last_active = now();
+  } else {
+    member = {
+      id: nextId(data, 'members'),
+      user_id: userId,
+      chat_id: chatId,
+      coins: 0,
+      message_count: 0,
+      sticker_count: 0,
+      reply_count: 0,
+      level: 1,
+      xp: 0,
+      current_streak: 0,
+      last_active: now(),
+      joined_at: now(),
+    };
+    data.members.push(member);
+  }
+
+  saveDb(data);
+  return clone(member);
+}
+
+function incrementMemberField(userId, chatId, field, amount = 1) {
+  const data = loadDb();
+  const member = data.members.find(m => 
+    String(m.user_id) === String(userId) && String(m.chat_id) === String(chatId)
+  );
+  
+  if (!member) return;
+  
+  member[field] = (member[field] || 0) + amount;
+  member.last_active = now();
+  
+  saveDb(data);
+  return clone(member);
+}
+
+function setMemberField(userId, chatId, field, value) {
+  const data = loadDb();
+  const member = data.members.find(m => 
+    String(m.user_id) === String(userId) && String(m.chat_id) === String(chatId)
+  );
+  
+  if (!member) return;
+  
+  member[field] = value;
+  member.last_active = now();
+  
+  saveDb(data);
+  return clone(member);
+}
+
+// ── Функции для user_achievements (per-чат достижения) ─────────
+function getUserAchievements(userId, chatId) {
+  const data = loadDb();
+  return data.user_achievements
+    .filter(ua => String(ua.user_id) === String(userId) && String(ua.chat_id) === String(chatId))
+    .map(ua => ua.achievement_id);
+}
+
+function grantUserAchievement(userId, chatId, achievementId) {
+  const data = loadDb();
+  
+  // Проверяем, не выдано ли уже
+  const existing = data.user_achievements.find(ua => 
+    String(ua.user_id) === String(userId) && 
+    String(ua.chat_id) === String(chatId) && 
+    ua.achievement_id === achievementId
+  );
+  
+  if (existing) return false;
+  
+  data.user_achievements.push({
+    id: nextId(data, 'user_achievements'),
+    user_id: userId,
+    chat_id: chatId,
+    achievement_id: achievementId,
+    unlocked_at: now(),
+  });
+  
+  saveDb(data);
+  return true;
+}
+
+function hasUserAchievement(userId, chatId, achievementId) {
+  const data = loadDb();
+  return data.user_achievements.some(ua => 
+    String(ua.user_id) === String(userId) && 
+    String(ua.chat_id) === String(chatId) && 
+    ua.achievement_id === achievementId
+  );
+}
+
 module.exports = {
   dbPath,
   loadDb,
@@ -339,4 +452,13 @@ module.exports = {
   getActiveTitle,
   setActiveTitle,
   hasInventoryItem,
+  // Функции для members (per-чат)
+  getMember,
+  upsertMember,
+  incrementMemberField,
+  setMemberField,
+  // Функции для user_achievements (per-чат)
+  getUserAchievements,
+  grantUserAchievement,
+  hasUserAchievement,
 };

@@ -9,78 +9,102 @@ const { formatName } = require('../utils');
 
 // ── Список достижений ─────────────────────────────────────────
 const ACHIEVEMENTS = [
-  // Активность
-  { id: 'first_msg',    name: '👋 Первый шаг',      desc: 'Написал первое сообщение',         reward: 20,   check: (u) => (u.messages_count || 0) >= 1 },
-  { id: 'msg_10',       name: '💬 Болтун',           desc: '10 сообщений в чате',              reward: 30,   check: (u) => (u.messages_count || 0) >= 10 },
-  { id: 'msg_100',      name: '🗣 Активист',         desc: '100 сообщений в чате',             reward: 100,  check: (u) => (u.messages_count || 0) >= 100 },
-  { id: 'msg_500',      name: '📢 Голос чата',       desc: '500 сообщений в чате',             reward: 300,  check: (u) => (u.messages_count || 0) >= 500 },
-  { id: 'msg_1000',     name: '🏆 Легенда чата',     desc: '1000 сообщений в чате',            reward: 1000, check: (u) => (u.messages_count || 0) >= 1000 },
+  // Активность (per-чат)
+  { id: 'first_msg',    name: '👋 Первый шаг',      desc: 'Написал первое сообщение в чате',   reward: 20,   check: (u) => (u.message_count || 0) >= 1 },
+  { id: 'msg_10',       name: '💬 Болтун',           desc: '10 сообщений в чате',              reward: 30,   check: (u) => (u.message_count || 0) >= 10 },
+  { id: 'msg_100',      name: '🗣 Активист',         desc: '100 сообщений в чате',             reward: 100,  check: (u) => (u.message_count || 0) >= 100 },
+  { id: 'msg_500',      name: '📢 Голос чата',       desc: '500 сообщений в чате',             reward: 300,  check: (u) => (u.message_count || 0) >= 500 },
+  { id: 'msg_1000',     name: '🏆 Легенда чата',     desc: '1000 сообщений в чате',            reward: 1000, check: (u) => (u.message_count || 0) >= 1000 },
 
-  // Уровни
+  // Стикеры (per-чат)
+  { id: 'sticker_10',   name: '😎 Стикероман',       desc: 'Отправил 10 стикеров',             reward: 30,   check: (u) => (u.sticker_count || 0) >= 10 },
+  { id: 'sticker_100',  name: '🎨 Художник',         desc: 'Отправил 100 стикеров',            reward: 200,  check: (u) => (u.sticker_count || 0) >= 100 },
+
+  // Ответы (per-чат)
+  { id: 'reply_10',     name: '💬 Отвечающий',       desc: 'Ответил 10 раз',                   reward: 30,   check: (u) => (u.reply_count || 0) >= 10 },
+  { id: 'reply_100',    name: '🗣 Диалогист',        desc: 'Ответил 100 раз',                  reward: 200,  check: (u) => (u.reply_count || 0) >= 100 },
+
+  // Уровни (per-чат)
   { id: 'level_5',      name: '🥉 Участник',         desc: 'Достиг 5 уровня',                  reward: 50,   check: (u) => (u.level || 1) >= 5 },
   { id: 'level_10',     name: '🥈 Опытный',          desc: 'Достиг 10 уровня',                 reward: 150,  check: (u) => (u.level || 1) >= 10 },
   { id: 'level_20',     name: '🥇 Про',              desc: 'Достиг 20 уровня',                 reward: 400,  check: (u) => (u.level || 1) >= 20 },
   { id: 'level_30',     name: '💎 Эксперт',          desc: 'Достиг 30 уровня',                 reward: 800,  check: (u) => (u.level || 1) >= 30 },
   { id: 'level_50',     name: '👑 Легенда',          desc: 'Достиг 50 уровня',                 reward: 2000, check: (u) => (u.level || 1) >= 50 },
 
-  // Монеты
-  { id: 'coins_100',    name: '💰 Копилка',          desc: 'Накопил 100 монет',                reward: 0,    check: (u) => (u.coins || 0) >= 100 },
-  { id: 'coins_1000',   name: '💎 Богач',            desc: 'Накопил 1000 монет',               reward: 50,   check: (u) => (u.coins || 0) >= 1000 },
-  { id: 'coins_5000',   name: '🤑 Миллионер',        desc: 'Накопил 5000 монет',               reward: 200,  check: (u) => (u.coins || 0) >= 5000 },
+  // Монеты (per-чат)
+  { id: 'coins_100',    name: '💰 Копилка',          desc: 'Накопил 100 монет в чате',         reward: 0,    check: (u) => (u.coins || 0) >= 100 },
+  { id: 'coins_1000',   name: '💎 Богач',            desc: 'Накопил 1000 монет в чате',        reward: 50,   check: (u) => (u.coins || 0) >= 1000 },
+  { id: 'coins_5000',   name: '🤑 Миллионер',        desc: 'Накопил 5000 монет в чате',        reward: 200,  check: (u) => (u.coins || 0) >= 5000 },
 
-  // Социальное
+  // Социальное (глобальные поля из users)
   { id: 'first_friend', name: '🤝 Первый друг',      desc: 'Завёл первого друга',              reward: 30,   check: (u) => (u.friends_count || 0) >= 1 },
   { id: 'friends_5',    name: '👥 Компания',         desc: '5 друзей в чате',                  reward: 100,  check: (u) => (u.friends_count || 0) >= 5 },
   { id: 'in_love',      name: '❤️ Влюблённый',       desc: 'Нашёл пару',                       reward: 50,   check: (u) => u.in_couple === true },
   { id: 'rep_10',       name: '⭐ Уважаемый',        desc: 'Получил 10 репутации',             reward: 100,  check: (u) => (u.reputation || 0) >= 10 },
   { id: 'rep_50',       name: '🌟 Авторитет',        desc: 'Получил 50 репутации',             reward: 500,  check: (u) => (u.reputation || 0) >= 50 },
 
-  // Игры
+  // Игры (глобальные поля из users)
   { id: 'first_casino', name: '🎰 Игрок',            desc: 'Сыграл в казино первый раз',       reward: 20,   check: (u) => (u.casino_games || 0) >= 1 },
   { id: 'casino_win',   name: '🤑 Везунчик',         desc: 'Выиграл в казино',                 reward: 50,   check: (u) => (u.casino_wins || 0) >= 1 },
   { id: 'duel_win',     name: '⚔️ Дуэлянт',          desc: 'Победил в дуэли',                  reward: 75,   check: (u) => (u.duel_wins || 0) >= 1 },
   { id: 'duel_5',       name: '🗡 Непобедимый',      desc: 'Победил в 5 дуэлях',               reward: 200,  check: (u) => (u.duel_wins || 0) >= 5 },
 
-  // Особые
+  // Особые (глобальные поля из users)
   { id: 'daily_7',      name: '📅 Постоянный',       desc: '7 дней подряд получал бонус',      reward: 200,  check: (u) => (u.daily_streak || 0) >= 7 },
   { id: 'daily_30',     name: '🗓 Преданный',        desc: '30 дней подряд получал бонус',     reward: 1000, check: (u) => (u.daily_streak || 0) >= 30 },
   { id: 'shop_buyer',   name: '🛍 Покупатель',       desc: 'Купил что-то в магазине',          reward: 30,   check: (u) => (u.inventory || []).length >= 1 },
 ];
 
 // ── Вспомогательные ──────────────────────────────────────────
-function getDbUser(userId, chatId) {
-  const data = db.loadDb();
-  return data.users.find(u => String(u.telegram_id) === String(userId));
+function getMember(userId, chatId) {
+  return db.getMember(userId, chatId);
 }
 
 function getUserAchievements(userId, chatId) {
-  const u = getDbUser(userId, chatId);
-  return u?.achievements || [];
+  return db.getUserAchievements(userId, chatId);
 }
 
-// ── Синхронизация пользователей при запуске ────────────────────
-function syncUsers() {
+// ── Синхронизация участников при запуске ───────────────────────
+function syncMembers() {
   const data = db.loadDb();
   let synced = 0;
   
-  for (const user of data.users) {
+  for (const member of data.members) {
     let changed = false;
     
-    // Добавляем messages_count если отсутствует
-    if (user.messages_count === undefined) {
-      user.messages_count = 0;
-      changed = true;
-    }
-    
-    // Добавляем achievements если отсутствует
-    if (!user.achievements || !Array.isArray(user.achievements)) {
-      user.achievements = [];
+    // Добавляем message_count если отсутствует
+    if (member.message_count === undefined) {
+      member.message_count = 0;
       changed = true;
     }
     
     // Добавляем coins если отсутствует
-    if (user.coins === undefined) {
-      user.coins = 0;
+    if (member.coins === undefined) {
+      member.coins = 0;
+      changed = true;
+    }
+    
+    // Добавляем level если отсутствует
+    if (member.level === undefined) {
+      member.level = 1;
+      changed = true;
+    }
+    
+    // Добавляем xp если отсутствует
+    if (member.xp === undefined) {
+      member.xp = 0;
+      changed = true;
+    }
+    
+    // Добавляем sticker_count если отсутствует
+    if (member.sticker_count === undefined) {
+      member.sticker_count = 0;
+      changed = true;
+    }
+    
+    // Добавляем reply_count если отсутствует
+    if (member.reply_count === undefined) {
+      member.reply_count = 0;
       changed = true;
     }
     
@@ -91,101 +115,61 @@ function syncUsers() {
   
   if (synced > 0) {
     db.saveDb(data);
-    console.log(`[Achievements] Синхронизировано ${synced} пользователей`);
+    console.log(`[Achievements] Синхронизировано ${synced} участников`);
   }
   
   return synced;
 }
 
-// ── Создание профиля достижений для пользователя ───────────────
-function ensureAchievementProfile(userId) {
-  const data = db.loadDb();
-  const user = data.users.find(u => String(u.telegram_id) === String(userId));
-  
-  if (!user) {
-    console.log(`[Achievements] Пользователь ${userId} не найден, создаём профиль`);
-    return false;
+// ── Создание профиля участника для чата ───────────────────────
+function ensureMemberProfile(userId, chatId) {
+  const member = db.upsertMember(userId, chatId);
+  if (member) {
+    console.log(`[Achievements] Профиль участника создан/обновлён для пользователя ${userId} в чате ${chatId}`);
   }
-  
-  let changed = false;
-  
-  if (user.messages_count === undefined) {
-    user.messages_count = 0;
-    changed = true;
-  }
-  
-  if (!user.achievements || !Array.isArray(user.achievements)) {
-    user.achievements = [];
-    changed = true;
-  }
-  
-  if (user.coins === undefined) {
-    user.coins = 0;
-    changed = true;
-  }
-  
-  if (changed) {
-    user.updated_at = db.now();
-    db.saveDb(data);
-    console.log(`[Achievements] Профиль достижений создан/обновлён для пользователя ${userId}`);
-  }
-  
-  return true;
+  return member;
 }
 
 function grantAchievement(userId, chatId, achievementId) {
-  const data = db.loadDb();
-  const user = data.users.find(u => String(u.telegram_id) === String(userId));
-  if (!user) {
-    console.log(`[Achievements] ❌ Пользователь ${userId} не найден в базе`);
-    return false;
-  }
-  if (!user.achievements) user.achievements = [];
+  console.log(`[Achievements] Проверка достижения ${achievementId} для пользователя ${userId} в чате ${chatId}`);
   
-  console.log(`[Achievements] Проверка достижения ${achievementId} для пользователя ${userId}`);
-  console.log(`[Achievements] Текущие достижения: ${JSON.stringify(user.achievements)}`);
-  
-  if (user.achievements.includes(achievementId)) {
+  // Проверяем, не выдано ли уже
+  if (db.hasUserAchievement(userId, chatId, achievementId)) {
     console.log(`[Achievements] ⚠️ Достижение ${achievementId} уже выдано, пропускаем`);
     return false;
   }
   
-  user.achievements.push(achievementId);
-  user.updated_at = db.now();
+  const granted = db.grantUserAchievement(userId, chatId, achievementId);
+  if (granted) {
+    console.log(`[Achievements] ✅ Выдано достижение ${achievementId} пользователю ${userId} в чате ${chatId}`);
+  }
   
-  db.saveDb(data);
-  console.log(`[Achievements] ✅ Выдано достижение ${achievementId} пользователю ${userId}`);
-  console.log(`[Achievements] Новые достижения: ${JSON.stringify(user.achievements)}`);
-  return true;
+  return granted;
 }
 
 // ── Увеличить счётчик сообщений ───────────────────────────────
 function incrementMessageCount(userId, chatId) {
-  const data = db.loadDb();
-  const user = data.users.find(u => String(u.telegram_id) === String(userId));
-  if (!user) return;
-  
-  user.messages_count = (user.messages_count || 0) + 1;
-  user.updated_at = db.now();
-  
-  db.saveDb(data);
-  console.log(`[Achievements] messages_count пользователя ${userId}: ${user.messages_count}`);
+  const member = db.incrementMemberField(userId, chatId, 'message_count', 1);
+  if (member) {
+    console.log(`[Achievements] message_count пользователя ${userId} в чате ${chatId}: ${member.message_count}`);
+  }
 }
 
 // ── Проверить и выдать новые достижения ───────────────────────
 async function checkAchievements(ctx, userId, chatId) {
-  const user = getDbUser(userId, chatId);
-  if (!user) return;
+  const member = getMember(userId, chatId);
+  if (!member) return;
 
-  console.log(`[Achievements] Проверка достижений для пользователя ${userId}, messages_count: ${user.messages_count || 0}, achievements: ${user.achievements?.length || 0}`);
+  const earned = getUserAchievements(userId, chatId);
+  console.log(`[Achievements] Проверка достижений для пользователя ${userId} в чате ${chatId}, message_count: ${member.message_count || 0}, achievements: ${earned.length}`);
 
   for (const ach of ACHIEVEMENTS) {
     try {
       // Сначала проверяем условия достижения
-      if (!ach.check(user)) continue;
+      if (!ach.check(member)) continue;
       
       // Затем проверяем, не выдано ли уже это достижение
-      if (user.achievements && user.achievements.includes(ach.id)) {
+      if (earned.includes(ach.id)) {
         console.log(`[Achievements] ⚠️ Достижение ${ach.id} уже выдано, пропускаем`);
         continue;
       }
@@ -193,9 +177,9 @@ async function checkAchievements(ctx, userId, chatId) {
       const granted = grantAchievement(userId, chatId, ach.id);
       if (!granted) continue;
 
-      // Выдаём награду
+      // Выдаём награду (coins в member таблице)
       if (ach.reward > 0) {
-        db.addCoins(userId, ach.reward);
+        db.incrementMemberField(userId, chatId, 'coins', ach.reward);
       }
 
       // Уведомляем в чат
@@ -212,8 +196,8 @@ async function checkAchievements(ctx, userId, chatId) {
 
 // ── Регистрация ───────────────────────────────────────────────
 function registerAchievements(bot) {
-  // Синхронизируем пользователей при запуске
-  syncUsers();
+  // Синхронизируем участников при запуске
+  syncMembers();
 
   // /achievements — список достижений
   bot.command(['achievements', 'ачивки', 'достижения'], async (ctx) => {
@@ -277,11 +261,30 @@ function registerAchievements(bot) {
   bot.on('message', async (ctx, next) => {
     try {
       if (ctx.from && !ctx.from.is_bot && ctx.chat?.type !== 'private') {
-        // Убеждаемся что профиль достижений существует
-        ensureAchievementProfile(ctx.from.id);
+        // Убеждаемся что профиль участника существует для этого чата
+        ensureMemberProfile(ctx.from.id, ctx.chat.id);
         
         // Сначала увеличиваем счётчик сообщений
         incrementMessageCount(ctx.from.id, ctx.chat.id);
+        
+        // Триггер: стикер
+        if (ctx.message.sticker) {
+          db.incrementMemberField(ctx.from.id, ctx.chat.id, 'sticker_count', 1);
+          console.log(`[Achievements] sticker_count пользователя ${ctx.from.id} в чате ${ctx.chat.id} увеличен`);
+        }
+        
+        // Триггер: ответ
+        if (ctx.message.reply_to_message) {
+          db.incrementMemberField(ctx.from.id, ctx.chat.id, 'reply_count', 1);
+          console.log(`[Achievements] reply_count пользователя ${ctx.from.id} в чате ${ctx.chat.id} увеличен`);
+        }
+        
+        // Триггер: пересылка
+        if (ctx.message.forward_from || ctx.message.forward_from_chat) {
+          // Можно добавить достижение для пересылок в будущем
+          console.log(`[Achievements] Пользователь ${ctx.from.id} переслал сообщение в чате ${ctx.chat.id}`);
+        }
+        
         // Затем проверяем достижения
         await checkAchievements(ctx, ctx.from.id, ctx.chat.id);
       }
