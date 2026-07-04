@@ -22,6 +22,9 @@ BOT_TOKEN=...
 BOT_USERNAME=FunTalchik_Botik
 OWNER_ID=7887217301
 NODE_ENV=production
+AI_PROVIDER=gemini
+GEMINI_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 ## Запуск

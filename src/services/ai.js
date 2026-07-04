@@ -11,6 +11,86 @@ require('dotenv').config();
 // Максимальная длина ответа ИИ (в символах)
 const MAX_RESPONSE_LENGTH = 2000;
 
+const PROVIDERS = {
+  openai: {
+    label: 'OpenAI',
+    keyEnv: 'OPENAI_API_KEY',
+    modelEnv: 'AI_MODEL',
+    defaultModel: 'gpt-4o-mini',
+  },
+  claude: {
+    label: 'Claude',
+    keyEnv: 'CLAUDE_API_KEY',
+    modelEnv: 'CLAUDE_MODEL',
+    defaultModel: 'claude-3-5-sonnet-20241022',
+  },
+  gemini: {
+    label: 'Gemini',
+    keyEnv: 'GEMINI_API_KEY',
+    modelEnv: 'GEMINI_MODEL',
+    defaultModel: 'gemini-2.5-flash',
+  },
+};
+
+function normalizeProvider(provider) {
+  const value = String(provider || '').trim().toLowerCase();
+  if (value === 'google' || value === 'googleai' || value === 'google-ai') return 'gemini';
+  if (value === 'anthropic') return 'claude';
+  return value || 'auto';
+}
+
+function isRealApiKey(value) {
+  if (!value) return false;
+  const key = String(value).trim();
+  if (!key) return false;
+  return !/^(ВАШ_|YOUR_|INSERT_|PASTE_|CHANGE_ME|TODO)/i.test(key);
+}
+
+function getAiProviderConfig() {
+  function buildConfig(provider) {
+    const info = PROVIDERS[provider];
+    if (!info) {
+      return {
+        provider,
+        label: provider || 'unknown',
+        apiKey: '',
+        keyEnv: '',
+        model: '',
+        configured: false,
+        unknown: true,
+      };
+    }
+
+    const apiKey = process.env[info.keyEnv];
+    return {
+      provider,
+      label: info.label,
+      apiKey,
+      keyEnv: info.keyEnv,
+      model: process.env[info.modelEnv] || info.defaultModel,
+      configured: isRealApiKey(apiKey),
+    };
+  }
+
+  const requested = normalizeProvider(process.env.AI_PROVIDER);
+  const explicitProvider = Boolean(process.env.AI_PROVIDER && requested !== 'auto');
+
+  if (explicitProvider) return buildConfig(requested);
+
+  for (const provider of ['gemini', 'openai', 'claude']) {
+    const config = buildConfig(provider);
+    if (config.configured) return config;
+  }
+
+  return buildConfig('gemini');
+}
+
+function createAiError(code, message) {
+  const error = new Error(message || code);
+  error.code = code;
+  return error;
+}
+
 // Системная инструкция для бота
 const SYSTEM_PROMPT = `Ты — дружелюбный Telegram AI-помощник внутри бота FunTalk AI Bot.
 
@@ -48,29 +128,39 @@ const MODE_PROMPTS = {
  * @returns {Promise<string>} - ответ ИИ
  */
 async function askAI(history, userMessage, mode = 'general') {
-  const provider = process.env.AI_PROVIDER || 'openai';
+  const providerConfig = getAiProviderConfig();
+  const provider = providerConfig.provider;
+
+  if (!PROVIDERS[provider]) {
+    throw createAiError('UNKNOWN_AI_PROVIDER', `Неизвестный провайдер ИИ: ${provider}`);
+  }
+
+  if (!providerConfig.configured) {
+    throw createAiError('NO_API_KEY', `Не найден API-ключ ${providerConfig.keyEnv}`);
+  }
 
   // Формируем системную инструкцию с учётом режима
   const systemPrompt = SYSTEM_PROMPT + (MODE_PROMPTS[mode] || '');
 
   // Формируем историю сообщений для API
-  const messages = history.map(item => ({
+  const safeHistory = Array.isArray(history) ? history : [];
+  const messages = safeHistory.map(item => ({
     role: item.role === 'user' ? 'user' : 'assistant',
     content: item.message,
-  }));
+  })).filter(item => item.content);
   messages.push({ role: 'user', content: userMessage });
 
   try {
     let response;
 
     if (provider === 'openai') {
-      response = await askOpenAI(systemPrompt, messages);
+      response = await askOpenAI(systemPrompt, messages, providerConfig);
     } else if (provider === 'claude') {
-      response = await askClaude(systemPrompt, messages);
+      response = await askClaude(systemPrompt, messages, providerConfig);
     } else if (provider === 'gemini') {
-      response = await askGemini(systemPrompt, messages);
+      response = await askGemini(systemPrompt, messages, providerConfig);
     } else {
-      throw new Error(`Неизвестный провайдер ИИ: ${provider}`);
+      throw createAiError('UNKNOWN_AI_PROVIDER', `Неизвестный провайдер ИИ: ${provider}`);
     }
 
     // Обрезаем ответ если слишком длинный
@@ -88,22 +178,15 @@ async function askAI(history, userMessage, mode = 'general') {
 // ============================================================
 // OpenAI
 // ============================================================
-async function askOpenAI(systemPrompt, messages) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || apiKey === 'ВАШ_OPENAI_API_KEY') {
-    throw new Error('NO_API_KEY');
-  }
-
-  const model = process.env.AI_MODEL || 'gpt-4o-mini';
-
+async function askOpenAI(systemPrompt, messages, providerConfig) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      'Authorization': `Bearer ${providerConfig.apiKey}`,
     },
     body: JSON.stringify({
-      model,
+      model: providerConfig.model,
       messages: [
         { role: 'system', content: systemPrompt },
         ...messages,
@@ -125,23 +208,16 @@ async function askOpenAI(systemPrompt, messages) {
 // ============================================================
 // Claude (Anthropic)
 // ============================================================
-async function askClaude(systemPrompt, messages) {
-  const apiKey = process.env.CLAUDE_API_KEY;
-  if (!apiKey || apiKey === 'ВАШ_CLAUDE_API_KEY') {
-    throw new Error('NO_API_KEY');
-  }
-
-  const model = process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022';
-
+async function askClaude(systemPrompt, messages, providerConfig) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': apiKey,
+      'x-api-key': providerConfig.apiKey,
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model,
+      model: providerConfig.model,
       system: systemPrompt,
       messages,
       max_tokens: 800,
@@ -160,14 +236,7 @@ async function askClaude(systemPrompt, messages) {
 // ============================================================
 // Gemini (Google)
 // ============================================================
-async function askGemini(systemPrompt, messages) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === 'ВАШ_GEMINI_API_KEY') {
-    throw new Error('NO_API_KEY');
-  }
-
-  const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
-
+async function askGemini(systemPrompt, messages, providerConfig) {
   // Gemini использует другой формат — конвертируем
   const contents = messages.map(m => ({
     role: m.role === 'assistant' ? 'model' : 'user',
@@ -175,7 +244,7 @@ async function askGemini(systemPrompt, messages) {
   }));
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${providerConfig.model}:generateContent?key=${providerConfig.apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -193,7 +262,17 @@ async function askGemini(systemPrompt, messages) {
   }
 
   const data = await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Не удалось получить ответ.';
+  const text = data.candidates?.[0]?.content?.parts
+    ?.map(part => part.text || '')
+    .join('')
+    .trim();
+
+  if (text) return text;
+  if (data.promptFeedback?.blockReason) {
+    throw createAiError('AI_BLOCKED', `Gemini blocked prompt: ${data.promptFeedback.blockReason}`);
+  }
+
+  return 'Не удалось получить ответ.';
 }
 
-module.exports = { askAI };
+module.exports = { askAI, getAiProviderConfig, normalizeProvider, isRealApiKey };

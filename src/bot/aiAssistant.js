@@ -4,7 +4,7 @@
 // ============================================================
 
 const { Markup } = require('telegraf');
-const { askAI } = require('../services/ai');
+const { askAI, getAiProviderConfig } = require('../services/ai');
 const {
   saveAiMessage,
   getAiHistory,
@@ -35,19 +35,67 @@ const aiKeyboard = Markup.keyboard([
   ['🔴 Выйти из ИИ', '⬅️ Назад'],
 ]).resize();
 
+function getUserId(ctx) {
+  return ctx.state?.dbUser?.id || ctx.from?.id;
+}
+
+function getSettings(ctx) {
+  ctx.state = ctx.state || {};
+  ctx.state.settings = ctx.state.settings || { ai_mode: 'general' };
+  return ctx.state.settings;
+}
+
+function getMode(ctx) {
+  return getSettings(ctx).ai_mode || 'general';
+}
+
+function markAiActive(ctx) {
+  const userId = getUserId(ctx);
+  if (userId) aiActiveUsers.add(userId);
+  return userId;
+}
+
+function setupStatusText() {
+  const config = getAiProviderConfig();
+  if (config.unknown) {
+    return `\n\n⚠️ Неизвестный AI_PROVIDER: \`${config.provider}\`.\nИспользуй \`gemini\`, \`openai\`, \`claude\` или \`auto\`.`;
+  }
+  if (config.configured) {
+    return `\n\n✅ Подключён провайдер: *${config.label}*\nМодель: \`${config.model}\``;
+  }
+  return `\n\n⚠️ ИИ пока не подключён к API.\nЧтобы ответы заработали, добавь переменную \`${config.keyEnv}\` в Railway или .env.`;
+}
+
+async function showAiEntry(ctx) {
+  markAiActive(ctx);
+
+  const mode = getMode(ctx);
+  const modeInfo = AI_MODES[mode] || AI_MODES.general;
+
+  await ctx.reply(
+    `🤖 *ИИ-помощник включён*\n\nТекущий режим: ${modeInfo.label}${setupStatusText()}\n\nНапиши любой вопрос или идею, а я помогу.\n\n*Например:*\n— что написать девушке?\n— придумай мемную фразу\n— объясни простыми словами что такое ИИ\n— помоги начать знакомство\n— придумай описание для анкеты\n\n_Для выхода из ИИ-режима нажми "🔴 Выйти из ИИ"_`,
+    { parse_mode: 'Markdown', ...aiKeyboard }
+  );
+}
+
+function missingKeyText() {
+  const config = getAiProviderConfig();
+  if (config.unknown) {
+    return `🤖 Указан неизвестный AI_PROVIDER: ${config.provider}\n\nИспользуй: gemini, openai, claude или auto.`;
+  }
+  return (
+    `🤖 ИИ-помощник включается, но ответы пока не настроены.\n\n` +
+    `Нужно добавить API-ключ: ${config.keyEnv}\n` +
+    `Провайдер: ${config.label}\n` +
+    `Модель: ${config.model}\n\n` +
+    `Если хочешь Gemini, добавь GEMINI_API_KEY и поставь AI_PROVIDER=gemini.`
+  );
+}
+
 function registerAiAssistant(bot) {
   // Вход в раздел ИИ
   bot.hears('🤖 ИИ-помощник', async (ctx) => {
-    const userId = ctx.state.dbUser.id;
-    aiActiveUsers.add(userId);
-
-    const mode = ctx.state.settings?.ai_mode || 'general';
-    const modeInfo = AI_MODES[mode] || AI_MODES.general;
-
-    await ctx.reply(
-      `🤖 *ИИ-помощник включён*\n\nТекущий режим: ${modeInfo.label}\n\nНапиши любой вопрос или идею, а я помогу.\n\n*Например:*\n— что написать девушке?\n— придумай мемную фразу\n— объясни простыми словами что такое ИИ\n— помоги начать знакомство\n— придумай описание для анкеты\n\n_Для выхода из ИИ-режима нажми "🔴 Выйти из ИИ"_`,
-      { parse_mode: 'Markdown', ...aiKeyboard }
-    );
+    await showAiEntry(ctx);
   });
 
   // Выбор режима ИИ
@@ -68,10 +116,15 @@ function registerAiAssistant(bot) {
   });
 
   async function setAiMode(ctx, mode) {
-    const userId = ctx.state.dbUser.id;
-    aiActiveUsers.add(userId);
-    updateSetting(userId, 'ai_mode', mode);
-    ctx.state.settings.ai_mode = mode;
+    const userId = markAiActive(ctx);
+    if (userId) {
+      try {
+        updateSetting(userId, 'ai_mode', mode);
+      } catch (error) {
+        console.error('[AI settings]', error.message);
+      }
+    }
+    getSettings(ctx).ai_mode = mode;
 
     const modeInfo = AI_MODES[mode] || AI_MODES.general;
     await ctx.reply(
@@ -82,15 +135,15 @@ function registerAiAssistant(bot) {
 
   // Сбросить диалог ИИ
   bot.hears('🔄 Сбросить диалог', async (ctx) => {
-    const userId = ctx.state.dbUser.id;
-    clearAiHistory(userId);
+    const userId = getUserId(ctx);
+    if (userId) clearAiHistory(userId);
     await ctx.reply('🔄 Диалог сброшен. Начинаем с чистого листа!', aiKeyboard);
   });
 
   // Выйти из ИИ-режима
   bot.hears('🔴 Выйти из ИИ', async (ctx) => {
-    const userId = ctx.state.dbUser.id;
-    aiActiveUsers.delete(userId);
+    const userId = getUserId(ctx);
+    if (userId) aiActiveUsers.delete(userId);
     const { mainMenuKeyboard } = require('./menu');
     await ctx.reply('🤖 ИИ-помощник выключен. Возвращаемся в меню 👇', mainMenuKeyboard);
   });
@@ -98,7 +151,7 @@ function registerAiAssistant(bot) {
 
   // Кнопка назад в ИИ должна выключать ИИ-режим, иначе следующий обычный текст снова уйдёт в AI.
   bot.hears('⬅️ Назад', async (ctx, next) => {
-    const userId = ctx.state.dbUser.id;
+    const userId = getUserId(ctx);
     if (!aiActiveUsers.has(userId)) return next();
 
     aiActiveUsers.delete(userId);
@@ -108,19 +161,14 @@ function registerAiAssistant(bot) {
 
   // Команда /ai
   bot.command('ai', async (ctx) => {
-    const userId = ctx.state.dbUser.id;
-    aiActiveUsers.add(userId);
-    await ctx.reply(
-      '🤖 *ИИ-помощник включён*\n\nПиши свой вопрос!',
-      { parse_mode: 'Markdown', ...aiKeyboard }
-    );
+    await showAiEntry(ctx);
   });
 
   // ============================================================
   // Обработка текстовых сообщений в режиме ИИ
   // ============================================================
   bot.on('text', async (ctx, next) => {
-    const userId = ctx.state.dbUser.id;
+    const userId = getUserId(ctx);
 
     // Если пользователь не в режиме ИИ — пропускаем
     if (!aiActiveUsers.has(userId)) return next();
@@ -145,27 +193,17 @@ function registerAiAssistant(bot) {
       return;
     }
 
-    // Проверка наличия API-ключа
-    const provider = process.env.AI_PROVIDER || 'openai';
-    const keyMap = {
-      openai: process.env.OPENAI_API_KEY,
-      claude: process.env.CLAUDE_API_KEY,
-      gemini: process.env.GEMINI_API_KEY,
-    };
-    const apiKey = keyMap[provider];
-    if (!apiKey || apiKey.startsWith('ВАШ_')) {
-      await ctx.reply(
-        `ИИ-помощник пока не настроен.\n\nДобавьте API-ключ в файл *.env* и перезапустите бота.\n\nПровайдер: \`${provider}\``,
-        { parse_mode: 'Markdown' }
-      );
+    const providerConfig = getAiProviderConfig();
+    if (!providerConfig.configured) {
+      await ctx.reply(missingKeyText());
       return;
     }
 
     // Получаем режим ИИ
-    const mode = ctx.state.settings?.ai_mode || 'general';
+    const mode = getMode(ctx);
 
     // Индикатор печатания
-    await ctx.sendChatAction('typing');
+    try { await ctx.sendChatAction('typing'); } catch {}
 
     try {
       // Получаем историю диалога
@@ -190,8 +228,12 @@ function registerAiAssistant(bot) {
     } catch (error) {
       console.error('[AI Handler Error]', error.message);
 
-      if (error.message === 'NO_API_KEY') {
-        await ctx.reply('ИИ-помощник пока не настроен.\nДобавьте API-ключ в .env файл.');
+      if (error.code === 'NO_API_KEY' || error.message === 'NO_API_KEY') {
+        await ctx.reply(missingKeyText());
+      } else if (error.code === 'AI_BLOCKED') {
+        await ctx.reply('🤖 Я не могу ответить на такой запрос. Попробуй переформулировать его безопаснее.');
+      } else if (error.code === 'UNKNOWN_AI_PROVIDER') {
+        await ctx.reply('🤖 Указан неизвестный AI_PROVIDER. Используй: gemini, openai или claude.');
       } else {
         await ctx.reply(
           '🤖 ИИ-помощник временно недоступен.\n\nПопробуй ещё раз чуть позже или выбери другой раздел в меню.'
@@ -203,7 +245,8 @@ function registerAiAssistant(bot) {
   // Inline-кнопка сброса истории
   bot.action('ai_clear_history', async (ctx) => {
     await ctx.answerCbQuery('Диалог сброшен ✅');
-    clearAiHistory(ctx.state.dbUser.id);
+    const userId = getUserId(ctx);
+    if (userId) clearAiHistory(userId);
   });
 }
 

@@ -2,6 +2,10 @@ process.env.BOT_TOKEN = process.env.BOT_TOKEN || 'TEST_TOKEN';
 process.env.NODE_ENV = 'test';
 process.env.JSON_DB_PATH = process.env.JSON_DB_PATH || 'data/test-database.json';
 process.env.DB_PATH = process.env.DB_PATH || 'data/test-bot_data.json';
+process.env.AI_PROVIDER = 'gemini';
+process.env.GEMINI_API_KEY = '';
+process.env.OPENAI_API_KEY = '';
+process.env.CLAUDE_API_KEY = '';
 
 const assert = require('assert');
 const fs = require('fs');
@@ -149,6 +153,25 @@ async function sendText(text) {
     ),
     'Already-earned first message achievement should be recorded silently'
   );
+
+  const beforeAiCalls = calls.length;
+  await sendCommand('/ai');
+  await sendText('Привет, помоги придумать текст');
+  const aiTexts = calls
+    .slice(beforeAiCalls)
+    .filter((call) => call.method === 'sendMessage')
+    .map((call) => String(call.payload.text || ''));
+
+  assert(aiTexts.some((text) => text.includes('ИИ-помощник включён')), 'AI assistant should open without crashing');
+  assert(aiTexts.some((text) => text.includes('GEMINI_API_KEY')), 'AI assistant should explain missing Gemini key');
+
+  const { getAiProviderConfig } = require('../src/services/ai');
+  process.env.GEMINI_API_KEY = 'test-gemini-key';
+  const geminiConfig = getAiProviderConfig();
+  assert.strictEqual(geminiConfig.provider, 'gemini', 'Gemini provider should be selectable');
+  assert.strictEqual(geminiConfig.model, 'gemini-2.5-flash', 'Gemini should use the stable default model');
+  assert.strictEqual(geminiConfig.configured, true, 'Gemini should be configured when GEMINI_API_KEY is present');
+  process.env.GEMINI_API_KEY = '';
 
   await sendCommand('/start');
   await sendCommand('/shop');
