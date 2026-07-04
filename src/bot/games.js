@@ -32,6 +32,7 @@ function cdLeft(map, key, ms) {
 }
 
 function getCoins(userId) {
+  db.upsertUser && db.upsertUser(userId, null, null);
   return db.getCoins(userId);
 }
 
@@ -41,6 +42,7 @@ function addCoins(userId, amount) {
 }
 
 function removeCoins(userId, amount) {
+  db.upsertUser && db.upsertUser(userId, null, null);
   db.addCoins(userId, -amount);
 }
 
