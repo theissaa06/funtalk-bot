@@ -105,9 +105,11 @@ function silentInitIfNeeded(userId, chatId, memberNow) {
 
   // Старый пользователь — тихо закрываем всё что он уже достиг
   console.log(`[Achievements] Инит старого пользователя ${userId} (${legacyMsgCount} сообщений)`);
+  const globalCoins = db.getCoins(userId);
+  const checkData = { ...memberNow, coins: globalCoins };
   let count = 0;
   for (const ach of ACHIEVEMENTS) {
-    if (!ach.check(memberNow)) continue;
+    if (!ach.check(checkData)) continue;
     if (isGranted(userId, chatId, ach.id)) continue;
     doGrant(userId, chatId, ach.id);
     count++;
@@ -123,10 +125,17 @@ async function checkAchievements(ctx, userId, chatId, statsBeforeIncrement) {
     const member = db.getMember(userId, chatId);
     if (!member) return;
 
+    // Глобальный баланс пользователя (тот же что в магазине и /coins)
+    const globalCoins = db.getCoins(userId);
+
+    // Объединяем данные для проверки условий достижений
+    // member содержит per-чат данные, глобальный баланс подставляем отдельно
+    const checkData = { ...member, coins: globalCoins };
+
     for (const ach of ACHIEVEMENTS) {
       try {
-        // Условие выполнено по текущим данным?
-        if (!ach.check(member)) continue;
+        // Условие выполнено?
+        if (!ach.check(checkData)) continue;
 
         // Уже выдано?
         if (isGranted(userId, chatId, ach.id)) continue;
@@ -146,9 +155,9 @@ async function checkAchievements(ctx, userId, chatId, statsBeforeIncrement) {
         const granted = doGrant(userId, chatId, ach.id);
         if (!granted) continue;
 
-        // Награда монетами
+        // Награда монетами — пишем в глобальный users.coins (тот же что магазин/daily)
         if (ach.reward > 0) {
-          db.incrementMemberField(userId, chatId, 'coins', ach.reward);
+          db.addCoins(userId, ach.reward);
         }
 
         // Уведомление в чат
