@@ -1,6 +1,6 @@
 process.env.BOT_TOKEN = process.env.BOT_TOKEN || 'TEST_TOKEN';
 process.env.NODE_ENV = 'test';
-process.env.DATABASE_URL = process.env.DATABASE_URL || 'data/test-database.json';
+process.env.JSON_DB_PATH = process.env.JSON_DB_PATH || 'data/test-database.json';
 process.env.DB_PATH = process.env.DB_PATH || 'data/test-bot_data.json';
 
 const assert = require('assert');
@@ -10,7 +10,7 @@ const { Telegram } = require('telegraf');
 
 const rootDir = path.resolve(__dirname, '..');
 const tempFiles = [
-  process.env.DATABASE_URL,
+  process.env.JSON_DB_PATH,
   process.env.DB_PATH,
   'data/tg-users.json',
 ];
@@ -24,12 +24,12 @@ function cleanup() {
   }
 }
 
-for (const file of [process.env.DATABASE_URL, process.env.DB_PATH]) {
+for (const file of [process.env.JSON_DB_PATH, process.env.DB_PATH]) {
   const fullPath = path.resolve(rootDir, file);
   if (fs.existsSync(fullPath)) fs.rmSync(fullPath);
 }
 
-const testDatabasePath = path.resolve(rootDir, process.env.DATABASE_URL);
+const testDatabasePath = path.resolve(rootDir, process.env.JSON_DB_PATH);
 fs.mkdirSync(path.dirname(testDatabasePath), { recursive: true });
 fs.writeFileSync(testDatabasePath, JSON.stringify({
   counters: {},

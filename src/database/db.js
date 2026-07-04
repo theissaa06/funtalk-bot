@@ -8,7 +8,19 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
-const dbPath = path.resolve(process.env.DATABASE_URL || path.join(__dirname, '../../data/database.json'));
+function resolveDbPath() {
+  const explicitPath = process.env.JSON_DB_PATH || process.env.DATABASE_JSON_PATH;
+  if (explicitPath) return path.resolve(explicitPath);
+
+  const legacyPath = process.env.DATABASE_URL;
+  if (legacyPath && /\.json$/i.test(legacyPath) && !/^[a-z][a-z\d+.-]*:\/\//i.test(legacyPath)) {
+    return path.resolve(legacyPath);
+  }
+
+  return path.resolve(path.join(__dirname, '../../data/database.json'));
+}
+
+const dbPath = resolveDbPath();
 
 const defaultData = {
   counters: {
