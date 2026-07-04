@@ -619,6 +619,49 @@ function hasUserAchievement(userId, chatId, achievementId) {
   );
 }
 
+// ── Достижения в chats (выживают между деплоями) ──────────────
+// Хранятся в data.chats[chatId].users[userId].granted_achievements
+// Это единственное хранилище которое не сбрасывается при перезапуске Railway.
+
+function getChatUserAchievements(userId, chatId) {
+  const data = loadDb();
+  const chatUsers = data.chats?.[String(chatId)]?.users;
+  if (!chatUsers) return [];
+  const u = chatUsers[String(userId)];
+  if (!u) return [];
+  return Array.isArray(u.granted_achievements) ? u.granted_achievements : [];
+}
+
+function hasChatUserAchievement(userId, chatId, achievementId) {
+  return getChatUserAchievements(userId, chatId).includes(achievementId);
+}
+
+function grantChatUserAchievement(userId, chatId, achievementId) {
+  const data = loadDb();
+  if (!data.chats) data.chats = {};
+  if (!data.chats[String(chatId)]) data.chats[String(chatId)] = { users: {} };
+  if (!data.chats[String(chatId)].users) data.chats[String(chatId)].users = {};
+  let u = data.chats[String(chatId)].users[String(userId)];
+  if (!u) {
+    u = {};
+    data.chats[String(chatId)].users[String(userId)] = u;
+  }
+  if (!Array.isArray(u.granted_achievements)) u.granted_achievements = [];
+  if (u.granted_achievements.includes(achievementId)) return false;
+  u.granted_achievements.push(achievementId);
+  saveDb(data);
+  return true;
+}
+
+// Возвращает message_count пользователя из старого хранилища chats
+// (поле messages или messages_count)
+function getLegacyMessageCount(userId, chatId) {
+  const data = loadDb();
+  const u = data.chats?.[String(chatId)]?.users?.[String(userId)];
+  if (!u) return 0;
+  return Number(u.messages || u.messages_count || 0);
+}
+
 // ── Функции для иммунитетов (consumable) ───────────────────────
 function hasShield(telegramId, shieldType) {
   const data = loadDb();
@@ -684,6 +727,11 @@ module.exports = {
   getUserAchievements,
   grantUserAchievement,
   hasUserAchievement,
+  // Достижения в chats (выживают между деплоями)
+  getChatUserAchievements,
+  hasChatUserAchievement,
+  grantChatUserAchievement,
+  getLegacyMessageCount,
   // Функции для иммунитетов (consumable)
   hasShield,
   consumeShield,

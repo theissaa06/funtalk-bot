@@ -2,17 +2,18 @@
 // src/bot/achievements.js
 // Система достижений — автоматические ачивки
 //
-// Архитектура хранения:
-//   Достижения хранятся двойным способом:
-//   1. В member.granted_achievements (массив id) — основное хранилище
-//   2. В user_achievements таблице — резервное/для совместимости
-//   Это гарантирует что данные не потеряются при любых условиях.
+// ХРАНИЛИЩЕ: data.chats[chatId].users[userId].granted_achievements[]
 //
-// Логика выдачи:
-//   "первое сообщение" и другие прогрессивные достижения выдаются
-//   ТОЛЬКО если счётчик ДО текущего сообщения равен нулю.
-//   Для старых пользователей (message_count > 0 при первом появлении
-//   в системе достижений) — достижения закрываются тихо без уведомления.
+// Это единственное поле которое СОХРАНЯЕТСЯ между деплоями Railway,
+// потому что секция data.chats не перезаписывается defaultData при
+// пересоздании database.json.
+//
+// ЛОГИКА:
+//   - При первом появлении пользователя проверяем его legacy message_count
+//   - Если > 0 — он старый, тихо закрываем все достигнутые ачивки без уведомления
+//   - Метка '_ach_init' в granted_achievements гарантирует что это делается один раз
+//   - Новые достижения выдаются только если порог пройден ИМЕННО этим сообщением
+//     (значение счётчика ДО инкремента < порога)
 // ============================================================
 
 const { Markup } = require('telegraf');
@@ -21,55 +22,39 @@ const { formatName } = require('../utils');
 
 // ── Список достижений ─────────────────────────────────────────
 const ACHIEVEMENTS = [
-  // Активность (per-чат)
-  { id: 'first_msg',    name: '👋 Первый шаг',      desc: 'Написал первое сообщение в чате',   reward: 20,   check: (u) => (u.message_count || 0) >= 1 },
-  { id: 'msg_10',       name: '💬 Болтун',           desc: '10 сообщений в чате',              reward: 30,   check: (u) => (u.message_count || 0) >= 10 },
-  { id: 'msg_100',      name: '🗣 Активист',         desc: '100 сообщений в чате',             reward: 100,  check: (u) => (u.message_count || 0) >= 100 },
-  { id: 'msg_500',      name: '📢 Голос чата',       desc: '500 сообщений в чате',             reward: 300,  check: (u) => (u.message_count || 0) >= 500 },
-  { id: 'msg_1000',     name: '🏆 Легенда чата',     desc: '1000 сообщений в чате',            reward: 1000, check: (u) => (u.message_count || 0) >= 1000 },
-
-  // Стикеры (per-чат)
-  { id: 'sticker_10',   name: '😎 Стикероман',       desc: 'Отправил 10 стикеров',             reward: 30,   check: (u) => (u.sticker_count || 0) >= 10 },
-  { id: 'sticker_100',  name: '🎨 Художник',         desc: 'Отправил 100 стикеров',            reward: 200,  check: (u) => (u.sticker_count || 0) >= 100 },
-
-  // Ответы (per-чат)
-  { id: 'reply_10',     name: '💬 Отвечающий',       desc: 'Ответил 10 раз',                   reward: 30,   check: (u) => (u.reply_count || 0) >= 10 },
-  { id: 'reply_100',    name: '🗣 Диалогист',        desc: 'Ответил 100 раз',                  reward: 200,  check: (u) => (u.reply_count || 0) >= 100 },
-
-  // Уровни (per-чат)
-  { id: 'level_5',      name: '🥉 Участник',         desc: 'Достиг 5 уровня',                  reward: 50,   check: (u) => (u.level || 1) >= 5 },
-  { id: 'level_10',     name: '🥈 Опытный',          desc: 'Достиг 10 уровня',                 reward: 150,  check: (u) => (u.level || 1) >= 10 },
-  { id: 'level_20',     name: '🥇 Про',              desc: 'Достиг 20 уровня',                 reward: 400,  check: (u) => (u.level || 1) >= 20 },
-  { id: 'level_30',     name: '💎 Эксперт',          desc: 'Достиг 30 уровня',                 reward: 800,  check: (u) => (u.level || 1) >= 30 },
-  { id: 'level_50',     name: '👑 Легенда',          desc: 'Достиг 50 уровня',                 reward: 2000, check: (u) => (u.level || 1) >= 50 },
-
-  // Монеты (per-чат)
-  { id: 'coins_100',    name: '💰 Копилка',          desc: 'Накопил 100 монет в чате',         reward: 0,    check: (u) => (u.coins || 0) >= 100 },
-  { id: 'coins_1000',   name: '💎 Богач',            desc: 'Накопил 1000 монет в чате',        reward: 50,   check: (u) => (u.coins || 0) >= 1000 },
-  { id: 'coins_5000',   name: '🤑 Миллионер',        desc: 'Накопил 5000 монет в чате',        reward: 200,  check: (u) => (u.coins || 0) >= 5000 },
-
-  // Социальное
-  { id: 'first_friend', name: '🤝 Первый друг',      desc: 'Завёл первого друга',              reward: 30,   check: (u) => (u.friends_count || 0) >= 1 },
-  { id: 'friends_5',    name: '👥 Компания',         desc: '5 друзей в чате',                  reward: 100,  check: (u) => (u.friends_count || 0) >= 5 },
-  { id: 'in_love',      name: '❤️ Влюблённый',       desc: 'Нашёл пару',                       reward: 50,   check: (u) => u.in_couple === true },
-  { id: 'rep_10',       name: '⭐ Уважаемый',        desc: 'Получил 10 репутации',             reward: 100,  check: (u) => (u.reputation || 0) >= 10 },
-  { id: 'rep_50',       name: '🌟 Авторитет',        desc: 'Получил 50 репутации',             reward: 500,  check: (u) => (u.reputation || 0) >= 50 },
-
-  // Игры
-  { id: 'first_casino', name: '🎰 Игрок',            desc: 'Сыграл в казино первый раз',       reward: 20,   check: (u) => (u.casino_games || 0) >= 1 },
-  { id: 'casino_win',   name: '🤑 Везунчик',         desc: 'Выиграл в казино',                 reward: 50,   check: (u) => (u.casino_wins || 0) >= 1 },
-  { id: 'duel_win',     name: '⚔️ Дуэлянт',          desc: 'Победил в дуэли',                  reward: 75,   check: (u) => (u.duel_wins || 0) >= 1 },
-  { id: 'duel_5',       name: '🗡 Непобедимый',      desc: 'Победил в 5 дуэлях',               reward: 200,  check: (u) => (u.duel_wins || 0) >= 5 },
-
-  // Особые
-  { id: 'daily_7',      name: '📅 Постоянный',       desc: '7 дней подряд получал бонус',      reward: 200,  check: (u) => (u.daily_streak || 0) >= 7 },
-  { id: 'daily_30',     name: '🗓 Преданный',        desc: '30 дней подряд получал бонус',     reward: 1000, check: (u) => (u.daily_streak || 0) >= 30 },
-  { id: 'shop_buyer',   name: '🛍 Покупатель',       desc: 'Купил что-то в магазине',          reward: 30,   check: (u) => (u.inventory || []).length >= 1 },
+  { id: 'first_msg',    name: '👋 Первый шаг',    desc: 'Написал первое сообщение в чате',  reward: 20,   check: (u) => (u.message_count || 0) >= 1 },
+  { id: 'msg_10',       name: '💬 Болтун',         desc: '10 сообщений в чате',             reward: 30,   check: (u) => (u.message_count || 0) >= 10 },
+  { id: 'msg_100',      name: '🗣 Активист',       desc: '100 сообщений в чате',            reward: 100,  check: (u) => (u.message_count || 0) >= 100 },
+  { id: 'msg_500',      name: '📢 Голос чата',     desc: '500 сообщений в чате',            reward: 300,  check: (u) => (u.message_count || 0) >= 500 },
+  { id: 'msg_1000',     name: '🏆 Легенда чата',   desc: '1000 сообщений в чате',           reward: 1000, check: (u) => (u.message_count || 0) >= 1000 },
+  { id: 'sticker_10',   name: '😎 Стикероман',     desc: 'Отправил 10 стикеров',            reward: 30,   check: (u) => (u.sticker_count || 0) >= 10 },
+  { id: 'sticker_100',  name: '🎨 Художник',       desc: 'Отправил 100 стикеров',           reward: 200,  check: (u) => (u.sticker_count || 0) >= 100 },
+  { id: 'reply_10',     name: '💬 Отвечающий',     desc: 'Ответил 10 раз',                  reward: 30,   check: (u) => (u.reply_count || 0) >= 10 },
+  { id: 'reply_100',    name: '🗣 Диалогист',      desc: 'Ответил 100 раз',                 reward: 200,  check: (u) => (u.reply_count || 0) >= 100 },
+  { id: 'level_5',      name: '🥉 Участник',       desc: 'Достиг 5 уровня',                 reward: 50,   check: (u) => (u.level || 1) >= 5 },
+  { id: 'level_10',     name: '🥈 Опытный',        desc: 'Достиг 10 уровня',                reward: 150,  check: (u) => (u.level || 1) >= 10 },
+  { id: 'level_20',     name: '🥇 Про',            desc: 'Достиг 20 уровня',                reward: 400,  check: (u) => (u.level || 1) >= 20 },
+  { id: 'level_30',     name: '💎 Эксперт',        desc: 'Достиг 30 уровня',                reward: 800,  check: (u) => (u.level || 1) >= 30 },
+  { id: 'level_50',     name: '👑 Легенда',        desc: 'Достиг 50 уровня',                reward: 2000, check: (u) => (u.level || 1) >= 50 },
+  { id: 'coins_100',    name: '💰 Копилка',        desc: 'Накопил 100 монет в чате',        reward: 0,    check: (u) => (u.coins || 0) >= 100 },
+  { id: 'coins_1000',   name: '💎 Богач',          desc: 'Накопил 1000 монет в чате',       reward: 50,   check: (u) => (u.coins || 0) >= 1000 },
+  { id: 'coins_5000',   name: '🤑 Миллионер',      desc: 'Накопил 5000 монет в чате',       reward: 200,  check: (u) => (u.coins || 0) >= 5000 },
+  { id: 'first_friend', name: '🤝 Первый друг',    desc: 'Завёл первого друга',             reward: 30,   check: (u) => (u.friends_count || 0) >= 1 },
+  { id: 'friends_5',    name: '👥 Компания',       desc: '5 друзей в чате',                 reward: 100,  check: (u) => (u.friends_count || 0) >= 5 },
+  { id: 'in_love',      name: '❤️ Влюблённый',     desc: 'Нашёл пару',                      reward: 50,   check: (u) => u.in_couple === true },
+  { id: 'rep_10',       name: '⭐ Уважаемый',      desc: 'Получил 10 репутации',            reward: 100,  check: (u) => (u.reputation || 0) >= 10 },
+  { id: 'rep_50',       name: '🌟 Авторитет',      desc: 'Получил 50 репутации',            reward: 500,  check: (u) => (u.reputation || 0) >= 50 },
+  { id: 'first_casino', name: '🎰 Игрок',          desc: 'Сыграл в казино первый раз',      reward: 20,   check: (u) => (u.casino_games || 0) >= 1 },
+  { id: 'casino_win',   name: '🤑 Везунчик',       desc: 'Выиграл в казино',                reward: 50,   check: (u) => (u.casino_wins || 0) >= 1 },
+  { id: 'duel_win',     name: '⚔️ Дуэлянт',        desc: 'Победил в дуэли',                 reward: 75,   check: (u) => (u.duel_wins || 0) >= 1 },
+  { id: 'duel_5',       name: '🗡 Непобедимый',    desc: 'Победил в 5 дуэлях',              reward: 200,  check: (u) => (u.duel_wins || 0) >= 5 },
+  { id: 'daily_7',      name: '📅 Постоянный',     desc: '7 дней подряд получал бонус',     reward: 200,  check: (u) => (u.daily_streak || 0) >= 7 },
+  { id: 'daily_30',     name: '🗓 Преданный',      desc: '30 дней подряд получал бонус',    reward: 1000, check: (u) => (u.daily_streak || 0) >= 30 },
+  { id: 'shop_buyer',   name: '🛍 Покупатель',     desc: 'Купил что-то в магазине',         reward: 30,   check: (u) => (u.inventory || []).length >= 1 },
 ];
 
-// Прогрессивные достижения: для них важно что порог пройден именно ЭТИМ сообщением
-// ключ = id достижения, значение = поле и порог
-const PROGRESS_ACHIEVEMENTS = {
+// Прогрессивные достижения: выдаются только если порог пройден именно сейчас
+const PROGRESS_THRESHOLDS = {
   first_msg:   { field: 'message_count', threshold: 1 },
   msg_10:      { field: 'message_count', threshold: 10 },
   msg_100:     { field: 'message_count', threshold: 100 },
@@ -77,168 +62,87 @@ const PROGRESS_ACHIEVEMENTS = {
   msg_1000:    { field: 'message_count', threshold: 1000 },
   sticker_10:  { field: 'sticker_count', threshold: 10 },
   sticker_100: { field: 'sticker_count', threshold: 100 },
-  reply_10:    { field: 'reply_count', threshold: 10 },
-  reply_100:   { field: 'reply_count', threshold: 100 },
+  reply_10:    { field: 'reply_count',   threshold: 10 },
+  reply_100:   { field: 'reply_count',   threshold: 100 },
 };
 
-// ── Хранилище достижений: читаем прямо из member ──────────────
-// Это решает проблему потери данных из отдельной таблицы user_achievements
-
-function getGrantedInMember(userId, chatId) {
-  const data = db.loadDb();
-  const member = data.members.find(m =>
-    String(m.user_id) === String(userId) && String(m.chat_id) === String(chatId)
-  );
-  if (!member) return [];
-  if (!Array.isArray(member.granted_achievements)) return [];
-  return member.granted_achievements;
+// ── Проверка: выдано ли достижение ───────────────────────────
+// Читаем из data.chats — единственное хранилище которое не сбрасывается
+function isGranted(userId, chatId, achievementId) {
+  return db.hasChatUserAchievement(userId, chatId, achievementId);
 }
 
-function hasGrantedInMember(userId, chatId, achievementId) {
-  return getGrantedInMember(userId, chatId).includes(achievementId);
-}
-
-function grantInMember(userId, chatId, achievementId) {
-  const data = db.loadDb();
-  const member = data.members.find(m =>
-    String(m.user_id) === String(userId) && String(m.chat_id) === String(chatId)
-  );
-  if (!member) return false;
-  if (!Array.isArray(member.granted_achievements)) {
-    member.granted_achievements = [];
-  }
-  if (member.granted_achievements.includes(achievementId)) return false;
-  member.granted_achievements.push(achievementId);
-  db.saveDb(data);
-  return true;
-}
-
-// ── Унифицированная проверка: выдано ли достижение ────────────
-// Проверяем оба хранилища
-function isAlreadyGranted(userId, chatId, achievementId) {
-  // Сначала проверяем member.granted_achievements (основное)
-  if (hasGrantedInMember(userId, chatId, achievementId)) return true;
-  // Затем резервное user_achievements
-  if (db.hasUserAchievement(userId, chatId, achievementId)) return true;
-  return false;
-}
-
-// ── Выдать достижение (в оба хранилища) ───────────────────────
+// ── Выдать достижение ─────────────────────────────────────────
 function doGrant(userId, chatId, achievementId) {
-  if (isAlreadyGranted(userId, chatId, achievementId)) return false;
-  // Пишем в оба хранилища
-  grantInMember(userId, chatId, achievementId);
-  db.grantUserAchievement(userId, chatId, achievementId);
-  console.log(`[Achievements] ✅ Выдано ${achievementId} пользователю ${userId} в чате ${chatId}`);
-  return true;
+  return db.grantChatUserAchievement(userId, chatId, achievementId);
 }
 
-// ── Получить все выданные достижения (из обоих хранилищ) ──────
-function getAllGranted(userId, chatId) {
-  const fromMember = getGrantedInMember(userId, chatId);
-  const fromTable  = db.getUserAchievements(userId, chatId);
-  // Объединяем без дублей
-  return [...new Set([...fromMember, ...fromTable])];
+// ── Получить все выданные достижения ──────────────────────────
+function getEarned(userId, chatId) {
+  return db.getChatUserAchievements(userId, chatId)
+    .filter(id => id !== '_ach_init');
 }
 
-// ── Синхронизация при запуске ─────────────────────────────────
-function syncMembers() {
-  const data = db.loadDb();
-  let synced = 0;
+// ── Тихая инициализация старых пользователей ─────────────────
+// Вызывается один раз. Если у пользователя уже есть история сообщений —
+// тихо закрываем все достигнутые ачивки без уведомления.
+function silentInitIfNeeded(userId, chatId, memberNow) {
+  // Уже инициализирован?
+  if (isGranted(userId, chatId, '_ach_init')) return;
 
-  for (const member of data.members) {
-    let changed = false;
-    if (member.message_count === undefined) { member.message_count = 0; changed = true; }
-    if (member.coins       === undefined) { member.coins       = 0; changed = true; }
-    if (member.level       === undefined) { member.level       = 1; changed = true; }
-    if (member.xp          === undefined) { member.xp          = 0; changed = true; }
-    if (member.sticker_count === undefined) { member.sticker_count = 0; changed = true; }
-    if (member.reply_count === undefined) { member.reply_count  = 0; changed = true; }
-    if (!Array.isArray(member.granted_achievements)) {
-      member.granted_achievements = [];
-      changed = true;
-    }
-    if (changed) synced++;
-  }
+  // Ставим метку — больше не будем инициализировать
+  doGrant(userId, chatId, '_ach_init');
 
-  if (synced > 0) {
-    db.saveDb(data);
-    console.log(`[Achievements] Синхронизировано ${synced} участников`);
-  }
-  return synced;
-}
+  // Считаем сколько сообщений было ДО этого момента
+  // Берём из member (уже включает legacy данные через upsertMember)
+  const legacyMsgCount = Number(memberNow.message_count || 0);
 
-// ── Тихая инициализация старых пользователей ──────────────────
-// Вызывается один раз при первом появлении пользователя в системе достижений.
-// Если у него уже есть message_count > 0 — значит он существовал до введения
-// достижений. Закрываем все достигнутые ачивки БЕЗ уведомления.
-function silentInitUser(userId, chatId, memberSnapshot) {
-  if (!memberSnapshot) return;
-
-  // Если пользователь уже инициализирован — пропускаем
-  if (hasGrantedInMember(userId, chatId, '_init')) return;
-
-  // Помечаем что инициализация прошла (даже если достижений нет)
-  grantInMember(userId, chatId, '_init');
-
-  const msgCount = Number(memberSnapshot.message_count || 0);
-  if (msgCount === 0) {
-    // Совсем новый пользователь — инициализация нужна только чтобы поставить метку
-    console.log(`[Achievements] Новый пользователь ${userId} инициализирован`);
+  if (legacyMsgCount === 0) {
+    // Совсем новый пользователь — нечего закрывать
+    console.log(`[Achievements] Новый пользователь ${userId} в чате ${chatId}`);
     return;
   }
 
-  // Старый пользователь с историей — тихо закрываем всё достигнутое
-  console.log(`[Achievements] Старый пользователь ${userId} (${msgCount} сообщений) — тихая инициализация`);
+  // Старый пользователь — тихо закрываем всё что он уже достиг
+  console.log(`[Achievements] Инит старого пользователя ${userId} (${legacyMsgCount} сообщений)`);
   let count = 0;
   for (const ach of ACHIEVEMENTS) {
-    if (ach.id === '_init') continue;
-    if (!ach.check(memberSnapshot)) continue;
-    if (isAlreadyGranted(userId, chatId, ach.id)) continue;
+    if (!ach.check(memberNow)) continue;
+    if (isGranted(userId, chatId, ach.id)) continue;
     doGrant(userId, chatId, ach.id);
     count++;
   }
-  console.log(`[Achievements] Тихо выдано ${count} достижений пользователю ${userId}`);
+  console.log(`[Achievements] Тихо закрыто ${count} достижений для ${userId}`);
 }
 
-// ── Увеличить счётчик сообщений ───────────────────────────────
-function incrementMessageCount(userId, chatId) {
-  return db.incrementMemberField(userId, chatId, 'message_count', 1);
-}
-
-// ── Проверить и выдать новые достижения ───────────────────────
-// previousStats — состояние счётчиков ДО инкремента текущего сообщения
-async function checkAchievements(ctx, userId, chatId, previousStats = {}) {
+// ── Проверить и выдать новые достижения после инкремента ──────
+// statsBeforeIncrement — значения счётчиков ДО текущего сообщения
+async function checkAchievements(ctx, userId, chatId, statsBeforeIncrement) {
   try {
+    // Читаем актуальное состояние member (уже после инкремента)
     const member = db.getMember(userId, chatId);
     if (!member) return;
 
-    const earned = getAllGranted(userId, chatId);
-
     for (const ach of ACHIEVEMENTS) {
-      if (ach.id === '_init') continue;
-
       try {
-        // Условие достижения выполнено?
+        // Условие выполнено по текущим данным?
         if (!ach.check(member)) continue;
 
         // Уже выдано?
-        if (earned.includes(ach.id)) continue;
+        if (isGranted(userId, chatId, ach.id)) continue;
 
-        // Для прогрессивных достижений: порог должен быть пройден именно сейчас
-        // (т.е. ДО инкремента счётчик был ниже порога)
-        const progress = PROGRESS_ACHIEVEMENTS[ach.id];
-        if (progress) {
-          const valueBefore = Number(previousStats[progress.field] || 0);
-          if (valueBefore >= progress.threshold) {
-            // Порог был пройден раньше — выдаём тихо, без уведомления
+        // Для прогрессивных: порог должен быть пройден именно этим действием
+        const prog = PROGRESS_THRESHOLDS[ach.id];
+        if (prog) {
+          const before = Number(statsBeforeIncrement[prog.field] || 0);
+          if (before >= prog.threshold) {
+            // Уже было — закрываем тихо (на случай если тихая инициализация не поймала)
             doGrant(userId, chatId, ach.id);
-            console.log(`[Achievements] ${ach.id} закрыто тихо: порог уже был пройден (было ${valueBefore})`);
             continue;
           }
         }
 
-        // Выдаём
+        // Выдаём достижение
         const granted = doGrant(userId, chatId, ach.id);
         if (!granted) continue;
 
@@ -256,22 +160,21 @@ async function checkAchievements(ctx, userId, chatId, previousStats = {}) {
           { parse_mode: 'HTML' }
         );
       } catch (e) {
-        console.error(`[Achievements] Ошибка при проверке ${ach.id}:`, e.message);
+        console.error(`[Achievements] ошибка при ${ach.id}:`, e.message);
       }
     }
   } catch (e) {
-    console.error('[Achievements] checkAchievements error:', e.message);
+    console.error('[Achievements] checkAchievements:', e.message);
   }
 }
 
 // ── Регистрация ───────────────────────────────────────────────
 function registerAchievements(bot) {
-  syncMembers();
 
-  // /achievements — список достижений пользователя
+  // /achievements — список достижений
   bot.command(['achievements', 'ачивки', 'достижения'], async (ctx) => {
     const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
-    const earned = getAllGranted(ctx.from.id, chatId).filter(id => id !== '_init');
+    const earned = getEarned(ctx.from.id, chatId);
 
     const lines = ACHIEVEMENTS.map(ach => {
       const done = earned.includes(ach.id);
@@ -299,7 +202,7 @@ function registerAchievements(bot) {
     await ctx.answerCbQuery();
     const page   = parseInt(ctx.match[1]);
     const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
-    const earned = getAllGranted(ctx.from.id, chatId).filter(id => id !== '_init');
+    const earned = getEarned(ctx.from.id, chatId);
 
     const lines = ACHIEVEMENTS.map(ach => {
       const done = earned.includes(ach.id);
@@ -331,21 +234,21 @@ function registerAchievements(bot) {
         const userId = ctx.from.id;
         const chatId = ctx.chat.id;
 
-        // Убеждаемся что профиль участника существует
-        // Важно: берём снимок ДО любых изменений
-        const before = db.upsertMember(userId, chatId) || {};
+        // Снимок ДО инкремента
+        const memberBefore = db.upsertMember(userId, chatId) || {};
 
-        const previousStats = {
-          message_count: Number(before.message_count || 0),
-          sticker_count: Number(before.sticker_count || 0),
-          reply_count:   Number(before.reply_count   || 0),
+        const statsBeforeIncrement = {
+          message_count: Number(memberBefore.message_count || 0),
+          sticker_count: Number(memberBefore.sticker_count || 0),
+          reply_count:   Number(memberBefore.reply_count   || 0),
         };
 
-        // Тихая инициализация старых пользователей (выполняется только один раз)
-        silentInitUser(userId, chatId, before);
+        // Тихая инициализация (один раз для старых пользователей)
+        // Передаём memberBefore — там уже подтянуты legacy данные через upsertMember
+        silentInitIfNeeded(userId, chatId, memberBefore);
 
         // Увеличиваем счётчики
-        incrementMessageCount(userId, chatId);
+        db.incrementMemberField(userId, chatId, 'message_count', 1);
 
         if (ctx.message.sticker) {
           db.incrementMemberField(userId, chatId, 'sticker_count', 1);
@@ -355,11 +258,11 @@ function registerAchievements(bot) {
           db.incrementMemberField(userId, chatId, 'reply_count', 1);
         }
 
-        // Проверяем и выдаём достижения
-        await checkAchievements(ctx, userId, chatId, previousStats);
+        // Проверяем новые достижения
+        await checkAchievements(ctx, userId, chatId, statsBeforeIncrement);
       }
     } catch (e) {
-      console.error('[Achievements] message handler error:', e.message);
+      console.error('[Achievements] message handler:', e.message);
     }
     return next();
   });
@@ -367,4 +270,4 @@ function registerAchievements(bot) {
   console.log('✅ Модуль achievements подключён');
 }
 
-module.exports = { registerAchievements, checkAchievements, ACHIEVEMENTS, incrementMessageCount };
+module.exports = { registerAchievements, checkAchievements, ACHIEVEMENTS };
