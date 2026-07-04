@@ -1,11 +1,14 @@
 process.env.BOT_TOKEN = process.env.BOT_TOKEN || 'TEST_TOKEN';
 process.env.NODE_ENV = 'test';
-process.env.JSON_DB_PATH = process.env.JSON_DB_PATH || 'data/test-database.json';
-process.env.DB_PATH = process.env.DB_PATH || 'data/test-bot_data.json';
+process.env.FUNTALK_TEST = '1';
 process.env.AI_PROVIDER = 'gemini';
 process.env.GEMINI_API_KEY = '';
 process.env.OPENAI_API_KEY = '';
 process.env.CLAUDE_API_KEY = '';
+process.env.OWNER_ID = '42';
+process.env.APP_STORE_PATH = 'data/test-app_store.json';
+process.env.ECONOMY_STORE_PATH = 'data/test-economy_store.json';
+process.env.MODERATION_STORE_PATH = 'data/test-moderation_store.json';
 
 const assert = require('assert');
 const fs = require('fs');
@@ -14,48 +17,18 @@ const { Telegram } = require('telegraf');
 
 const rootDir = path.resolve(__dirname, '..');
 const tempFiles = [
-  process.env.JSON_DB_PATH,
-  process.env.DB_PATH,
-  'data/tg-users.json',
-];
-const preExistingFiles = new Set(tempFiles.filter((file) => fs.existsSync(path.resolve(rootDir, file))));
+  process.env.APP_STORE_PATH,
+  process.env.ECONOMY_STORE_PATH,
+  process.env.MODERATION_STORE_PATH,
+].map(file => path.resolve(rootDir, file));
 
 function cleanup() {
   for (const file of tempFiles) {
-    if (preExistingFiles.has(file)) continue;
-    const fullPath = path.resolve(rootDir, file);
-    if (fs.existsSync(fullPath)) fs.rmSync(fullPath);
+    if (fs.existsSync(file)) fs.rmSync(file);
   }
 }
 
-for (const file of [process.env.JSON_DB_PATH, process.env.DB_PATH]) {
-  const fullPath = path.resolve(rootDir, file);
-  if (fs.existsSync(fullPath)) fs.rmSync(fullPath);
-}
-
-const testDatabasePath = path.resolve(rootDir, process.env.JSON_DB_PATH);
-fs.mkdirSync(path.dirname(testDatabasePath), { recursive: true });
-fs.writeFileSync(testDatabasePath, JSON.stringify({
-  counters: {},
-  chats: {
-    '-1001': {
-      users: {
-        '42': {
-          id: 42,
-          username: 'tester',
-          firstName: 'Tester',
-          messages: 3,
-          balance: 5,
-          xp: 7,
-          msgTypes: { sticker: 0 },
-          firstSeenAt: Date.now() - 86400000,
-          lastSeenAt: Date.now() - 3600000,
-          achievements: {},
-        },
-      },
-    },
-  },
-}, null, 2), 'utf8');
+cleanup();
 
 const calls = [];
 Telegram.prototype.callApi = async (method, payload) => {
@@ -68,19 +41,24 @@ Telegram.prototype.callApi = async (method, payload) => {
       text: payload.text,
     };
   }
-  if (method === 'getMe') {
-    return { id: 12345, is_bot: true, username: 'FunTalchikTestBot', first_name: 'FunTalk Test' };
-  }
+  if (method === 'editMessageText') return true;
+  if (method === 'answerCallbackQuery') return true;
+  if (method === 'getMe') return { id: 12345, is_bot: true, username: 'FunTalkTestBot', first_name: 'FunTalk Test' };
   if (method === 'getChatMember') {
-    return { status: 'administrator', user: { id: payload.user_id || 42, is_bot: false } };
+    const userId = Number(payload.user_id);
+    return {
+      status: userId === 42 || userId === 12345 ? 'administrator' : 'member',
+      user: { id: userId, is_bot: false, first_name: `User${userId}` },
+    };
   }
+  if (method === 'setMyCommands') return true;
   return true;
 };
 
-const { bot } = require('../src/index.js');
-let updateCounter = 0;
+const { bot, app } = require('../src/index');
+let updateId = 0;
 
-function user(overrides = {}) {
+function from(overrides = {}) {
   return {
     id: 42,
     is_bot: false,
@@ -99,93 +77,81 @@ function chat(overrides = {}) {
   };
 }
 
-async function sendCommand(command) {
+async function sendText(text, options = {}) {
   await bot.handleUpdate({
-    update_id: ++updateCounter,
+    update_id: ++updateId,
     message: {
-      message_id: updateCounter,
+      message_id: updateId,
       date: Math.floor(Date.now() / 1000),
-      chat: chat(),
-      from: user(),
-      text: command,
-      entities: [{ offset: 0, length: command.split(/\s+/)[0].length, type: 'bot_command' }],
+      chat: options.chat || chat(),
+      from: options.from || from(),
+      text,
+      entities: text.startsWith('/') ? [{ offset: 0, length: text.split(/\s+/)[0].length, type: 'bot_command' }] : undefined,
+      reply_to_message: options.replyTo ? {
+        message_id: updateId - 1,
+        date: Math.floor(Date.now() / 1000),
+        chat: options.chat || chat(),
+        from: options.replyTo,
+        text: 'target',
+      } : undefined,
     },
   });
 }
 
-async function sendText(text) {
+async function press(data, options = {}) {
   await bot.handleUpdate({
-    update_id: ++updateCounter,
-    message: {
-      message_id: updateCounter,
-      date: Math.floor(Date.now() / 1000),
-      chat: chat(),
-      from: user(),
-      text,
+    update_id: ++updateId,
+    callback_query: {
+      id: String(updateId),
+      from: options.from || from(),
+      message: {
+        message_id: 100,
+        date: Math.floor(Date.now() / 1000),
+        chat: options.chat || chat(),
+        text: 'callback source',
+      },
+      chat_instance: 'test',
+      data,
     },
   });
 }
 
 (async () => {
-  const beforeLegacyMessageCalls = calls.length;
-  await sendText('ordinary old user message');
-  const legacyMessageTexts = calls
-    .slice(beforeLegacyMessageCalls)
-    .filter((call) => call.method === 'sendMessage')
-    .map((call) => String(call.payload.text || ''));
+  await sendText('/start');
+  await sendText('/daily');
+  await sendText('/coins');
+  await sendText('/shop');
+  await press('shop:buy:daily_reroll:0');
+  await sendText('/inventory');
 
-  assert(
-    !legacyMessageTexts.some((text) => text.includes('Новое достижение') || text.includes('Первый шаг')),
-    'Existing chat members should not get a public first-message achievement notification'
-  );
+  const target = from({ id: 77, first_name: 'Target', username: 'target' });
+  await sendText('/warn spam', { replyTo: target });
+  await sendText('/warnings', { replyTo: target });
 
-  const storedData = JSON.parse(fs.readFileSync(testDatabasePath, 'utf8'));
-  const storedMember = storedData.members.find((member) =>
-    String(member.user_id) === '42' && String(member.chat_id) === '-1001'
-  );
-  assert(storedMember, 'Legacy chat user should be migrated into members');
-  assert.strictEqual(storedMember.message_count, 4, 'Legacy message count should be preserved before incrementing');
-  assert(
-    storedData.user_achievements.some((item) =>
-      String(item.user_id) === '42' &&
-      String(item.chat_id) === '-1001' &&
-      item.achievement_id === 'first_msg'
-    ),
-    'Already-earned first message achievement should be recorded silently'
-  );
-
-  const beforeAiCalls = calls.length;
-  await sendCommand('/ai');
+  await sendText('/ai');
   await sendText('Привет, помоги придумать текст');
-  const aiTexts = calls
-    .slice(beforeAiCalls)
-    .filter((call) => call.method === 'sendMessage')
-    .map((call) => String(call.payload.text || ''));
-
-  assert(aiTexts.some((text) => text.includes('ИИ-помощник включён')), 'AI assistant should open without crashing');
-  assert(aiTexts.some((text) => text.includes('GEMINI_API_KEY')), 'AI assistant should explain missing Gemini key');
-
-  const { getAiProviderConfig } = require('../src/services/ai');
-  process.env.GEMINI_API_KEY = 'test-gemini-key';
-  const geminiConfig = getAiProviderConfig();
-  assert.strictEqual(geminiConfig.provider, 'gemini', 'Gemini provider should be selectable');
-  assert.strictEqual(geminiConfig.model, 'gemini-2.5-flash', 'Gemini should use the stable default model');
-  assert.strictEqual(geminiConfig.configured, true, 'Gemini should be configured when GEMINI_API_KEY is present');
-  process.env.GEMINI_API_KEY = '';
-
-  await sendCommand('/start');
-  await sendCommand('/shop');
 
   const sentTexts = calls
-    .filter((call) => call.method === 'sendMessage')
-    .map((call) => String(call.payload.text || ''));
+    .filter(call => call.method === 'sendMessage')
+    .map(call => String(call.payload.text || ''));
 
-  assert(sentTexts.length >= 2, 'Bot should send responses for /start and /shop');
-  assert(sentTexts.some((text) => text.includes('Магазин') || text.includes('РњР°РіР°Р·РёРЅ')), 'Shop command should render shop text');
+  assert(sentTexts.some(text => text.includes('FunTalk')), 'start/menu should render');
+  assert(sentTexts.some(text => text.includes('Ежедневный бонус')), 'daily should work');
+  assert(sentTexts.some(text => text.includes('Баланс')), 'coins/profile economy should work');
+  assert(sentTexts.some(text => text.includes('Магазин')), 'shop should render');
+  assert(sentTexts.some(text => text.includes('Инвентарь')), 'inventory should render');
+  assert(sentTexts.some(text => text.includes('предупреждение') || text.includes('варнов')), 'moderation warning should work');
+  assert(sentTexts.some(text => text.includes('GEMINI_API_KEY')), 'AI should explain missing Gemini key without crashing');
 
-  console.log(`OK: ${calls.length} mocked Telegram API calls`);
+  const economyData = JSON.parse(fs.readFileSync(path.resolve(rootDir, process.env.ECONOMY_STORE_PATH), 'utf8'));
+  const moderationData = JSON.parse(fs.readFileSync(path.resolve(rootDir, process.env.MODERATION_STORE_PATH), 'utf8'));
+  assert(economyData.users.some(user => String(user.telegramId) === '42'), 'economy user should be stored');
+  assert(economyData.transactions.length >= 2, 'economy transactions should be logged');
+  assert(moderationData.warnings.some(warn => String(warn.telegramId) === '77'), 'warning should be stored per chat');
+
+  console.log(`OK: ${calls.length} mocked Telegram API calls, ${economyData.transactions.length} economy transactions`);
   cleanup();
-})().catch((error) => {
+})().catch(error => {
   cleanup();
   console.error(error);
   process.exit(1);
