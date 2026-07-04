@@ -198,15 +198,27 @@ function upsertUser(telegramId, username, firstName) {
   let user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
 
   if (user) {
-    user.username = username || null;
-    user.first_name = firstName || null;
+    user.username   = username   || user.username   || null;
+    user.first_name = firstName  || user.first_name || null;
     user.updated_at = now();
   } else {
+    // Новый пользователь — собираем legacy баланс из data.chats
+    let legacyCoins = 0;
+    if (data.chats) {
+      for (const chatData of Object.values(data.chats)) {
+        const cu = chatData?.users?.[String(telegramId)];
+        if (cu) {
+          legacyCoins += Number(cu.balance || cu.coins || 0);
+        }
+      }
+    }
+
     user = {
       id: nextId(data, 'users'),
       telegram_id: telegramId,
       username: username || null,
       first_name: firstName || null,
+      coins: legacyCoins > 0 ? legacyCoins : 0,
       created_at: now(),
       updated_at: now(),
     };
@@ -455,8 +467,22 @@ function getCoins(telegramId) {
 
 function setCoins(telegramId, amount) {
   const data = loadDb();
-  const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
-  if (!user) return;
+  let user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
+
+  // Если пользователя нет — создаём
+  if (!user) {
+    user = {
+      id: nextId(data, 'users'),
+      telegram_id: telegramId,
+      username: null,
+      first_name: null,
+      coins: 0,
+      created_at: now(),
+      updated_at: now(),
+    };
+    data.users.push(user);
+  }
+
   user.coins = Math.max(0, amount);
   user.updated_at = now();
   saveDb(data);
@@ -464,16 +490,29 @@ function setCoins(telegramId, amount) {
 
 function addCoins(telegramId, amount) {
   const data = loadDb();
-  const user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
-  if (!user) return;
-  
+  let user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
+
+  // Если пользователя ещё нет в users[] — создаём минимальную запись
+  if (!user) {
+    user = {
+      id: nextId(data, 'users'),
+      telegram_id: telegramId,
+      username: null,
+      first_name: null,
+      coins: 0,
+      created_at: now(),
+      updated_at: now(),
+    };
+    data.users.push(user);
+  }
+
   // Применяем легендарный бонус +10%
   let finalAmount = amount;
-  if (user.legendaryBonus) {
+  if (user.legendaryBonus && amount > 0) {
     finalAmount = Math.floor(amount * 1.1);
   }
-  
-  user.coins = (user.coins || 0) + finalAmount;
+
+  user.coins = Math.max(0, (user.coins || 0) + finalAmount);
   user.updated_at = now();
   saveDb(data);
 }
