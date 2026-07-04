@@ -1,6 +1,18 @@
 // ============================================================
 // src/bot/achievements.js
 // Система достижений — автоматические ачивки
+//
+// Архитектура хранения:
+//   Достижения хранятся двойным способом:
+//   1. В member.granted_achievements (массив id) — основное хранилище
+//   2. В user_achievements таблице — резервное/для совместимости
+//   Это гарантирует что данные не потеряются при любых условиях.
+//
+// Логика выдачи:
+//   "первое сообщение" и другие прогрессивные достижения выдаются
+//   ТОЛЬКО если счётчик ДО текущего сообщения равен нулю.
+//   Для старых пользователей (message_count > 0 при первом появлении
+//   в системе достижений) — достижения закрываются тихо без уведомления.
 // ============================================================
 
 const { Markup } = require('telegraf');
@@ -36,25 +48,27 @@ const ACHIEVEMENTS = [
   { id: 'coins_1000',   name: '💎 Богач',            desc: 'Накопил 1000 монет в чате',        reward: 50,   check: (u) => (u.coins || 0) >= 1000 },
   { id: 'coins_5000',   name: '🤑 Миллионер',        desc: 'Накопил 5000 монет в чате',        reward: 200,  check: (u) => (u.coins || 0) >= 5000 },
 
-  // Социальное (глобальные поля из users)
+  // Социальное
   { id: 'first_friend', name: '🤝 Первый друг',      desc: 'Завёл первого друга',              reward: 30,   check: (u) => (u.friends_count || 0) >= 1 },
   { id: 'friends_5',    name: '👥 Компания',         desc: '5 друзей в чате',                  reward: 100,  check: (u) => (u.friends_count || 0) >= 5 },
   { id: 'in_love',      name: '❤️ Влюблённый',       desc: 'Нашёл пару',                       reward: 50,   check: (u) => u.in_couple === true },
   { id: 'rep_10',       name: '⭐ Уважаемый',        desc: 'Получил 10 репутации',             reward: 100,  check: (u) => (u.reputation || 0) >= 10 },
   { id: 'rep_50',       name: '🌟 Авторитет',        desc: 'Получил 50 репутации',             reward: 500,  check: (u) => (u.reputation || 0) >= 50 },
 
-  // Игры (глобальные поля из users)
+  // Игры
   { id: 'first_casino', name: '🎰 Игрок',            desc: 'Сыграл в казино первый раз',       reward: 20,   check: (u) => (u.casino_games || 0) >= 1 },
   { id: 'casino_win',   name: '🤑 Везунчик',         desc: 'Выиграл в казино',                 reward: 50,   check: (u) => (u.casino_wins || 0) >= 1 },
   { id: 'duel_win',     name: '⚔️ Дуэлянт',          desc: 'Победил в дуэли',                  reward: 75,   check: (u) => (u.duel_wins || 0) >= 1 },
   { id: 'duel_5',       name: '🗡 Непобедимый',      desc: 'Победил в 5 дуэлях',               reward: 200,  check: (u) => (u.duel_wins || 0) >= 5 },
 
-  // Особые (глобальные поля из users)
+  // Особые
   { id: 'daily_7',      name: '📅 Постоянный',       desc: '7 дней подряд получал бонус',      reward: 200,  check: (u) => (u.daily_streak || 0) >= 7 },
   { id: 'daily_30',     name: '🗓 Преданный',        desc: '30 дней подряд получал бонус',     reward: 1000, check: (u) => (u.daily_streak || 0) >= 30 },
   { id: 'shop_buyer',   name: '🛍 Покупатель',       desc: 'Купил что-то в магазине',          reward: 30,   check: (u) => (u.inventory || []).length >= 1 },
 ];
 
+// Прогрессивные достижения: для них важно что порог пройден именно ЭТИМ сообщением
+// ключ = id достижения, значение = поле и порог
 const PROGRESS_ACHIEVEMENTS = {
   first_msg:   { field: 'message_count', threshold: 1 },
   msg_10:      { field: 'message_count', threshold: 10 },
@@ -67,164 +81,197 @@ const PROGRESS_ACHIEVEMENTS = {
   reply_100:   { field: 'reply_count', threshold: 100 },
 };
 
-// ── Вспомогательные ──────────────────────────────────────────
-function getMember(userId, chatId) {
-  return db.getMember(userId, chatId);
+// ── Хранилище достижений: читаем прямо из member ──────────────
+// Это решает проблему потери данных из отдельной таблицы user_achievements
+
+function getGrantedInMember(userId, chatId) {
+  const data = db.loadDb();
+  const member = data.members.find(m =>
+    String(m.user_id) === String(userId) && String(m.chat_id) === String(chatId)
+  );
+  if (!member) return [];
+  if (!Array.isArray(member.granted_achievements)) return [];
+  return member.granted_achievements;
 }
 
-function getUserAchievements(userId, chatId) {
-  return db.getUserAchievements(userId, chatId);
+function hasGrantedInMember(userId, chatId, achievementId) {
+  return getGrantedInMember(userId, chatId).includes(achievementId);
 }
 
-// ── Синхронизация участников при запуске ───────────────────────
+function grantInMember(userId, chatId, achievementId) {
+  const data = db.loadDb();
+  const member = data.members.find(m =>
+    String(m.user_id) === String(userId) && String(m.chat_id) === String(chatId)
+  );
+  if (!member) return false;
+  if (!Array.isArray(member.granted_achievements)) {
+    member.granted_achievements = [];
+  }
+  if (member.granted_achievements.includes(achievementId)) return false;
+  member.granted_achievements.push(achievementId);
+  db.saveDb(data);
+  return true;
+}
+
+// ── Унифицированная проверка: выдано ли достижение ────────────
+// Проверяем оба хранилища
+function isAlreadyGranted(userId, chatId, achievementId) {
+  // Сначала проверяем member.granted_achievements (основное)
+  if (hasGrantedInMember(userId, chatId, achievementId)) return true;
+  // Затем резервное user_achievements
+  if (db.hasUserAchievement(userId, chatId, achievementId)) return true;
+  return false;
+}
+
+// ── Выдать достижение (в оба хранилища) ───────────────────────
+function doGrant(userId, chatId, achievementId) {
+  if (isAlreadyGranted(userId, chatId, achievementId)) return false;
+  // Пишем в оба хранилища
+  grantInMember(userId, chatId, achievementId);
+  db.grantUserAchievement(userId, chatId, achievementId);
+  console.log(`[Achievements] ✅ Выдано ${achievementId} пользователю ${userId} в чате ${chatId}`);
+  return true;
+}
+
+// ── Получить все выданные достижения (из обоих хранилищ) ──────
+function getAllGranted(userId, chatId) {
+  const fromMember = getGrantedInMember(userId, chatId);
+  const fromTable  = db.getUserAchievements(userId, chatId);
+  // Объединяем без дублей
+  return [...new Set([...fromMember, ...fromTable])];
+}
+
+// ── Синхронизация при запуске ─────────────────────────────────
 function syncMembers() {
   const data = db.loadDb();
   let synced = 0;
-  
+
   for (const member of data.members) {
     let changed = false;
-    
-    // Добавляем message_count если отсутствует
-    if (member.message_count === undefined) {
-      member.message_count = 0;
+    if (member.message_count === undefined) { member.message_count = 0; changed = true; }
+    if (member.coins       === undefined) { member.coins       = 0; changed = true; }
+    if (member.level       === undefined) { member.level       = 1; changed = true; }
+    if (member.xp          === undefined) { member.xp          = 0; changed = true; }
+    if (member.sticker_count === undefined) { member.sticker_count = 0; changed = true; }
+    if (member.reply_count === undefined) { member.reply_count  = 0; changed = true; }
+    if (!Array.isArray(member.granted_achievements)) {
+      member.granted_achievements = [];
       changed = true;
     }
-    
-    // Добавляем coins если отсутствует
-    if (member.coins === undefined) {
-      member.coins = 0;
-      changed = true;
-    }
-    
-    // Добавляем level если отсутствует
-    if (member.level === undefined) {
-      member.level = 1;
-      changed = true;
-    }
-    
-    // Добавляем xp если отсутствует
-    if (member.xp === undefined) {
-      member.xp = 0;
-      changed = true;
-    }
-    
-    // Добавляем sticker_count если отсутствует
-    if (member.sticker_count === undefined) {
-      member.sticker_count = 0;
-      changed = true;
-    }
-    
-    // Добавляем reply_count если отсутствует
-    if (member.reply_count === undefined) {
-      member.reply_count = 0;
-      changed = true;
-    }
-    
-    if (changed) {
-      synced++;
-    }
+    if (changed) synced++;
   }
-  
+
   if (synced > 0) {
     db.saveDb(data);
     console.log(`[Achievements] Синхронизировано ${synced} участников`);
   }
-  
   return synced;
 }
 
-// ── Создание профиля участника для чата ───────────────────────
-function ensureMemberProfile(userId, chatId) {
-  const member = db.upsertMember(userId, chatId);
-  if (member) {
-    console.log(`[Achievements] Профиль участника создан/обновлён для пользователя ${userId} в чате ${chatId}`);
-  }
-  return member;
-}
+// ── Тихая инициализация старых пользователей ──────────────────
+// Вызывается один раз при первом появлении пользователя в системе достижений.
+// Если у него уже есть message_count > 0 — значит он существовал до введения
+// достижений. Закрываем все достигнутые ачивки БЕЗ уведомления.
+function silentInitUser(userId, chatId, memberSnapshot) {
+  if (!memberSnapshot) return;
 
-function grantAchievement(userId, chatId, achievementId) {
-  console.log(`[Achievements] Проверка достижения ${achievementId} для пользователя ${userId} в чате ${chatId}`);
-  
-  // Проверяем, не выдано ли уже
-  if (db.hasUserAchievement(userId, chatId, achievementId)) {
-    console.log(`[Achievements] ⚠️ Достижение ${achievementId} уже выдано, пропускаем`);
-    return false;
+  // Если пользователь уже инициализирован — пропускаем
+  if (hasGrantedInMember(userId, chatId, '_init')) return;
+
+  // Помечаем что инициализация прошла (даже если достижений нет)
+  grantInMember(userId, chatId, '_init');
+
+  const msgCount = Number(memberSnapshot.message_count || 0);
+  if (msgCount === 0) {
+    // Совсем новый пользователь — инициализация нужна только чтобы поставить метку
+    console.log(`[Achievements] Новый пользователь ${userId} инициализирован`);
+    return;
   }
-  
-  const granted = db.grantUserAchievement(userId, chatId, achievementId);
-  if (granted) {
-    console.log(`[Achievements] ✅ Выдано достижение ${achievementId} пользователю ${userId} в чате ${chatId}`);
+
+  // Старый пользователь с историей — тихо закрываем всё достигнутое
+  console.log(`[Achievements] Старый пользователь ${userId} (${msgCount} сообщений) — тихая инициализация`);
+  let count = 0;
+  for (const ach of ACHIEVEMENTS) {
+    if (ach.id === '_init') continue;
+    if (!ach.check(memberSnapshot)) continue;
+    if (isAlreadyGranted(userId, chatId, ach.id)) continue;
+    doGrant(userId, chatId, ach.id);
+    count++;
   }
-  
-  return granted;
+  console.log(`[Achievements] Тихо выдано ${count} достижений пользователю ${userId}`);
 }
 
 // ── Увеличить счётчик сообщений ───────────────────────────────
 function incrementMessageCount(userId, chatId) {
-  const member = db.incrementMemberField(userId, chatId, 'message_count', 1);
-  if (member) {
-    console.log(`[Achievements] message_count пользователя ${userId} в чате ${chatId}: ${member.message_count}`);
-  }
-  return member;
+  return db.incrementMemberField(userId, chatId, 'message_count', 1);
 }
 
 // ── Проверить и выдать новые достижения ───────────────────────
+// previousStats — состояние счётчиков ДО инкремента текущего сообщения
 async function checkAchievements(ctx, userId, chatId, previousStats = {}) {
-  const member = getMember(userId, chatId);
-  if (!member) return;
+  try {
+    const member = db.getMember(userId, chatId);
+    if (!member) return;
 
-  const earned = getUserAchievements(userId, chatId);
-  console.log(`[Achievements] Проверка достижений для пользователя ${userId} в чате ${chatId}, message_count: ${member.message_count || 0}, achievements: ${earned.length}`);
+    const earned = getAllGranted(userId, chatId);
 
-  for (const ach of ACHIEVEMENTS) {
-    try {
-      // Сначала проверяем условия достижения
-      if (!ach.check(member)) continue;
-      
-      // Затем проверяем, не выдано ли уже это достижение
-      if (earned.includes(ach.id)) {
-        console.log(`[Achievements] ⚠️ Достижение ${ach.id} уже выдано, пропускаем`);
-        continue;
+    for (const ach of ACHIEVEMENTS) {
+      if (ach.id === '_init') continue;
+
+      try {
+        // Условие достижения выполнено?
+        if (!ach.check(member)) continue;
+
+        // Уже выдано?
+        if (earned.includes(ach.id)) continue;
+
+        // Для прогрессивных достижений: порог должен быть пройден именно сейчас
+        // (т.е. ДО инкремента счётчик был ниже порога)
+        const progress = PROGRESS_ACHIEVEMENTS[ach.id];
+        if (progress) {
+          const valueBefore = Number(previousStats[progress.field] || 0);
+          if (valueBefore >= progress.threshold) {
+            // Порог был пройден раньше — выдаём тихо, без уведомления
+            doGrant(userId, chatId, ach.id);
+            console.log(`[Achievements] ${ach.id} закрыто тихо: порог уже был пройден (было ${valueBefore})`);
+            continue;
+          }
+        }
+
+        // Выдаём
+        const granted = doGrant(userId, chatId, ach.id);
+        if (!granted) continue;
+
+        // Награда монетами
+        if (ach.reward > 0) {
+          db.incrementMemberField(userId, chatId, 'coins', ach.reward);
+        }
+
+        // Уведомление в чат
+        await ctx.reply(
+          `🏆 <b>Новое достижение!</b>\n\n` +
+          `${ach.name}\n` +
+          `📝 ${ach.desc}\n` +
+          (ach.reward > 0 ? `💰 Награда: <b>+${ach.reward} монет</b>` : ''),
+          { parse_mode: 'HTML' }
+        );
+      } catch (e) {
+        console.error(`[Achievements] Ошибка при проверке ${ach.id}:`, e.message);
       }
-      
-      const progress = PROGRESS_ACHIEVEMENTS[ach.id];
-      const wasAlreadyReached = progress &&
-        Number(previousStats[progress.field] || 0) >= progress.threshold;
-
-      const granted = grantAchievement(userId, chatId, ach.id);
-      if (!granted) continue;
-
-      // Выдаём награду (coins в member таблице)
-      if (ach.reward > 0) {
-        db.incrementMemberField(userId, chatId, 'coins', ach.reward);
-      }
-
-      if (wasAlreadyReached) {
-        console.log(`[Achievements] ${ach.id} добавлено без уведомления: порог был пройден раньше`);
-        continue;
-      }
-
-      // Уведомляем в чат
-      await ctx.reply(
-        `🏆 <b>Новое достижение!</b>\n\n` +
-        `${ach.name}\n` +
-        `📝 ${ach.desc}\n` +
-        (ach.reward > 0 ? `💰 Награда: <b>+${ach.reward} монет</b>` : ''),
-        { parse_mode: 'HTML' }
-      );
-    } catch {}
+    }
+  } catch (e) {
+    console.error('[Achievements] checkAchievements error:', e.message);
   }
 }
 
 // ── Регистрация ───────────────────────────────────────────────
 function registerAchievements(bot) {
-  // Синхронизируем участников при запуске
   syncMembers();
 
-  // /achievements — список достижений
+  // /achievements — список достижений пользователя
   bot.command(['achievements', 'ачивки', 'достижения'], async (ctx) => {
     const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
-    const earned = getUserAchievements(ctx.from.id, chatId);
+    const earned = getAllGranted(ctx.from.id, chatId).filter(id => id !== '_init');
 
     const lines = ACHIEVEMENTS.map(ach => {
       const done = earned.includes(ach.id);
@@ -233,8 +280,6 @@ function registerAchievements(bot) {
 
     const total = ACHIEVEMENTS.length;
     const done  = earned.length;
-
-    // Разбиваем на страницы по 10
     const page1 = lines.slice(0, 12).join('\n');
 
     await ctx.reply(
@@ -254,7 +299,7 @@ function registerAchievements(bot) {
     await ctx.answerCbQuery();
     const page   = parseInt(ctx.match[1]);
     const chatId = ctx.chat.type === 'private' ? ctx.from.id : ctx.chat.id;
-    const earned = getUserAchievements(ctx.from.id, chatId);
+    const earned = getAllGranted(ctx.from.id, chatId).filter(id => id !== '_init');
 
     const lines = ACHIEVEMENTS.map(ach => {
       const done = earned.includes(ach.id);
@@ -267,8 +312,8 @@ function registerAchievements(bot) {
     const total   = Math.ceil(lines.length / perPage);
 
     const nav = [];
-    if (page > 0)          nav.push(Markup.button.callback('⬅️', `ach_page_${page - 1}`));
-    if (page < total - 1)  nav.push(Markup.button.callback('➡️', `ach_page_${page + 1}`));
+    if (page > 0)         nav.push(Markup.button.callback('⬅️', `ach_page_${page - 1}`));
+    if (page < total - 1) nav.push(Markup.button.callback('➡️', `ach_page_${page + 1}`));
 
     await ctx.editMessageText(
       `🏆 <b>Достижения</b> (стр. ${page + 1}/${total})\n\n${slice.join('\n')}`,
@@ -279,58 +324,43 @@ function registerAchievements(bot) {
     );
   });
 
-  // Проверяем достижения при каждом сообщении
+  // Обработчик каждого сообщения
   bot.on('message', async (ctx, next) => {
     try {
       if (ctx.from && !ctx.from.is_bot && ctx.chat?.type !== 'private') {
-        // Убеждаемся что профиль участника существует для этого чата
-        const before = ensureMemberProfile(ctx.from.id, ctx.chat.id) || {};
+        const userId = ctx.from.id;
+        const chatId = ctx.chat.id;
+
+        // Убеждаемся что профиль участника существует
+        // Важно: берём снимок ДО любых изменений
+        const before = db.upsertMember(userId, chatId) || {};
+
         const previousStats = {
           message_count: Number(before.message_count || 0),
           sticker_count: Number(before.sticker_count || 0),
-          reply_count: Number(before.reply_count || 0),
+          reply_count:   Number(before.reply_count   || 0),
         };
 
-        // Если у пользователя уже есть сообщения, но достижение first_msg ещё не выдано —
-        // значит это старый пользователь (данные были до введения системы достижений).
-        // Тихо закрываем все уже достигнутые достижения без уведомления,
-        // чтобы они не спамили при следующем сообщении.
-        if (previousStats.message_count > 0 && !db.hasUserAchievement(ctx.from.id, ctx.chat.id, 'first_msg')) {
-          for (const ach of ACHIEVEMENTS) {
-            if (!ach.check(before)) continue;
-            if (db.hasUserAchievement(ctx.from.id, ctx.chat.id, ach.id)) continue;
-            const silentGranted = db.grantUserAchievement(ctx.from.id, ctx.chat.id, ach.id);
-            if (silentGranted) {
-              console.log(`[Achievements] Тихая выдача ${ach.id} старому пользователю ${ctx.from.id}`);
-            }
-          }
+        // Тихая инициализация старых пользователей (выполняется только один раз)
+        silentInitUser(userId, chatId, before);
+
+        // Увеличиваем счётчики
+        incrementMessageCount(userId, chatId);
+
+        if (ctx.message.sticker) {
+          db.incrementMemberField(userId, chatId, 'sticker_count', 1);
         }
 
-        // Сначала увеличиваем счётчик сообщений
-        incrementMessageCount(ctx.from.id, ctx.chat.id);
-        
-        // Триггер: стикер
-        if (ctx.message.sticker) {
-          db.incrementMemberField(ctx.from.id, ctx.chat.id, 'sticker_count', 1);
-          console.log(`[Achievements] sticker_count пользователя ${ctx.from.id} в чате ${ctx.chat.id} увеличен`);
-        }
-        
-        // Триггер: ответ
         if (ctx.message.reply_to_message) {
-          db.incrementMemberField(ctx.from.id, ctx.chat.id, 'reply_count', 1);
-          console.log(`[Achievements] reply_count пользователя ${ctx.from.id} в чате ${ctx.chat.id} увеличен`);
+          db.incrementMemberField(userId, chatId, 'reply_count', 1);
         }
-        
-        // Триггер: пересылка
-        if (ctx.message.forward_from || ctx.message.forward_from_chat) {
-          // Можно добавить достижение для пересылок в будущем
-          console.log(`[Achievements] Пользователь ${ctx.from.id} переслал сообщение в чате ${ctx.chat.id}`);
-        }
-        
-        // Затем проверяем достижения
-        await checkAchievements(ctx, ctx.from.id, ctx.chat.id, previousStats);
+
+        // Проверяем и выдаём достижения
+        await checkAchievements(ctx, userId, chatId, previousStats);
       }
-    } catch {}
+    } catch (e) {
+      console.error('[Achievements] message handler error:', e.message);
+    }
     return next();
   });
 
