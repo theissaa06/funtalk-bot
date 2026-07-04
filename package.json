@@ -5,6 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "test": "node test/run_tests.js",
     "migrate-achievements": "node scripts/syncAchievements.js",
     "migrate-per-chat": "node scripts/migrateToPerChat.js"
   },

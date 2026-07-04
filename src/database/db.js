@@ -81,6 +81,106 @@ function clone(value) {
   return value ? JSON.parse(JSON.stringify(value)) : value;
 }
 
+function toNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function timestampToIso(value) {
+  if (!value) return null;
+  const number = Number(value);
+  const date = Number.isFinite(number)
+    ? new Date(number > 100000000000 ? number : number * 1000)
+    : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function mergeMemberSeed(base, candidate) {
+  if (!candidate) return base;
+
+  return {
+    coins: Math.max(toNumber(base.coins), toNumber(candidate.coins)),
+    message_count: Math.max(toNumber(base.message_count), toNumber(candidate.message_count)),
+    sticker_count: Math.max(toNumber(base.sticker_count), toNumber(candidate.sticker_count)),
+    reply_count: Math.max(toNumber(base.reply_count), toNumber(candidate.reply_count)),
+    level: Math.max(toNumber(base.level, 1), toNumber(candidate.level, 1)),
+    xp: Math.max(toNumber(base.xp), toNumber(candidate.xp)),
+    joined_at: base.joined_at || candidate.joined_at || now(),
+    last_active: candidate.last_active || base.last_active || now(),
+  };
+}
+
+function getLegacyMemberSeed(data, userId, chatId) {
+  let seed = {
+    coins: 0,
+    message_count: 0,
+    sticker_count: 0,
+    reply_count: 0,
+    level: 1,
+    xp: 0,
+    joined_at: null,
+    last_active: null,
+  };
+
+  const legacyChatUser = data.chats?.[String(chatId)]?.users?.[String(userId)];
+  if (legacyChatUser) {
+    seed = mergeMemberSeed(seed, {
+      coins: legacyChatUser.balance || legacyChatUser.coins || 0,
+      message_count: legacyChatUser.messages || legacyChatUser.messages_count || 0,
+      sticker_count: legacyChatUser.msgTypes?.sticker || legacyChatUser.sticker_count || 0,
+      reply_count: legacyChatUser.reply_count || 0,
+      level: legacyChatUser.level || 1,
+      xp: legacyChatUser.xp || 0,
+      joined_at: timestampToIso(legacyChatUser.firstSeenAt) || legacyChatUser.joined_at,
+      last_active: timestampToIso(legacyChatUser.lastSeenAt) || legacyChatUser.last_active,
+    });
+  }
+
+  const globalUser = (data.users || []).find((u) =>
+    u.chat_id !== undefined &&
+    String(u.chat_id) === String(chatId) &&
+    (String(u.id) === String(userId) || String(u.telegram_id) === String(userId))
+  );
+  if (globalUser) {
+    seed = mergeMemberSeed(seed, {
+      coins: globalUser.coins || 0,
+      message_count: globalUser.messages_count || globalUser.message_count || 0,
+      sticker_count: globalUser.sticker_count || 0,
+      reply_count: globalUser.reply_count || 0,
+      level: globalUser.level || 1,
+      xp: globalUser.xp || 0,
+      joined_at: globalUser.joined_at || globalUser.created_at,
+      last_active: globalUser.last_active || globalUser.updated_at,
+    });
+  }
+
+  try {
+    const legacyPath = process.env.DB_PATH
+      ? path.resolve(process.env.DB_PATH)
+      : path.resolve(__dirname, '../../data/bot_data.json');
+    if (fs.existsSync(legacyPath)) {
+      const legacyData = JSON.parse(fs.readFileSync(legacyPath, 'utf8'));
+      const legacyUser = (legacyData.users || []).find((u) =>
+        String(u.chat_id) === String(chatId) && String(u.id) === String(userId)
+      );
+      if (legacyUser) {
+        seed = mergeMemberSeed(seed, {
+          coins: legacyUser.coins || 0,
+          message_count: legacyUser.messages_count || legacyUser.message_count || 0,
+          sticker_count: legacyUser.sticker_count || 0,
+          reply_count: legacyUser.reply_count || 0,
+          level: legacyUser.level || 1,
+          xp: legacyUser.xp || 0,
+          joined_at: legacyUser.joined_at,
+          last_active: legacyUser.last_active,
+        });
+      }
+    }
+  } catch {}
+
+  return seed;
+}
+
 function upsertUser(telegramId, username, firstName) {
   const data = loadDb();
   let user = data.users.find((u) => String(u.telegram_id) === String(telegramId));
@@ -400,26 +500,34 @@ function getMember(userId, chatId) {
 
 function upsertMember(userId, chatId) {
   const data = loadDb();
+  const seed = getLegacyMemberSeed(data, userId, chatId);
   let member = data.members.find(m => 
     String(m.user_id) === String(userId) && String(m.chat_id) === String(chatId)
   );
 
   if (member) {
+    member.coins = Math.max(toNumber(member.coins), toNumber(seed.coins));
+    member.message_count = Math.max(toNumber(member.message_count), toNumber(seed.message_count));
+    member.sticker_count = Math.max(toNumber(member.sticker_count), toNumber(seed.sticker_count));
+    member.reply_count = Math.max(toNumber(member.reply_count), toNumber(seed.reply_count));
+    member.level = Math.max(toNumber(member.level, 1), toNumber(seed.level, 1));
+    member.xp = Math.max(toNumber(member.xp), toNumber(seed.xp));
+    member.joined_at = member.joined_at || seed.joined_at || now();
     member.last_active = now();
   } else {
     member = {
       id: nextId(data, 'members'),
       user_id: userId,
       chat_id: chatId,
-      coins: 0,
-      message_count: 0,
-      sticker_count: 0,
-      reply_count: 0,
-      level: 1,
-      xp: 0,
+      coins: seed.coins || 0,
+      message_count: seed.message_count || 0,
+      sticker_count: seed.sticker_count || 0,
+      reply_count: seed.reply_count || 0,
+      level: seed.level || 1,
+      xp: seed.xp || 0,
       current_streak: 0,
-      last_active: now(),
-      joined_at: now(),
+      last_active: seed.last_active || now(),
+      joined_at: seed.joined_at || now(),
     };
     data.members.push(member);
   }

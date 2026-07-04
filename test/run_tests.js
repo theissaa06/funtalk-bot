@@ -1,71 +1,169 @@
 process.env.BOT_TOKEN = process.env.BOT_TOKEN || 'TEST_TOKEN';
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'data/test-database.json';
+process.env.DB_PATH = process.env.DB_PATH || 'data/test-bot_data.json';
 
-// small delay helper
-const wait = ms => new Promise(res => setTimeout(res, ms));
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const { Telegram } = require('telegraf');
 
-(async function(){
-  console.log('Starting test: require index.js');
-  require('../index.js');
+const rootDir = path.resolve(__dirname, '..');
+const tempFiles = [
+  process.env.DATABASE_URL,
+  process.env.DB_PATH,
+  'data/tg-users.json',
+];
+const preExistingFiles = new Set(tempFiles.filter((file) => fs.existsSync(path.resolve(rootDir, file))));
 
-  // wait for bot stub to be created
-  for (let i=0;i<10;i++) {
-    if (global.__TEST_BOT_INSTANCE__) break;
-    await wait(100);
+function cleanup() {
+  for (const file of tempFiles) {
+    if (preExistingFiles.has(file)) continue;
+    const fullPath = path.resolve(rootDir, file);
+    if (fs.existsSync(fullPath)) fs.rmSync(fullPath);
   }
+}
 
-  const bot = global.__TEST_BOT_INSTANCE__;
-  if (!bot) {
-    console.error('Test bot instance not found');
-    process.exit(2);
+for (const file of [process.env.DATABASE_URL, process.env.DB_PATH]) {
+  const fullPath = path.resolve(rootDir, file);
+  if (fs.existsSync(fullPath)) fs.rmSync(fullPath);
+}
+
+const testDatabasePath = path.resolve(rootDir, process.env.DATABASE_URL);
+fs.mkdirSync(path.dirname(testDatabasePath), { recursive: true });
+fs.writeFileSync(testDatabasePath, JSON.stringify({
+  counters: {},
+  chats: {
+    '-1001': {
+      users: {
+        '42': {
+          id: 42,
+          username: 'tester',
+          firstName: 'Tester',
+          messages: 3,
+          balance: 5,
+          xp: 7,
+          msgTypes: { sticker: 0 },
+          firstSeenAt: Date.now() - 86400000,
+          lastSeenAt: Date.now() - 3600000,
+          achievements: {},
+        },
+      },
+    },
+  },
+}, null, 2), 'utf8');
+
+const calls = [];
+Telegram.prototype.callApi = async (method, payload) => {
+  calls.push({ method, payload });
+  if (method === 'sendMessage') {
+    return {
+      message_id: calls.length,
+      date: Math.floor(Date.now() / 1000),
+      chat: { id: payload.chat_id, type: 'group', title: 'Test chat' },
+      text: payload.text,
+    };
   }
+  if (method === 'getMe') {
+    return { id: 12345, is_bot: true, username: 'FunTalchikTestBot', first_name: 'FunTalk Test' };
+  }
+  if (method === 'getChatMember') {
+    return { status: 'administrator', user: { id: payload.user_id || 42, is_bot: false } };
+  }
+  return true;
+};
 
-  console.log('Bot stub ready. Emitting callback_query help:shop');
+const { bot } = require('../src/index.js');
+let updateCounter = 0;
 
-  // simulate callback_query for help:shop
-  bot.emit('callback_query', {
-    id: 'q-1',
-    data: 'help:shop',
-    message: { chat: { id: 999 }, message_id: 111 }
+function user(overrides = {}) {
+  return {
+    id: 42,
+    is_bot: false,
+    first_name: 'Tester',
+    username: 'tester',
+    ...overrides,
+  };
+}
+
+function chat(overrides = {}) {
+  return {
+    id: -1001,
+    type: 'group',
+    title: 'Test chat',
+    ...overrides,
+  };
+}
+
+async function sendCommand(command) {
+  await bot.handleUpdate({
+    update_id: ++updateCounter,
+    message: {
+      message_id: updateCounter,
+      date: Math.floor(Date.now() / 1000),
+      chat: chat(),
+      from: user(),
+      text: command,
+      entities: [{ offset: 0, length: command.split(/\s+/)[0].length, type: 'bot_command' }],
+    },
   });
+}
 
-  // allow handlers to process
-  await wait(200);
-
-  console.log('Messages sent by bot stub after help:shop:');
-  for (const m of (bot.sent||[])) {
-    console.log('->', m.chatId, '-', (m.text || '').slice(0,120).replace(/\n/g,'\\n'));
-  }
-
-  // simulate pressing buy:vip as user with id 42
-  console.log('Emitting callback_query buy:vip from user 42');
-  bot.emit('callback_query', {
-    id: 'q-2',
-    data: 'buy:vip',
-    from: { id: 42 },
-    message: { chat: { id: 999 }, message_id: 111 }
+async function sendText(text) {
+  await bot.handleUpdate({
+    update_id: ++updateCounter,
+    message: {
+      message_id: updateCounter,
+      date: Math.floor(Date.now() / 1000),
+      chat: chat(),
+      from: user(),
+      text,
+    },
   });
+}
 
-  await wait(200);
+(async () => {
+  const beforeLegacyMessageCalls = calls.length;
+  await sendText('ordinary old user message');
+  const legacyMessageTexts = calls
+    .slice(beforeLegacyMessageCalls)
+    .filter((call) => call.method === 'sendMessage')
+    .map((call) => String(call.payload.text || ''));
 
-  console.log('Messages sent by bot stub after buy attempt:');
-  for (const m of (bot.sent||[])) {
-    console.log('->', m.chatId, '-', (m.text || '').slice(0,120).replace(/\n/g,'\\n'));
-  }
+  assert(
+    !legacyMessageTexts.some((text) => text.includes('Новое достижение') || text.includes('Первый шаг')),
+    'Existing chat members should not get a public first-message achievement notification'
+  );
 
-  // Quick checks
-  const shopSent = (bot.sent||[]).some(s => typeof s.text === 'string' && s.text.includes('Магазин'));
-  const bought = (bot.sent||[]).some(s => typeof s.text === 'string' && s.text.includes('Куплено'));
+  const storedData = JSON.parse(fs.readFileSync(testDatabasePath, 'utf8'));
+  const storedMember = storedData.members.find((member) =>
+    String(member.user_id) === '42' && String(member.chat_id) === '-1001'
+  );
+  assert(storedMember, 'Legacy chat user should be migrated into members');
+  assert.strictEqual(storedMember.message_count, 4, 'Legacy message count should be preserved before incrementing');
+  assert(
+    storedData.user_achievements.some((item) =>
+      String(item.user_id) === '42' &&
+      String(item.chat_id) === '-1001' &&
+      item.achievement_id === 'first_msg'
+    ),
+    'Already-earned first message achievement should be recorded silently'
+  );
 
-  if (!shopSent) {
-    console.error('❌ Shop callback NOT handled');
-    process.exit(3);
-  }
+  await sendCommand('/start');
+  await sendCommand('/shop');
 
-  if (bought) {
-    console.log('✅ Purchase succeeded (unexpected if balance was 0)');
-    process.exit(0);
-  } else {
-    console.log('✅ Purchase not completed (likely due to insufficient balance)');
-    process.exit(0);
-  }
-})();
+  const sentTexts = calls
+    .filter((call) => call.method === 'sendMessage')
+    .map((call) => String(call.payload.text || ''));
+
+  assert(sentTexts.length >= 2, 'Bot should send responses for /start and /shop');
+  assert(sentTexts.some((text) => text.includes('Магазин') || text.includes('РњР°РіР°Р·РёРЅ')), 'Shop command should render shop text');
+
+  console.log(`OK: ${calls.length} mocked Telegram API calls`);
+  cleanup();
+})().catch((error) => {
+  cleanup();
+  console.error(error);
+  process.exit(1);
+});

@@ -55,6 +55,18 @@ const ACHIEVEMENTS = [
   { id: 'shop_buyer',   name: '🛍 Покупатель',       desc: 'Купил что-то в магазине',          reward: 30,   check: (u) => (u.inventory || []).length >= 1 },
 ];
 
+const PROGRESS_ACHIEVEMENTS = {
+  first_msg:   { field: 'message_count', threshold: 1 },
+  msg_10:      { field: 'message_count', threshold: 10 },
+  msg_100:     { field: 'message_count', threshold: 100 },
+  msg_500:     { field: 'message_count', threshold: 500 },
+  msg_1000:    { field: 'message_count', threshold: 1000 },
+  sticker_10:  { field: 'sticker_count', threshold: 10 },
+  sticker_100: { field: 'sticker_count', threshold: 100 },
+  reply_10:    { field: 'reply_count', threshold: 10 },
+  reply_100:   { field: 'reply_count', threshold: 100 },
+};
+
 // ── Вспомогательные ──────────────────────────────────────────
 function getMember(userId, chatId) {
   return db.getMember(userId, chatId);
@@ -153,10 +165,11 @@ function incrementMessageCount(userId, chatId) {
   if (member) {
     console.log(`[Achievements] message_count пользователя ${userId} в чате ${chatId}: ${member.message_count}`);
   }
+  return member;
 }
 
 // ── Проверить и выдать новые достижения ───────────────────────
-async function checkAchievements(ctx, userId, chatId) {
+async function checkAchievements(ctx, userId, chatId, previousStats = {}) {
   const member = getMember(userId, chatId);
   if (!member) return;
 
@@ -174,12 +187,21 @@ async function checkAchievements(ctx, userId, chatId) {
         continue;
       }
       
+      const progress = PROGRESS_ACHIEVEMENTS[ach.id];
+      const wasAlreadyReached = progress &&
+        Number(previousStats[progress.field] || 0) >= progress.threshold;
+
       const granted = grantAchievement(userId, chatId, ach.id);
       if (!granted) continue;
 
       // Выдаём награду (coins в member таблице)
       if (ach.reward > 0) {
         db.incrementMemberField(userId, chatId, 'coins', ach.reward);
+      }
+
+      if (wasAlreadyReached) {
+        console.log(`[Achievements] ${ach.id} добавлено без уведомления: порог был пройден раньше`);
+        continue;
       }
 
       // Уведомляем в чат
@@ -262,7 +284,12 @@ function registerAchievements(bot) {
     try {
       if (ctx.from && !ctx.from.is_bot && ctx.chat?.type !== 'private') {
         // Убеждаемся что профиль участника существует для этого чата
-        ensureMemberProfile(ctx.from.id, ctx.chat.id);
+        const before = ensureMemberProfile(ctx.from.id, ctx.chat.id) || {};
+        const previousStats = {
+          message_count: Number(before.message_count || 0),
+          sticker_count: Number(before.sticker_count || 0),
+          reply_count: Number(before.reply_count || 0),
+        };
         
         // Сначала увеличиваем счётчик сообщений
         incrementMessageCount(ctx.from.id, ctx.chat.id);
@@ -286,7 +313,7 @@ function registerAchievements(bot) {
         }
         
         // Затем проверяем достижения
-        await checkAchievements(ctx, ctx.from.id, ctx.chat.id);
+        await checkAchievements(ctx, ctx.from.id, ctx.chat.id, previousStats);
       }
     } catch {}
     return next();

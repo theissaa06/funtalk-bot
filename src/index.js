@@ -12,6 +12,7 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
+const isTest = process.env.NODE_ENV === 'test' || process.env.FUNTALK_TEST === '1';
 const bot = new Telegraf(BOT_TOKEN);
 
 // ── Вспомогательная функция безопасного ответа ───────────────
@@ -56,7 +57,9 @@ bot.use(async (ctx, next) => {
 
 // Стабильность (глобальные обработчики ошибок, keep-alive HTTP)
 const { setupStability } = require('./stability');
-setupStability(bot);
+if (!isTest) {
+  setupStability(bot);
+}
 
 // Русские команды (/мут → /mute и т.д.)
 const ruCommands = require('./ruCommands');
@@ -300,4 +303,12 @@ async function launchBotWithRetry(retries = 0) {
   }
 }
 
-launchBotWithRetry();
+if (require.main === module && !isTest) {
+  launchBotWithRetry();
+}
+
+module.exports = {
+  bot,
+  launchBotWithRetry,
+  safeReply,
+};
