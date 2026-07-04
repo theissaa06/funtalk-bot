@@ -290,7 +290,22 @@ function registerAchievements(bot) {
           sticker_count: Number(before.sticker_count || 0),
           reply_count: Number(before.reply_count || 0),
         };
-        
+
+        // Если у пользователя уже есть сообщения, но достижение first_msg ещё не выдано —
+        // значит это старый пользователь (данные были до введения системы достижений).
+        // Тихо закрываем все уже достигнутые достижения без уведомления,
+        // чтобы они не спамили при следующем сообщении.
+        if (previousStats.message_count > 0 && !db.hasUserAchievement(ctx.from.id, ctx.chat.id, 'first_msg')) {
+          for (const ach of ACHIEVEMENTS) {
+            if (!ach.check(before)) continue;
+            if (db.hasUserAchievement(ctx.from.id, ctx.chat.id, ach.id)) continue;
+            const silentGranted = db.grantUserAchievement(ctx.from.id, ctx.chat.id, ach.id);
+            if (silentGranted) {
+              console.log(`[Achievements] Тихая выдача ${ach.id} старому пользователю ${ctx.from.id}`);
+            }
+          }
+        }
+
         // Сначала увеличиваем счётчик сообщений
         incrementMessageCount(ctx.from.id, ctx.chat.id);
         
