@@ -129,7 +129,7 @@ function rouletteMultiplier(bet, result) {
 // ── Регистрация ───────────────────────────────────────────────
 function registerGames(bot) {
 
-  // ── /addcoins — выдача монет разработчиком ───────────────────
+  // ── /addcoins — выдача монет для рулетки (лимит 100-20,000) ─────
   bot.command(['addcoins', 'выдатьфонеты'], async (ctx) => {
     try {
       if (ctx.from.id !== OWNER_ID) {
@@ -142,12 +142,18 @@ function registerGames(bot) {
 
       if (!target || isNaN(amount) || amount === 0) {
         return ctx.reply(
-          '💰 <b>Выдача монет</b>\n\n' +
+          '💰 <b>Выдача монет для рулетки</b>\n\n' +
           'Ответь на сообщение пользователя и напиши:\n' +
           '/addcoins 1000 — выдать монеты\n' +
-          '/addcoins -500 — снять монеты',
+          '/addcoins -500 — снять монеты\n\n' +
+          '⚠️ Лимит: 100 - 20,000 монет',
           { parse_mode: 'HTML' }
         );
+      }
+
+      // Проверка лимита для положительных сумм
+      if (amount > 0 && (amount < 100 || amount > 20000)) {
+        return ctx.reply('❌ Лимит выдачи: от 100 до 20,000 монет за раз.');
       }
 
       db.upsertUser(target.id, target.username, target.first_name);
