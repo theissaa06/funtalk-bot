@@ -268,6 +268,9 @@ const HELP_SECTIONS = {
 // ── Показать главное меню ─────────────────────────────────────
 async function showMainMenu(ctx) {
   const name = ctx.from?.first_name || 'друг';
+  const botUsername = process.env.BOT_USERNAME || 'FunTalchik_Botik';
+  const inviteUrl = `https://t.me/${botUsername.replace(/^@/, '')}?startgroup=true`;
+
   await ctx.reply(
     `👋 Привет, *${name}*!\n\n` +
     `Я *FunTalk Bot* — бот для общения, развлечений и управления чатом.\n\n` +
@@ -285,6 +288,19 @@ async function showMainMenu(ctx) {
     {
       parse_mode: 'Markdown',
       ...mainMenuKeyboard,
+      reply_markup: {
+        ...mainMenuKeyboard.reply_markup,
+      },
+    }
+  );
+
+  // Отдельное сообщение с inline-кнопкой добавления в чат
+  await ctx.reply(
+    `➕ Хочешь добавить меня в свой чат?`,
+    {
+      ...Markup.inlineKeyboard([
+        [Markup.button.url('➕ Добавить в свой чат', inviteUrl)],
+      ]),
     }
   );
 }
