@@ -2,6 +2,9 @@ const { Markup } = require('telegraf');
 const { safeEditOrReply, safeReply } = require('../safeTelegram');
 const { displayName } = require('../format');
 
+const supportCooldown = new Map();
+const SUPPORT_COOLDOWN_MS = 5 * 60 * 1000;
+
 function supportText(app) {
   if (!app.config.supportChatId) {
     return '<b>Поддержка</b>\n\nЧат поддержки пока не настроен. Добавь SUPPORT_CHAT_ID в переменные окружения.';
@@ -58,11 +61,18 @@ function registerSupport(app) {
     if (!user?.supportMode) return next();
     repos.users.setSupportMode(ctx.from.id, false);
 
+    const lastTicketAt = supportCooldown.get(ctx.from.id) || 0;
+    const leftMs = SUPPORT_COOLDOWN_MS - (Date.now() - lastTicketAt);
+    if (leftMs > 0) {
+      return safeReply(ctx, `Поддержка приняла прошлое обращение недавно. Подожди ${Math.ceil(leftMs / 60000)} мин.`);
+    }
+
     if (!config.supportChatId) {
       return safeReply(ctx, 'Поддержка пока не настроена.');
     }
 
     const ticket = repos.support.createTicket(ctx.from, ctx.chat?.id, ctx.message.text);
+    supportCooldown.set(ctx.from.id, Date.now());
     const text = [
       `<b>Новое обращение #${ticket.id}</b>`,
       `Пользователь: ${displayName(ctx.from)}`,

@@ -34,6 +34,50 @@ function normalizeInventory(inventory) {
   return [...map.entries()].map(([id, qty]) => ({ id, qty }));
 }
 
+function normalizeAchievements(achievements) {
+  if (!achievements) return [];
+  if (Array.isArray(achievements)) {
+    return achievements
+      .map(item => (typeof item === 'string' ? { id: item } : item))
+      .filter(item => item?.id)
+      .map(item => ({
+        id: String(item.id),
+        grantedAt: item.grantedAt || item.createdAt || nowIso(),
+      }));
+  }
+  if (typeof achievements === 'object') {
+    return Object.keys(achievements).map(id => ({
+      id,
+      grantedAt: achievements[id]?.grantedAt || achievements[id]?.createdAt || nowIso(),
+    }));
+  }
+  return [];
+}
+
+function defaultEconomyUser(telegramId, seed = {}, legacy = {}) {
+  return {
+    telegramId: Number(telegramId),
+    coins: Number(seed.coins ?? legacy.coins ?? 0),
+    premiumCoins: Number(seed.premiumCoins ?? legacy.premiumCoins ?? 0),
+    xp: Number(seed.xp ?? legacy.xp ?? 0),
+    level: Number(seed.level ?? legacy.level ?? 1),
+    inventory: normalizeInventory(seed.inventory || legacy.inventory),
+    activeBadge: legacy.activeBadge || seed.activeBadge || null,
+    activeTitle: legacy.activeTitle || seed.activeTitle || null,
+    achievements: normalizeAchievements(seed.achievements || legacy.achievements),
+    achievementStats: { ...(legacy.achievementStats || {}), ...(seed.achievementStats || {}) },
+    daily: {
+      lastClaimAt: null,
+      streak: 0,
+      ...(legacy.daily || {}),
+      ...(seed.daily || {}),
+    },
+    effects: { ...(legacy.effects || {}), ...(seed.effects || {}) },
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+}
+
 class UsersRepository {
   constructor(store) {
     this.store = store;
@@ -107,6 +151,7 @@ class ChatsRepository {
             greetingsEnabled: true,
             captchaEnabled: false,
             fridayMemesEnabled: false,
+            autoDownloaderEnabled: false,
             activityRewardsEnabled: true,
           },
           createdAt: nowIso(),
@@ -126,6 +171,11 @@ class ChatsRepository {
     const data = this.store.read();
     const chat = data.chats.find(item => sameId(item.chatId, chatId));
     return clone(chat?.settings || {});
+  }
+
+  listChats() {
+    const data = this.store.read();
+    return clone(data.chats || []);
   }
 
   updateSetting(chatId, key, value) {
@@ -152,26 +202,14 @@ class EconomyRepository {
       let user = data.users.find(item => sameId(item.telegramId, telegramId));
       if (!user) {
         const legacy = this.readLegacyEconomy(telegramId);
-        user = {
-          telegramId: Number(telegramId),
-          coins: Number(seed.coins ?? legacy.coins ?? 0),
-          premiumCoins: 0,
-          xp: Number(seed.xp ?? legacy.xp ?? 0),
-          level: Number(seed.level ?? legacy.level ?? 1),
-          inventory: normalizeInventory(seed.inventory || legacy.inventory),
-          activeBadge: legacy.activeBadge || null,
-          activeTitle: legacy.activeTitle || null,
-          daily: {
-            lastClaimAt: null,
-            streak: 0,
-          },
-          effects: {},
-          createdAt: nowIso(),
-          updatedAt: nowIso(),
-        };
+        user = defaultEconomyUser(telegramId, seed, legacy);
         data.users.push(user);
       } else {
         user.inventory = normalizeInventory(user.inventory);
+        user.achievements = normalizeAchievements(user.achievements);
+        user.achievementStats = user.achievementStats || {};
+        user.effects = user.effects || {};
+        user.daily = user.daily || { lastClaimAt: null, streak: 0 };
       }
       return user;
     });
@@ -192,18 +230,7 @@ class EconomyRepository {
     return this.store.mutate(data => {
       let user = data.users.find(item => sameId(item.telegramId, telegramId));
       if (!user) {
-        user = {
-          telegramId: Number(telegramId),
-          coins: 0,
-          premiumCoins: 0,
-          xp: 0,
-          level: 1,
-          inventory: [],
-          daily: { lastClaimAt: null, streak: 0 },
-          effects: {},
-          createdAt: nowIso(),
-          updatedAt: nowIso(),
-        };
+        user = defaultEconomyUser(telegramId);
         data.users.push(user);
       }
       user.coins = Math.max(0, (Number(user.coins) || 0) + value);
@@ -220,6 +247,50 @@ class EconomyRepository {
         createdAt: nowIso(),
       });
       return user;
+    });
+  }
+
+  getAchievementStat(telegramId, key) {
+    const user = this.getUser(telegramId);
+    return Number(user?.achievementStats?.[key]) || 0;
+  }
+
+  incrementAchievementStat(telegramId, key, amount = 1) {
+    return this.store.mutate(data => {
+      let user = data.users.find(item => sameId(item.telegramId, telegramId));
+      if (!user) {
+        user = defaultEconomyUser(telegramId);
+        data.users.push(user);
+      }
+      user.achievementStats = user.achievementStats || {};
+      user.achievementStats[key] = (Number(user.achievementStats[key]) || 0) + Number(amount || 0);
+      user.updatedAt = nowIso();
+      return user.achievementStats[key];
+    });
+  }
+
+  listAchievements(telegramId) {
+    const user = this.getUser(telegramId);
+    return normalizeAchievements(user?.achievements);
+  }
+
+  hasAchievement(telegramId, achievementId) {
+    return this.listAchievements(telegramId).some(item => item.id === achievementId);
+  }
+
+  grantAchievement(telegramId, achievementId) {
+    return this.store.mutate(data => {
+      let user = data.users.find(item => sameId(item.telegramId, telegramId));
+      if (!user) {
+        user = defaultEconomyUser(telegramId);
+        data.users.push(user);
+      }
+      user.achievements = normalizeAchievements(user.achievements);
+      if (user.achievements.some(item => item.id === achievementId)) return null;
+      const grant = { id: achievementId, grantedAt: nowIso() };
+      user.achievements.push(grant);
+      user.updatedAt = nowIso();
+      return grant;
     });
   }
 
@@ -347,6 +418,8 @@ class EconomyRepository {
             xp: user.xp,
             level: user.level,
             inventory: user.inventory,
+            achievements: user.achievements,
+            achievementStats: user.achievementStats,
             activeBadge: user.active_badge || user.activeBadge,
             activeTitle: user.active_title || user.activeTitle,
           };
@@ -568,6 +641,26 @@ class ModerationRepository {
       .slice(0, limit));
   }
 
+  setPinnedLeaderboard(chatId, messageId, type = 'activity') {
+    return this.store.mutate(data => {
+      data.pinnedLeaderboards = data.pinnedLeaderboards || [];
+      let row = data.pinnedLeaderboards.find(item => sameId(item.chatId, chatId) && item.type === type);
+      if (!row) {
+        row = { chatId, type, messageId: Number(messageId), createdAt: nowIso(), updatedAt: nowIso() };
+        data.pinnedLeaderboards.push(row);
+      } else {
+        row.messageId = Number(messageId);
+        row.updatedAt = nowIso();
+      }
+      return row;
+    });
+  }
+
+  getPinnedLeaderboard(chatId, type = 'activity') {
+    const data = this.store.read();
+    return clone((data.pinnedLeaderboards || []).find(item => sameId(item.chatId, chatId) && item.type === type) || null);
+  }
+
   countWarningsRaw(data, chatId, telegramId) {
     return data.warnings.filter(item => item.active && sameId(item.chatId, chatId) && sameId(item.telegramId, telegramId)).length;
   }
@@ -661,4 +754,5 @@ function createRepositories(stores, config) {
 module.exports = {
   createRepositories,
   normalizeInventory,
+  normalizeAchievements,
 };

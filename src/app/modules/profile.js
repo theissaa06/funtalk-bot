@@ -32,6 +32,10 @@ function profileKeyboard() {
       Markup.button.callback('Магазин', 'shop:page:0'),
     ],
     [
+      Markup.button.callback('Ачивки', 'achievements:main'),
+      Markup.button.callback('ИИ', 'ai:main'),
+    ],
+    [
       Markup.button.callback('Топы', 'leaderboard:main'),
       Markup.button.callback('Меню', 'menu:home'),
     ],

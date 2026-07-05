@@ -6,6 +6,7 @@ const SETTINGS = [
   ['greetingsEnabled', 'Приветствия'],
   ['captchaEnabled', 'Лёгкая капча'],
   ['fridayMemesEnabled', 'Мемы по пятницам'],
+  ['autoDownloaderEnabled', 'Автоскачивание ссылок'],
   ['activityRewardsEnabled', 'Монеты за активность'],
 ];
 
@@ -24,6 +25,14 @@ function settingsKeyboard(app, chatId) {
 }
 
 function registerSettings(app) {
+  app.renderers.settings = async ctx => {
+    if (!ctx.chat || ctx.chat.type === 'private') {
+      return safeEditOrReply(ctx, 'Настройки чата доступны в группе.', { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('Меню', 'menu:home')]]) });
+    }
+    if (!(await requireChatAdmin(ctx))) return;
+    return safeEditOrReply(ctx, settingsText(app, ctx.chat.id), { parse_mode: 'HTML', ...settingsKeyboard(app, ctx.chat.id) });
+  };
+
   app.bot.command('settings', async ctx => {
     if (!ctx.chat || ctx.chat.type === 'private') return safeReply(ctx, 'Настройки чата доступны в группе.');
     if (!(await requireChatAdmin(ctx))) return;

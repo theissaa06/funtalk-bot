@@ -10,8 +10,10 @@ const { createContextMiddleware } = require('./context');
 const { ShopBridge } = require('./services/shopBridge');
 
 const { registerActivity } = require('./modules/activity');
+const { registerAchievements } = require('./modules/achievements');
 const { registerAi } = require('./modules/ai');
 const { registerChatTools } = require('./modules/chatTools');
+const { registerDownloader } = require('./modules/downloader');
 const { registerEconomy } = require('./modules/economy');
 const { registerGames } = require('./modules/games');
 const { registerLeaderboard } = require('./modules/leaderboard');
@@ -40,11 +42,18 @@ function registerCommands(bot) {
     { command: 'daily', description: 'Ежедневный бонус' },
     { command: 'shop', description: 'Магазин' },
     { command: 'inventory', description: 'Инвентарь' },
+    { command: 'achievements', description: 'Ачивки и награды' },
     { command: 'top', description: 'Топ активности' },
+    { command: 'topmoney', description: 'Топ по FunMoney' },
     { command: 'games', description: 'Мини-игры' },
     { command: 'support', description: 'Связь с поддержкой' },
     { command: 'ai', description: 'ИИ-помощник' },
+    { command: 'dl', description: 'Скачать TikTok/YouTube' },
     { command: 'settings', description: 'Настройки чата' },
+    { command: 'warn', description: 'Выдать варн' },
+    { command: 'warnings', description: 'Показать варны' },
+    { command: 'mute', description: 'Замутить участника' },
+    { command: 'ban', description: 'Забанить участника' },
     { command: 'ping', description: 'Проверить бота' },
     { command: 'id', description: 'Показать ID' },
     { command: 'info', description: 'Информация о чате' },
@@ -82,6 +91,7 @@ function createApp(options = {}) {
   bot.use(callbackRouter.middleware());
 
   registerActivity(app);
+  registerAchievements(app);
   registerModeration(app);
   registerProfile(app);
   registerShop(app);
@@ -89,6 +99,7 @@ function createApp(options = {}) {
   registerLeaderboard(app);
   registerGames(app);
   registerChatTools(app);
+  registerDownloader(app);
   registerSupport(app);
   registerAi(app);
   registerSettings(app);

@@ -17,6 +17,13 @@ function formatLeft(ms) {
   return `${hours} ч. ${minutes} мин.`;
 }
 
+function amountFromArgs(ctx) {
+  const args = parseArgs(ctx);
+  const firstArgIsTarget = args[0] && (args[0].startsWith('@') || /^-?\d+$/.test(args[0]));
+  const candidates = ctx.message?.reply_to_message || !firstArgIsTarget ? args : args.slice(1);
+  return toPositiveInt(candidates.find(arg => /^\d+$/.test(arg)));
+}
+
 function registerEconomy(app) {
   const { bot, repos } = app;
 
@@ -35,7 +42,12 @@ function registerEconomy(app) {
     const streak = user.daily?.streak || 0;
     const bonus = randomInt(50, 150) + Math.min(100, streak * 10);
     const updated = repos.economy.setDailyClaim(ctx.from.id, bonus);
-    await app.eventBus.emit('economy.daily', { telegramId: ctx.from.id, bonus, streak: updated.daily.streak });
+    await app.eventBus.emit('economy.daily', {
+      telegramId: ctx.from.id,
+      bonus,
+      streak: updated.daily.streak,
+      chatId: ctx.chat?.id || null,
+    });
     return safeReply(
       ctx,
       `Ежедневный бонус: <b>+${formatMoney(bonus)}</b>\nСтрик: <b>${updated.daily.streak}</b>\nБаланс: <b>${formatMoney(updated.coins)}</b>`,
@@ -45,7 +57,7 @@ function registerEconomy(app) {
 
   bot.command(['give', 'pay'], async ctx => {
     const target = await resolveTarget(ctx);
-    const amount = toPositiveInt(parseArgs(ctx).find(arg => /^\d+$/.test(arg)));
+    const amount = amountFromArgs(ctx);
     if (!target || !amount) {
       return safeReply(ctx, 'Использование: ответь на сообщение и напиши /give 100');
     }
@@ -63,8 +75,8 @@ function registerEconomy(app) {
 
   bot.command(['givecoins', 'grant'], async ctx => {
     if (!(await requireOwner(ctx))) return;
-    const target = await resolveTarget(ctx);
-    const amount = toPositiveInt(parseArgs(ctx).find(arg => /^\d+$/.test(arg)));
+    const target = await resolveTarget(ctx, { allowRawId: true, allowSelf: true });
+    const amount = amountFromArgs(ctx);
     if (!target || !amount) return safeReply(ctx, 'Использование: ответь на пользователя и напиши /givecoins 1000');
     const updated = repos.economy.addCoins(target.id, amount, {
       type: 'owner_grant',
@@ -77,8 +89,8 @@ function registerEconomy(app) {
 
   bot.command('takecoins', async ctx => {
     if (!(await requireOwner(ctx))) return;
-    const target = await resolveTarget(ctx);
-    const amount = toPositiveInt(parseArgs(ctx).find(arg => /^\d+$/.test(arg)));
+    const target = await resolveTarget(ctx, { allowRawId: true, allowSelf: true });
+    const amount = amountFromArgs(ctx);
     if (!target || !amount) return safeReply(ctx, 'Использование: ответь на пользователя и напиши /takecoins 1000');
     const updated = repos.economy.addCoins(target.id, -amount, {
       type: 'owner_take',

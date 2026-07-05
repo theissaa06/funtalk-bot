@@ -1,7 +1,7 @@
 const { parseArgs } = require('./format');
 
 async function resolveTarget(ctx, options = {}) {
-  const { allowSelf = false } = options;
+  const { allowSelf = false, allowRawId = false } = options;
 
   const replyUser = ctx.message?.reply_to_message?.from;
   if (replyUser && (allowSelf || replyUser.id !== ctx.from?.id)) return replyUser;
@@ -27,6 +27,9 @@ async function resolveTarget(ctx, options = {}) {
       const member = await ctx.telegram.getChatMember(ctx.chat.id, numericId);
       if (member?.user && (allowSelf || member.user.id !== ctx.from?.id)) return member.user;
     } catch {}
+    if (allowRawId && (allowSelf || numericId !== ctx.from?.id)) {
+      return { id: numericId, first_name: `ID ${numericId}`, is_bot: false };
+    }
   }
 
   return null;

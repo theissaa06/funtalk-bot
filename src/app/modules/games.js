@@ -55,7 +55,7 @@ function registerGames(app) {
     const multiplier = roll[0] === roll[1] && roll[1] === roll[2] ? 5 : roll[0] === roll[1] || roll[1] === roll[2] || roll[0] === roll[2] ? 2 : 0;
     const win = bet * multiplier;
     if (win) repos.economy.addCoins(ctx.from.id, win, { type: 'game_win', chatId: ctx.chat?.id, reason: 'casino' });
-    await app.eventBus.emit('game.finished', { game: 'casino', telegramId: ctx.from.id, bet, win });
+    await app.eventBus.emit('game.finished', { game: 'casino', telegramId: ctx.from.id, bet, win, chatId: ctx.chat?.id || null });
     return safeReply(ctx, `<b>Слоты</b>\n\n[ ${roll.join(' | ')} ]\n\nСтавка: ${formatMoney(bet)}\nВыигрыш: <b>${formatMoney(win)}</b>`, { parse_mode: 'HTML' });
   });
 
@@ -85,7 +85,7 @@ function registerGames(app) {
       Number(pick) === number ? 35 : 0;
     const win = bet * winMultiplier;
     if (win) repos.economy.addCoins(ctx.from.id, win, { type: 'game_win', chatId: ctx.chat?.id, reason: 'roulette' });
-    await app.eventBus.emit('game.finished', { game: 'roulette', telegramId: ctx.from.id, bet, win });
+    await app.eventBus.emit('game.finished', { game: 'roulette', telegramId: ctx.from.id, bet, win, chatId: ctx.chat?.id || null });
     return safeReply(ctx, `<b>Рулетка</b>\n\nВыпало: <b>${number}</b> (${color})\nСтавка: ${pick}\nВыигрыш: <b>${formatMoney(win)}</b>`, { parse_mode: 'HTML' });
   });
 
@@ -109,7 +109,7 @@ function registerGames(app) {
     repos.economy.addCoins(ctx.from.id, -bet, { type: 'game_bet', chatId: ctx.chat?.id, reason: 'rps' });
     const win = draw ? bet : wins ? bet * 2 : 0;
     if (win) repos.economy.addCoins(ctx.from.id, win, { type: 'game_win', chatId: ctx.chat?.id, reason: 'rps' });
-    await app.eventBus.emit('game.finished', { game: 'rps', telegramId: ctx.from.id, bet, win });
+    await app.eventBus.emit('game.finished', { game: 'rps', telegramId: ctx.from.id, bet, win, chatId: ctx.chat?.id || null });
     const labels = { rock: 'камень', scissors: 'ножницы', paper: 'бумага' };
     return safeEditOrReply(ctx, `<b>КНБ</b>\n\nТы: ${labels[pick]}\nБот: ${labels[botPick]}\n\n${draw ? 'Ничья.' : wins ? 'Победа!' : 'Поражение.'}\nВыигрыш: <b>${formatMoney(win)}</b>`, { parse_mode: 'HTML', ...gamesKeyboard(bet) });
   });

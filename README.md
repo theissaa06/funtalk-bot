@@ -1,19 +1,20 @@
 # FulTalchik_Botik v3.0.1
 
-Обновлённый объединённый бот для Telegram-бесед.
+Обновлённый модульный бот для Telegram-бесед на Node.js + Telegraf.
 
 ## Что внутри
 
-- универсальная база `data/database.json` по `chatId`;
-- команды со слешем и без слеша;
-- модерация: мут, бан, кик, преды;
-- ранги администрации и глобальные ранги;
-- созыв участников из БД;
-- учёт активности всех типов сообщений;
-- топы дня, недели, месяца и всё время;
-- профиль, магазин, монеты, ачивки;
-- дни рождения, напоминания, утро/ночь, недельный отчёт;
-- старый функционал скачивания видео TikTok / YouTube / Instagram через `yt-dlp`.
+- модульный слой `src/app/*` с единым callback-router;
+- inline-меню без старых Telegram reply-кнопок;
+- модерация: варны, муты, баны, кик, антифлуд, лог действий;
+- экономика: FunMoney, daily, переводы, owner-выдача/списание с логами;
+- магазин: покупки, daily deal, лутбоксы, консумаблы, sell-back, gifting;
+- ачивки: event-hook, rarity, награды и toast-уведомления;
+- топы активности и монет, закрепляемый leaderboard с автообновлением;
+- мини-игры: КНБ кнопками, слоты, рулетка;
+- поддержка через бота с reply-ответами разработчика;
+- ИИ-помощник через Gemini/OpenAI/Claude;
+- `/dl` для TikTok/YouTube через `yt-dlp`.
 
 ## Railway Variables
 
@@ -25,7 +26,15 @@ NODE_ENV=production
 AI_PROVIDER=gemini
 GEMINI_API_KEY=...
 GEMINI_MODEL=gemini-2.5-flash
+OPENAI_API_KEY=...
+AI_MODEL=gpt-4o-mini
+CLAUDE_API_KEY=...
+CLAUDE_MODEL=claude-3-5-sonnet-20241022
+SUPPORT_CHAT_ID=...
+YTDLP_PATH=yt-dlp
 ```
+
+Для Gemini достаточно заполнить `GEMINI_API_KEY`. Для скачивания TikTok/YouTube на сервере должен быть доступен `yt-dlp` или путь к нему в `YTDLP_PATH`.
 
 ## Запуск
 

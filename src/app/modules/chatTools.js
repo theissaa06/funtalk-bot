@@ -54,6 +54,33 @@ function registerChatTools(app) {
   bot.command('meme', async ctx => {
     await safeReply(ctx, MEMES[randomInt(0, MEMES.length - 1)]);
   });
+
+  async function postFridayMemes() {
+    const now = new Date();
+    const day = now.toISOString().slice(0, 10);
+    if (now.getDay() !== 5) return;
+
+    for (const chat of app.repos.chats.listChats()) {
+      const settings = chat.settings || {};
+      if (!settings.fridayMemesEnabled || settings.lastFridayMemeDay === day) continue;
+
+      let index = randomInt(0, MEMES.length - 1);
+      if (MEMES.length > 1 && index === settings.lastFridayMemeIndex) {
+        index = (index + 1) % MEMES.length;
+      }
+
+      try {
+        await bot.telegram.sendMessage(chat.chatId, `<b>Пятничный мем</b>\n\n${MEMES[index]}`, { parse_mode: 'HTML' });
+        app.repos.chats.updateSetting(chat.chatId, 'lastFridayMemeDay', day);
+        app.repos.chats.updateSetting(chat.chatId, 'lastFridayMemeIndex', index);
+      } catch (error) {
+        app.logger.warn('friday meme failed:', error.message);
+      }
+    }
+  }
+
+  const timer = setInterval(postFridayMemes, 60 * 60 * 1000);
+  if (typeof timer.unref === 'function') timer.unref();
 }
 
 module.exports = {
