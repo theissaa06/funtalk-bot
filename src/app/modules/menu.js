@@ -1,6 +1,7 @@
 const { Markup } = require('telegraf');
 const { safeEditOrReply, safeReply } = require('../safeTelegram');
 const { escapeHtml } = require('../format');
+const { botInviteUrl } = require('../botLinks');
 const { removeReplyKeyboard } = require('./uiCleanup');
 
 const CATEGORIES = {
@@ -78,7 +79,7 @@ const CATEGORIES = {
   },
 };
 
-function mainKeyboard() {
+function mainKeyboard(app) {
   return Markup.inlineKeyboard([
     [
       Markup.button.callback('Профиль', 'menu:profile'),
@@ -99,6 +100,9 @@ function mainKeyboard() {
     [
       Markup.button.callback('Все разделы', 'menu:commands'),
       Markup.button.callback('Поддержка', 'menu:support'),
+    ],
+    [
+      Markup.button.url('Добавить в свой чат', botInviteUrl(app)),
     ],
   ]);
 }
@@ -123,7 +127,7 @@ function categoryText(key) {
   ].join('\n');
 }
 
-function categoryKeyboard(key) {
+function categoryKeyboard(key, app) {
   const direct = {
     shop: [Markup.button.callback('Открыть магазин', 'shop:page:0')],
     games: [Markup.button.callback('Открыть игры', 'games:main')],
@@ -136,6 +140,7 @@ function categoryKeyboard(key) {
 
   const rows = [];
   if (direct) rows.push(direct);
+  if (key === 'settings') rows.push([Markup.button.url('Добавить в свой чат', botInviteUrl(app))]);
   rows.push([Markup.button.callback('Назад', 'menu:commands'), Markup.button.callback('Главная', 'menu:home')]);
   return Markup.inlineKeyboard(rows);
 }
@@ -172,28 +177,28 @@ function registerMenu(app) {
   const { bot, callbackRouter } = app;
 
   bot.start(async ctx => {
-    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard() });
+    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard(app) });
   });
 
   bot.command(['menu', 'help'], async ctx => {
-    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard() });
+    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard(app) });
   });
 
   bot.command(['buttons', 'newmenu'], async ctx => {
     await removeReplyKeyboard(ctx, { force: true });
-    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard() });
+    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard(app) });
   });
 
   callbackRouter.on('menu', async (ctx, route) => {
     if (route.action === 'home') {
-      return safeEditOrReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard() });
+      return safeEditOrReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard(app) });
     }
     if (route.action === 'commands') {
       return safeEditOrReply(ctx, commandsText(), { parse_mode: 'HTML', ...commandsKeyboard() });
     }
     if (route.action === 'category') {
       const key = route.args[0];
-      return safeEditOrReply(ctx, categoryText(key), { parse_mode: 'HTML', ...categoryKeyboard(key) });
+      return safeEditOrReply(ctx, categoryText(key), { parse_mode: 'HTML', ...categoryKeyboard(key, app) });
     }
     if (route.action === 'profile') return app.renderers.profile(ctx);
     if (route.action === 'shop') return app.renderers.shop(ctx, 0);
@@ -203,7 +208,7 @@ function registerMenu(app) {
     if (route.action === 'settings') return app.renderers.settings(ctx);
     if (route.action === 'support') return app.renderers.support(ctx);
     if (route.action === 'ai') return app.renderers.ai(ctx);
-    return safeEditOrReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard() });
+    return safeEditOrReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard(app) });
   });
 }
 

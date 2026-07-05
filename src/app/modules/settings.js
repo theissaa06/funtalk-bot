@@ -1,6 +1,7 @@
 const { Markup } = require('telegraf');
 const { safeEditOrReply, safeReply } = require('../safeTelegram');
 const { requireChatAdmin } = require('../access');
+const { botInviteUrl } = require('../botLinks');
 
 const SETTINGS = [
   ['greetingsEnabled', 'Приветствия'],
@@ -20,6 +21,7 @@ function settingsKeyboard(app, chatId) {
   const settings = app.repos.chats.getSettings(chatId);
   return Markup.inlineKeyboard([
     ...SETTINGS.map(([key, label]) => [Markup.button.callback(`${settings[key] ? 'Выключить' : 'Включить'}: ${label}`, `settings:toggle:${key}`)]),
+    [Markup.button.url('Добавить в свой чат', botInviteUrl(app))],
     [Markup.button.callback('Меню', 'menu:home')],
   ]);
 }
@@ -27,14 +29,24 @@ function settingsKeyboard(app, chatId) {
 function registerSettings(app) {
   app.renderers.settings = async ctx => {
     if (!ctx.chat || ctx.chat.type === 'private') {
-      return safeEditOrReply(ctx, 'Настройки чата доступны в группе.', { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('Меню', 'menu:home')]]) });
+      return safeEditOrReply(ctx, 'Настройки чата доступны в группе.', {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('Добавить в свой чат', botInviteUrl(app))],
+          [Markup.button.callback('Меню', 'menu:home')],
+        ]),
+      });
     }
     if (!(await requireChatAdmin(ctx))) return;
     return safeEditOrReply(ctx, settingsText(app, ctx.chat.id), { parse_mode: 'HTML', ...settingsKeyboard(app, ctx.chat.id) });
   };
 
   app.bot.command('settings', async ctx => {
-    if (!ctx.chat || ctx.chat.type === 'private') return safeReply(ctx, 'Настройки чата доступны в группе.');
+    if (!ctx.chat || ctx.chat.type === 'private') {
+      return safeReply(ctx, 'Настройки чата доступны в группе.', Markup.inlineKeyboard([
+        [Markup.button.url('Добавить в свой чат', botInviteUrl(app))],
+      ]));
+    }
     if (!(await requireChatAdmin(ctx))) return;
     await safeReply(ctx, settingsText(app, ctx.chat.id), { parse_mode: 'HTML', ...settingsKeyboard(app, ctx.chat.id) });
   });
