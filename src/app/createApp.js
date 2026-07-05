@@ -8,7 +8,7 @@ const { EventBus } = require('./eventBus');
 const { CallbackRouter } = require('./callbackRouter');
 const { createContextMiddleware } = require('./context');
 const { ShopBridge } = require('./services/shopBridge');
-const { createSupportInboxBot } = require('./supportInboxBot');
+const { createSupportInboxBot, registerSupportInboxProfile } = require('./supportInboxBot');
 
 const { registerActivity } = require('./modules/activity');
 const { registerAchievements } = require('./modules/achievements');
@@ -49,7 +49,7 @@ function registerCommands(bot) {
     { command: 'top', description: 'Топ активности' },
     { command: 'topmoney', description: 'Топ по FunMoney' },
     { command: 'games', description: 'Мини-игры' },
-    { command: 'support', description: 'Связь с поддержкой' },
+    { command: 'support', description: 'Обращения' },
     { command: 'mysupport', description: 'Мои обращения' },
     { command: 'ai', description: 'ИИ-помощник' },
     { command: 'dl', description: 'Скачать TikTok/YouTube' },
@@ -64,6 +64,13 @@ function registerCommands(bot) {
     { command: 'meme', description: 'Мемная фраза' },
     { command: 'topic', description: 'Тема для разговора' },
     { command: 'dice', description: 'Кубик' },
+  ]);
+}
+
+async function registerBotProfile(bot) {
+  await Promise.all([
+    bot.telegram.setMyDescription('FunTalk — бот для чата, обращений и быстрых инструментов.'),
+    bot.telegram.setMyShortDescription('FunTalk: чат, обращения и инструменты.'),
   ]);
 }
 
@@ -121,10 +128,16 @@ function createApp(options = {}) {
     logger.info('FunTalk bot launched');
     if (app.supportInboxBot) {
       await app.supportInboxBot.launch({ dropPendingUpdates: true });
+      try {
+        await registerSupportInboxProfile(app.supportInboxBot);
+      } catch (error) {
+        logger.warn('failed to register support inbox profile:', error.message);
+      }
       logger.info('Support inbox bot launched');
     }
     try {
       await registerCommands(bot);
+      await registerBotProfile(bot);
       logger.info('Telegram commands registered');
     } catch (error) {
       logger.warn('failed to register commands:', error.message);
@@ -143,4 +156,5 @@ module.exports = {
   createApp,
   createStores,
   registerCommands,
+  registerBotProfile,
 };

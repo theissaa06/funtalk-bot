@@ -37,13 +37,13 @@ function createSupportInboxBot(app) {
 
   inboxBot.start(async ctx => {
     if (isOwner(app, ctx.from?.id)) {
-      return replySafe(ctx, 'Support-бот подключён. Сюда будут приходить обращения пользователей. Отвечай реплаем на обращение.');
+      return replySafe(ctx, 'Поддержка подключена. Новые обращения будут приходить сюда. Отвечай реплаем на обращение.');
     }
-    return replySafe(ctx, 'Привет. Напиши сюда свою проблему одним сообщением, я передам её разработчику.');
+    return replySafe(ctx, 'Поддержка FunTalk\n\nОпиши обращение одним сообщением.');
   });
 
   inboxBot.command('help', async ctx => {
-    await replySafe(ctx, 'Пользователь пишет проблему сюда. Разработчик отвечает реплаем на обращение.');
+    await replySafe(ctx, 'Поддержка FunTalk\n\nНапиши обращение одним сообщением.');
   });
 
   inboxBot.on('message', async ctx => {
@@ -63,18 +63,18 @@ function createSupportInboxBot(app) {
     }
 
     if (isOwner(app, ctx.from.id)) {
-      return replySafe(ctx, 'Чтобы ответить пользователю, сделай reply на его обращение.');
+      return replySafe(ctx, 'Ответь реплаем на нужное обращение.');
     }
 
     if (!destinationChatId) {
-      return replySafe(ctx, 'Поддержка пока не настроена.');
+      return replySafe(ctx, 'Поддержка временно недоступна.');
     }
 
     const preview = messagePreview(ctx.message);
     const ticket = app.repos.support.createTicket(ctx.from, ctx.chat?.id, preview);
     const text = [
       `<b>Новое обращение #${ticket.id}</b>`,
-      `Источник: support-бот`,
+      `Раздел: поддержка`,
       `Пользователь: ${escapeHtml(displayName(ctx.from))}`,
       `ID: <code>${ctx.from.id}</code>`,
       '',
@@ -100,6 +100,18 @@ function createSupportInboxBot(app) {
   return inboxBot;
 }
 
+async function registerSupportInboxProfile(inboxBot) {
+  await Promise.all([
+    inboxBot.telegram.setMyCommands([
+      { command: 'start', description: 'Обращения' },
+      { command: 'help', description: 'Поддержка' },
+    ]),
+    inboxBot.telegram.setMyDescription('Поддержка FunTalk. Напиши обращение одним сообщением.'),
+    inboxBot.telegram.setMyShortDescription('Поддержка FunTalk.'),
+  ]);
+}
+
 module.exports = {
   createSupportInboxBot,
+  registerSupportInboxProfile,
 };

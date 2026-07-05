@@ -55,11 +55,7 @@ const CATEGORIES = {
   },
   support: {
     title: 'Поддержка',
-    lines: [
-      'Обращения — написать в поддержку.',
-      'Мои обращения — посмотреть последние заявки и ответы.',
-      'Все сообщения поддержки идут отдельно от общего чата.',
-    ],
+    lines: ['Выбери действие:'],
   },
   ai: {
     title: 'ИИ-помощник',
@@ -152,6 +148,10 @@ function categoryKeyboard(key, app) {
   return Markup.inlineKeyboard(rows);
 }
 
+function supportCategoryText() {
+  return '<b>Поддержка</b>\n\nВыбери действие:';
+}
+
 function commandsKeyboard() {
   return Markup.inlineKeyboard([
     [
@@ -205,7 +205,8 @@ function registerMenu(app) {
     }
     if (route.action === 'category') {
       const key = route.args[0];
-      return safeEditOrReply(ctx, categoryText(key), { parse_mode: 'HTML', ...categoryKeyboard(key, app) });
+      const text = key === 'support' ? supportCategoryText() : categoryText(key);
+      return safeEditOrReply(ctx, text, { parse_mode: 'HTML', ...categoryKeyboard(key, app) });
     }
     if (route.action === 'profile') return app.renderers.profile(ctx);
     if (route.action === 'shop') return app.renderers.shop(ctx, 0);
