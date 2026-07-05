@@ -1,5 +1,6 @@
 const { Markup } = require('telegraf');
 const { safeEditOrReply, safeReply } = require('../safeTelegram');
+const { escapeHtml } = require('../format');
 const { removeReplyKeyboard } = require('./uiCleanup');
 
 const CATEGORIES = {
@@ -115,9 +116,9 @@ function categoryText(key) {
   const category = CATEGORIES[key];
   if (!category) return menuText();
   return [
-    `<b>${category.title}</b>`,
+    `<b>${escapeHtml(category.title)}</b>`,
     '',
-    ...category.lines,
+    ...category.lines.map(line => escapeHtml(line)),
   ].join('\n');
 }
 
