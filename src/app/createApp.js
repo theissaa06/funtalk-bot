@@ -200,7 +200,6 @@ function createApp(options = {}) {
       logger.info(`${config.brandName} bot launched in polling mode`);
     }
     if (app.supportInboxBot) {
-      await app.supportInboxBot.launch({ dropPendingUpdates: true });
       if (!config.skipTelegramProfileSync) {
         try {
           await registerSupportInboxProfile(app.supportInboxBot, config);
@@ -208,7 +207,10 @@ function createApp(options = {}) {
           logger.warn('failed to register support inbox profile:', error.message);
         }
       }
-      logger.info('Support inbox bot launched');
+      app.supportInboxBot.launch({ dropPendingUpdates: true }).catch(error => {
+        logger.error('support inbox bot stopped:', error.message);
+      });
+      logger.info('Support inbox bot launch requested');
     }
     if (config.skipTelegramProfileSync) {
       logger.info('Telegram profile sync skipped');
