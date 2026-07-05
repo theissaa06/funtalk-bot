@@ -65,11 +65,12 @@ async function forwardTicketToSupport(app, ticket) {
     '',
     escapeHtml(ticket.text),
     '',
-    'Ответь реплаем на это сообщение, и бот отправит ответ пользователю.',
+    'Ответь реплаем на это сообщение, и Somnia отправит ответ пользователю.',
   ].filter(Boolean).join('\n');
 
   try {
-    const sent = await app.bot.telegram.sendMessage(destination, text, { parse_mode: 'HTML' });
+    const relayBot = app.supportInboxBot || app.bot;
+    const sent = await relayBot.telegram.sendMessage(destination, text, { parse_mode: 'HTML' });
     app.repos.support.bindForwardedMessage(ticket.id, destination, sent.message_id);
     return sent;
   } catch (error) {

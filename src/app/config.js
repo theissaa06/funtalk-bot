@@ -22,7 +22,7 @@ function readConfig(env = process.env) {
     botUsername: env.BOT_USERNAME || 'FunTalchik_Botik',
     ownerIds: parseIdList(env.OWNER_IDS || env.OWNER_ID),
     supportChatId: env.SUPPORT_CHAT_ID ? Number(env.SUPPORT_CHAT_ID) : null,
-    supportInboxBotToken: env.SUPPORT_INBOX_BOT_TOKEN || '',
+    supportInboxBotToken: env.SUPPORT_INBOX_BOT_TOKEN || env.SUPPORT_TOKEN || env.SUPPORT_BOT_TOKEN || '',
     supportInboxBotUsername: String(env.SUPPORT_INBOX_BOT_USERNAME || '').replace(/^@/, ''),
     dataDir,
     railwayService: Boolean(env.RAILWAY_ENVIRONMENT || env.RAILWAY_PROJECT_ID || env.RAILWAY_SERVICE_ID),

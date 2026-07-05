@@ -1,7 +1,8 @@
 const { Telegraf } = require('telegraf');
-const { escapeHtml, displayName } = require('./format');
 
 function ownerDestination(app) {
+  const storedChatId = app.repos?.settings?.getSupportChatId?.();
+  if (storedChatId) return storedChatId;
   return app.config.supportChatId || app.config.ownerIds?.[0] || null;
 }
 
@@ -30,31 +31,34 @@ async function replySafe(ctx, text, extra = {}) {
 
 function createSupportInboxBot(app) {
   const token = app.config.supportInboxBotToken;
-  if (!token || app.config.isTest) return null;
+  if (!token) return null;
 
   const inboxBot = new Telegraf(token);
-  const destinationChatId = ownerDestination(app);
   const brandName = app.config.brandName || 'Somnia';
 
   inboxBot.start(async ctx => {
     if (isOwner(app, ctx.from?.id)) {
       return replySafe(ctx, 'Поддержка подключена. Новые обращения будут приходить сюда. Отвечай реплаем на обращение.');
     }
-    return replySafe(ctx, `Поддержка ${brandName}\n\nОпиши обращение одним сообщением.`);
+    return replySafe(ctx, `Поддержка ${brandName}\n\nОбращения принимаются через основного бота: открой Somnia и отправь /support.`);
   });
 
   inboxBot.command('help', async ctx => {
-    await replySafe(ctx, `Поддержка ${brandName}\n\nНапиши обращение одним сообщением.`);
+    await replySafe(ctx, `Поддержка ${brandName}\n\nРазработчик отвечает здесь реплаем на обращения. Пользователи пишут через основного бота Somnia.`);
   });
 
   inboxBot.on('message', async ctx => {
     if (!ctx.from || ctx.from.is_bot) return;
+    const destinationChatId = ownerDestination(app);
 
     if (destinationChatId && String(ctx.chat?.id) === String(destinationChatId) && ctx.message?.reply_to_message) {
+      if (!isOwner(app, ctx.from.id)) {
+        return replySafe(ctx, 'Ответы на обращения доступны только разработчику.');
+      }
       const ticket = app.repos.support.findBySupportReply(destinationChatId, ctx.message.reply_to_message.message_id);
       if (!ticket) return;
       try {
-        await ctx.telegram.sendMessage(ticket.telegramId, `Ответ поддержки:\n\n${messagePreview(ctx.message)}`);
+        await app.bot.telegram.sendMessage(ticket.telegramId, `Ответ поддержки:\n\n${messagePreview(ctx.message)}`);
         app.repos.support.close(ticket.id);
         return replySafe(ctx, `Ответ отправлен пользователю ${ticket.telegramId}.`);
       } catch (error) {
@@ -67,31 +71,7 @@ function createSupportInboxBot(app) {
       return replySafe(ctx, 'Ответь реплаем на нужное обращение.');
     }
 
-    if (!destinationChatId) {
-      return replySafe(ctx, 'Поддержка временно недоступна.');
-    }
-
-    const preview = messagePreview(ctx.message);
-    const ticket = app.repos.support.createTicket(ctx.from, ctx.chat?.id, preview);
-    const text = [
-      `<b>Новое обращение #${ticket.id}</b>`,
-      `Раздел: поддержка`,
-      `Пользователь: ${escapeHtml(displayName(ctx.from))}`,
-      `ID: <code>${ctx.from.id}</code>`,
-      '',
-      escapeHtml(preview),
-      '',
-      'Ответь реплаем на это сообщение, чтобы отправить ответ пользователю.',
-    ].join('\n');
-
-    try {
-      const sent = await ctx.telegram.sendMessage(destinationChatId, text, { parse_mode: 'HTML' });
-      app.repos.support.bindForwardedMessage(ticket.id, destinationChatId, sent.message_id);
-      return replySafe(ctx, `Обращение #${ticket.id} отправлено. Ответ придёт сюда.`);
-    } catch (error) {
-      app.logger.warn('support inbox forward failed:', error.message);
-      return replySafe(ctx, 'Не удалось отправить обращение. Попробуй позже.');
-    }
+    return replySafe(ctx, 'Напиши обращение через основного бота Somnia: команда /support или кнопка «Поддержка».');
   });
 
   inboxBot.catch(error => {

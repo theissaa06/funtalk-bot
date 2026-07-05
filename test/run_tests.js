@@ -6,6 +6,7 @@ process.env.GEMINI_API_KEY = '';
 process.env.OPENAI_API_KEY = '';
 process.env.CLAUDE_API_KEY = '';
 process.env.OWNER_ID = '42';
+process.env.SUPPORT_INBOX_BOT_TOKEN = 'TEST_SUPPORT_TOKEN';
 process.env.APP_STORE_PATH = 'data/test-app_store.json';
 process.env.ECONOMY_STORE_PATH = 'data/test-economy_store.json';
 process.env.MODERATION_STORE_PATH = 'data/test-moderation_store.json';
@@ -31,9 +32,11 @@ function cleanup() {
 cleanup();
 
 const calls = [];
-Telegram.prototype.callApi = async (method, payload) => {
-  calls.push({ method, payload });
+Telegram.prototype.callApi = async function callApi(method, payload) {
+  const call = { token: this.token, method, payload };
+  calls.push(call);
   if (method === 'sendMessage') {
+    call.response = { message_id: calls.length };
     return {
       message_id: calls.length,
       date: Math.floor(Date.now() / 1000),
@@ -143,17 +146,18 @@ async function press(data, options = {}) {
   const supportUser = from({ id: 55, first_name: 'SupportUser', username: 'support_user' });
   await press('support:write', { from: supportUser, chat: { id: 55, type: 'private' } });
   await sendText('Нужна помощь с ботом', { from: supportUser, chat: { id: 55, type: 'private' } });
-  const supportCallIndex = calls.findIndex(call =>
+  const supportCall = calls.find(call =>
+    call.token === 'TEST_SUPPORT_TOKEN' &&
     call.method === 'sendMessage' &&
     Number(call.payload.chat_id) === 42 &&
     String(call.payload.text || '').includes('Новое обращение')
   );
-  assert(supportCallIndex >= 0, 'support ticket should be forwarded to owner');
-  await sendTextWith(bot, 'Ответ разработчика', {
+  assert(supportCall, 'support ticket should be forwarded to owner through support bot');
+  await sendTextWith(app.supportInboxBot, 'Ответ разработчика', {
     from: from({ id: 42 }),
     chat: { id: 42, type: 'private' },
     replyTo: supportUser,
-    replyMessageId: supportCallIndex + 1,
+    replyMessageId: supportCall.response.message_id,
   });
   const commandSupportUser = from({ id: 56, first_name: 'CommandSupport', username: 'command_support' });
   await sendText('Обычное сообщение без режима', { from: commandSupportUser, chat: { id: 56, type: 'private' } });
@@ -200,7 +204,7 @@ async function press(data, options = {}) {
   assert(sentTexts.some(text => text.includes('Обращение через команду support')), '/support command should forward the next message');
   assert(!sentTexts.some(text => text.includes('Обычное сообщение без режима')), 'ordinary messages should not be forwarded to support');
   assert(!sentTexts.some(text => text.includes('Обычный текст после обращения')), 'support mode should turn off after one message');
-  assert(sentTexts.some(text => text.includes('Ответ по обращению')), 'support owner reply should reach user');
+  assert(sentTexts.some(text => text.includes('Ответ поддержки')), 'support owner reply should reach user through main bot');
   assert(sentTexts.some(text => text.includes('Support-чат сохранён') && text.includes('-1001')), 'owner should set support chat from Telegram');
   assert(sentTexts.some(text => text.includes('Источник:') && text.includes('stored')), 'support status should prefer stored support chat');
   assert(allTexts.some(text => text.includes('замучен')), 'moderation time picker should apply tmute');
