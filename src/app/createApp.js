@@ -201,19 +201,25 @@ function createApp(options = {}) {
     }
     if (app.supportInboxBot) {
       await app.supportInboxBot.launch({ dropPendingUpdates: true });
-      try {
-        await registerSupportInboxProfile(app.supportInboxBot, config);
-      } catch (error) {
-        logger.warn('failed to register support inbox profile:', error.message);
+      if (!config.skipTelegramProfileSync) {
+        try {
+          await registerSupportInboxProfile(app.supportInboxBot, config);
+        } catch (error) {
+          logger.warn('failed to register support inbox profile:', error.message);
+        }
       }
       logger.info('Support inbox bot launched');
     }
-    try {
-      await registerCommands(bot);
-      await registerBotProfile(bot, config);
-      logger.info('Telegram commands registered');
-    } catch (error) {
-      logger.warn('failed to register commands:', error.message);
+    if (config.skipTelegramProfileSync) {
+      logger.info('Telegram profile sync skipped');
+    } else {
+      try {
+        await registerCommands(bot);
+        await registerBotProfile(bot, config);
+        logger.info('Telegram commands registered');
+      } catch (error) {
+        logger.warn('failed to register commands:', error.message);
+      }
     }
   };
 

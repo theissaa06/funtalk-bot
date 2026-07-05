@@ -30,6 +30,7 @@ function readConfig(env = process.env) {
     healthPort: env.HEALTH_PORT || env.PORT || '',
     webhookUrl: String(env.WEBHOOK_URL || '').replace(/\/+$/, ''),
     webhookPath: env.WEBHOOK_PATH || '/telegram-webhook',
+    skipTelegramProfileSync: env.SKIP_TELEGRAM_PROFILE_SYNC === '1',
     stores: {
       app: path.resolve(env.APP_STORE_PATH || path.join(dataDir, 'app_store.json')),
       economy: path.resolve(env.ECONOMY_STORE_PATH || path.join(dataDir, 'economy_store.json')),
