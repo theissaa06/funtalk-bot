@@ -1,22 +1,12 @@
 const { Markup } = require('telegraf');
 const { safeEditOrReply, safeReply } = require('../safeTelegram');
-const { displayName, escapeHtml } = require('../format');
-
-const supportCooldown = new Map();
-const SUPPORT_COOLDOWN_MS = 5 * 60 * 1000;
-
-function supportDestinationChatId(app) {
-  return app.config.supportChatId || app.config.ownerIds?.[0] || null;
-}
+const { escapeHtml } = require('../format');
 
 function supportText(app) {
-  if (!supportDestinationChatId(app)) {
-    return '<b>Поддержка</b>\n\nПоддержка пока не настроена: добавь SUPPORT_CHAT_ID или OWNER_ID.';
+  if (!app.config.supportInboxBotUsername) {
+    return '<b>Поддержка</b>\n\nSupport-бот пока не настроен. Добавь SUPPORT_INBOX_BOT_USERNAME и SUPPORT_INBOX_BOT_TOKEN.';
   }
-  const inbox = app.config.supportInboxBotUsername
-    ? `\n\nБыстрее всего написать в отдельного support-бота: @${app.config.supportInboxBotUsername}.`
-    : '';
-  return `<b>Поддержка</b>\n\nНажми кнопку ниже и следующим сообщением опиши проблему. Бот передаст обращение разработчику.${inbox}`;
+  return `<b>Поддержка</b>\n\nВсе обращения принимаются только в отдельном support-боте: @${app.config.supportInboxBotUsername}.`;
 }
 
 function supportKeyboard(app) {
@@ -24,7 +14,6 @@ function supportKeyboard(app) {
   if (app.config.supportInboxBotUsername) {
     rows.push([Markup.button.url('Открыть support-бота', `https://t.me/${app.config.supportInboxBotUsername}`)]);
   }
-  rows.push([Markup.button.callback('Написать тут', 'support:start')]);
   rows.push([Markup.button.callback('Мои обращения', 'support:mine')]);
   rows.push([Markup.button.callback('Меню', 'menu:home')]);
   return Markup.inlineKeyboard(rows);
@@ -41,7 +30,7 @@ function mySupportText(app, telegramId) {
 }
 
 function registerSupport(app) {
-  const { bot, repos, callbackRouter } = app;
+  const { bot, callbackRouter } = app;
 
   app.renderers.support = async ctx => {
     await safeEditOrReply(ctx, supportText(app), { parse_mode: 'HTML', ...supportKeyboard(app) });
@@ -59,68 +48,7 @@ function registerSupport(app) {
     if (route.action === 'mine') {
       return safeEditOrReply(ctx, mySupportText(app, ctx.from.id), { parse_mode: 'HTML', ...supportKeyboard(app) });
     }
-    if (route.action === 'start') {
-      if (!supportDestinationChatId(app)) {
-        return safeEditOrReply(ctx, supportText(app), { parse_mode: 'HTML', ...supportKeyboard(app) });
-      }
-      repos.users.setSupportMode(ctx.from.id, true);
-      return safeEditOrReply(ctx, 'Напиши следующим сообщением, что случилось. Я передам это разработчику.', { ...supportKeyboard(app) });
-    }
     return app.renderers.support(ctx);
-  });
-
-  bot.on('text', async (ctx, next) => {
-    if (!ctx.from || ctx.from.is_bot) return next();
-    const destinationChatId = supportDestinationChatId(app);
-
-    if (destinationChatId && String(ctx.chat?.id) === String(destinationChatId) && ctx.message?.reply_to_message) {
-      const ticket = repos.support.findBySupportReply(destinationChatId, ctx.message.reply_to_message.message_id);
-      if (!ticket) return next();
-      try {
-        await ctx.telegram.sendMessage(ticket.telegramId, `Ответ поддержки:\n\n${ctx.message.text}`);
-        repos.support.close(ticket.id);
-        return safeReply(ctx, `Ответ отправлен пользователю ${ticket.telegramId}.`);
-      } catch (error) {
-        app.logger.warn('support reply failed:', error.message);
-        return safeReply(ctx, 'Не удалось отправить ответ пользователю.');
-      }
-    }
-
-    const user = repos.users.getByTelegramId(ctx.from.id);
-    if (!user?.supportMode) return next();
-    repos.users.setSupportMode(ctx.from.id, false);
-
-    const lastTicketAt = supportCooldown.get(ctx.from.id) || 0;
-    const leftMs = SUPPORT_COOLDOWN_MS - (Date.now() - lastTicketAt);
-    if (leftMs > 0) {
-      return safeReply(ctx, `Поддержка приняла прошлое обращение недавно. Подожди ${Math.ceil(leftMs / 60000)} мин.`);
-    }
-
-    if (!destinationChatId) {
-      return safeReply(ctx, 'Поддержка пока не настроена.');
-    }
-
-    const ticket = repos.support.createTicket(ctx.from, ctx.chat?.id, ctx.message.text);
-    supportCooldown.set(ctx.from.id, Date.now());
-    const text = [
-      `<b>Новое обращение #${ticket.id}</b>`,
-      `Пользователь: ${escapeHtml(displayName(ctx.from))}`,
-      `ID: <code>${ctx.from.id}</code>`,
-      ctx.chat?.id ? `Контекст чата: <code>${ctx.chat.id}</code>` : null,
-      '',
-      escapeHtml(ctx.message.text),
-      '',
-      'Ответь реплаем на это сообщение, чтобы отправить ответ пользователю.',
-    ].filter(Boolean).join('\n');
-
-    try {
-      const sent = await ctx.telegram.sendMessage(destinationChatId, text, { parse_mode: 'HTML' });
-      repos.support.bindForwardedMessage(ticket.id, destinationChatId, sent.message_id);
-      return safeReply(ctx, `Обращение #${ticket.id} отправлено. Ответ придёт сюда.`);
-    } catch (error) {
-      app.logger.warn('support forward failed:', error.message);
-      return safeReply(ctx, 'Не удалось отправить обращение. Попробуй позже.');
-    }
   });
 }
 
