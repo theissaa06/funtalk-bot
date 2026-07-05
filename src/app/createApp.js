@@ -8,6 +8,7 @@ const { EventBus } = require('./eventBus');
 const { CallbackRouter } = require('./callbackRouter');
 const { createContextMiddleware } = require('./context');
 const { ShopBridge } = require('./services/shopBridge');
+const { createSupportInboxBot } = require('./supportInboxBot');
 
 const { registerActivity } = require('./modules/activity');
 const { registerAchievements } = require('./modules/achievements');
@@ -89,6 +90,7 @@ function createApp(options = {}) {
     renderers: {},
   };
   app.shopBridge = new ShopBridge(repos, eventBus);
+  app.supportInboxBot = createSupportInboxBot(app);
 
   bot.use(createContextMiddleware(app));
   bot.use(callbackRouter.middleware());
@@ -117,6 +119,10 @@ function createApp(options = {}) {
   app.launch = async function launch() {
     await bot.launch({ dropPendingUpdates: true });
     logger.info('FunTalk bot launched');
+    if (app.supportInboxBot) {
+      await app.supportInboxBot.launch({ dropPendingUpdates: true });
+      logger.info('Support inbox bot launched');
+    }
     try {
       await registerCommands(bot);
       logger.info('Telegram commands registered');
@@ -127,6 +133,7 @@ function createApp(options = {}) {
 
   app.stop = function stop(reason = 'SIGTERM') {
     bot.stop(reason);
+    if (app.supportInboxBot) app.supportInboxBot.stop(reason);
   };
 
   return app;

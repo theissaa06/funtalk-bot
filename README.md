@@ -31,10 +31,23 @@ AI_MODEL=gpt-4o-mini
 CLAUDE_API_KEY=...
 CLAUDE_MODEL=claude-3-5-sonnet-20241022
 SUPPORT_CHAT_ID=...
+SUPPORT_INBOX_BOT_TOKEN=...
 YTDLP_PATH=yt-dlp
 ```
 
 Для Gemini достаточно заполнить `GEMINI_API_KEY`. Для скачивания TikTok/YouTube на сервере должен быть доступен `yt-dlp` или путь к нему в `YTDLP_PATH`.
+
+## Отдельный support-бот
+
+Если нужен отдельный бот-приёмная для сообщений пользователей:
+
+1. Открой `@BotFather`.
+2. Выполни `/newbot`.
+3. Задай имя и username support-бота.
+4. Скопируй токен.
+5. Добавь токен в Railway Variables как `SUPPORT_INBOX_BOT_TOKEN`.
+
+Пользователь пишет этому support-боту, бот пересылает обращение владельцу (`OWNER_ID`) или в `SUPPORT_CHAT_ID`. Владелец отвечает реплаем на обращение, и ответ уходит пользователю.
 
 ## Запуск
 
