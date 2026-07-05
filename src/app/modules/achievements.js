@@ -172,6 +172,35 @@ async function handleAchievementEvent(app, eventName, payload = {}) {
   const telegramId = payload.telegramId || payload.fromTelegramId || payload.toTelegramId;
   if (!telegramId) return;
 
+  // При первом событии chat.message проверяем: если у пользователя в moderation store
+  // уже есть messageCount > 0, но achievementStats.messages_total = 0 — значит это
+  // старый пользователь после деплоя Railway (economy_store.json был сброшен).
+  // Тихо восстанавливаем stats и закрываем все уже достигнутые ачивки без уведомления.
+  if (eventName === 'chat.message') {
+    const chatId = payload.chatId;
+    const member = chatId ? app.repos.moderation.getMember(chatId, telegramId) : null;
+    const existingMsgCount = Number(member?.messageCount || 0);
+    const currentStatCount = app.repos.economy.getAchievementStat(telegramId, 'messages_total');
+
+    if (existingMsgCount > 1 && currentStatCount <= 1) {
+      // Пользователь старый — восстанавливаем счётчик
+      const gap = existingMsgCount - currentStatCount;
+      if (gap > 0) {
+        app.repos.economy.incrementAchievementStat(telegramId, 'messages_total', gap);
+      }
+      // Тихо закрываем все уже достигнутые ачивки
+      const restoredStats = app.repos.economy.getUser(telegramId)?.achievementStats || {};
+      for (const ach of ACHIEVEMENTS) {
+        if (app.repos.economy.hasAchievement(telegramId, ach.id)) continue;
+        if (ach.isMet({ payload, stats: restoredStats, app })) {
+          app.repos.economy.grantAchievement(telegramId, ach.id);
+          // Без уведомления и без монет
+        }
+      }
+      return; // не выдаём уведомлений в этом вызове
+    }
+  }
+
   const candidates = ACHIEVEMENTS.filter(item => item.event === eventName);
   const statKeys = [...new Set(candidates.map(item => item.statKey).filter(Boolean))];
   for (const statKey of statKeys) {

@@ -7,15 +7,17 @@ async function removeReplyKeyboard(ctx, options = {}) {
   if (!force && ctx.app.repos.ui.isReplyKeyboardClean(chatId, telegramId)) return;
 
   try {
-    const sent = await ctx.reply('Обновляю меню...', {
+    // Отправляем невидимое сообщение с удалением клавиатуры (без текста-заглушки)
+    const sent = await ctx.reply('\u200b', {
       reply_markup: { remove_keyboard: true },
       disable_notification: true,
     });
     ctx.app.repos.ui.markReplyKeyboardClean(chatId, telegramId);
 
+    // Удаляем сразу
     setTimeout(() => {
       ctx.telegram.deleteMessage(chatId, sent.message_id).catch(() => {});
-    }, 1500).unref?.();
+    }, 300).unref?.();
   } catch (error) {
     ctx.app?.logger?.warn('reply keyboard cleanup failed:', error.message);
   }
@@ -25,8 +27,12 @@ function registerUiCleanup(app) {
   app.bot.use(async (ctx, next) => {
     if (ctx.message && ctx.chat && ctx.from && !ctx.from.is_bot) {
       const text = ctx.message.text || '';
-      const force = /^\/(start|menu|help|profile|shop|games|ai)(@\w+)?(?:\s|$)/i.test(text);
-      await removeReplyKeyboard(ctx, { force });
+      // Убираем клавиатуру при любой команде, а не только при определённых
+      const isCommand = /^\/\w/.test(text);
+      const force = /^\/(start|menu|help|profile|shop|games|ai|buttons)(@\w+)?(?:\s|$)/i.test(text);
+      if (isCommand) {
+        await removeReplyKeyboard(ctx, { force: force || false });
+      }
     }
     return next();
   });

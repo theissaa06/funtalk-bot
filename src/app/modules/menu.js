@@ -184,10 +184,12 @@ function registerMenu(app) {
   const { bot, callbackRouter } = app;
 
   bot.start(async ctx => {
+    await removeReplyKeyboard(ctx, { force: true });
     await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard(app) });
   });
 
   bot.command(['menu', 'help'], async ctx => {
+    await removeReplyKeyboard(ctx, { force: true });
     await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard(app) });
   });
 
