@@ -4,17 +4,25 @@ const { escapeHtml } = require('../format');
 
 function supportText(app) {
   if (!app.config.supportInboxBotUsername) {
-    return '<b>Поддержка</b>\n\nSupport-бот пока не настроен. Добавь SUPPORT_INBOX_BOT_USERNAME и SUPPORT_INBOX_BOT_TOKEN.';
+    return '<b>Поддержка FunTalk</b>\n\nПоддержка временно недоступна. Попробуй открыть этот раздел чуть позже.';
   }
-  return `<b>Поддержка</b>\n\nВсе обращения принимаются только в отдельном support-боте: @${app.config.supportInboxBotUsername}.`;
+  return [
+    '<b>Поддержка FunTalk</b>',
+    '',
+    'Если что-то сломалось, не работает кнопка, пропали монеты или нужна помощь с ботом — напиши обращение в поддержку.',
+    '',
+    'Мы увидим сообщение отдельно от общего чата и ответим там же, где ты оставил заявку.',
+  ].join('\n');
 }
 
 function supportKeyboard(app) {
   const rows = [];
+  const actions = [];
   if (app.config.supportInboxBotUsername) {
-    rows.push([Markup.button.url('Открыть support-бота', `https://t.me/${app.config.supportInboxBotUsername}`)]);
+    actions.push(Markup.button.url('Обращения', `https://t.me/${app.config.supportInboxBotUsername}`));
   }
-  rows.push([Markup.button.callback('Мои обращения', 'support:mine')]);
+  actions.push(Markup.button.callback('Мои обращения', 'support:mine'));
+  rows.push(actions);
   rows.push([Markup.button.callback('Меню', 'menu:home')]);
   return Markup.inlineKeyboard(rows);
 }

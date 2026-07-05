@@ -56,9 +56,9 @@ const CATEGORIES = {
   support: {
     title: 'Поддержка',
     lines: [
-      '/support — отправить обращение разработчику',
-      '/mysupport — последние обращения',
-      'Разработчик отвечает реплаем в support-чате, бот доставляет ответ пользователю.',
+      'Обращения — написать в поддержку.',
+      'Мои обращения — посмотреть последние заявки и ответы.',
+      'Все сообщения поддержки идут отдельно от общего чата.',
     ],
   },
   ai: {
@@ -128,11 +128,18 @@ function categoryText(key) {
 }
 
 function categoryKeyboard(key, app) {
+  const supportInboxUsername = String(app?.config?.supportInboxBotUsername || '').replace(/^@/, '');
+  const supportDirect = [
+    supportInboxUsername
+      ? Markup.button.url('Обращения', `https://t.me/${supportInboxUsername}`)
+      : Markup.button.callback('Обращения', 'menu:support'),
+    Markup.button.callback('Мои обращения', 'support:mine'),
+  ];
   const direct = {
     shop: [Markup.button.callback('Открыть магазин', 'shop:page:0')],
     games: [Markup.button.callback('Открыть игры', 'games:main')],
     settings: [Markup.button.callback('Открыть настройки', 'settings:panel')],
-    support: [Markup.button.callback('Написать в поддержку', 'support:start')],
+    support: supportDirect,
     ai: [Markup.button.callback('Открыть ИИ', 'ai:main')],
     downloader: [Markup.button.callback('Жду ссылку', 'downloader:wait')],
     economy: [Markup.button.callback('Профиль', 'profile:main'), Markup.button.callback('Ачивки', 'achievements:main')],
