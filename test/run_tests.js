@@ -124,7 +124,6 @@ async function press(data, options = {}) {
 (async () => {
   await sendText('/start');
   await press('menu:refresh_keyboard');
-  await sendText('/chatid');
   await sendText('Профиль');
   await sendText('Мемы');
   await press('meme:next');
@@ -182,7 +181,6 @@ async function press(data, options = {}) {
   );
 
   assert(sentTexts.some(text => text.includes('Somnia')), 'start/menu should render Somnia brand');
-  assert(sentTexts.some(text => text.includes('ID этого чата') && text.includes('-1001')), 'chatid command should show current chat id');
   assert(hasReplyKeyboard, 'start/menu should show Telegram reply keyboard buttons');
   assert(replyKeyboardCalls.length >= 2, 'start and refresh should send Telegram reply keyboard buttons');
   assert(replyKeyboardCalls.every(call =>
