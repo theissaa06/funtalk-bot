@@ -123,6 +123,7 @@ async function press(data, options = {}) {
 
 (async () => {
   await sendText('/start');
+  await sendText('Профиль');
   await sendText('/daily');
   await sendText('/coins');
   await sendText('/shop');
@@ -139,8 +140,15 @@ async function press(data, options = {}) {
   const sentTexts = calls
     .filter(call => call.method === 'sendMessage')
     .map(call => String(call.payload.text || ''));
+  const hasReplyKeyboard = calls.some(call =>
+    call.method === 'sendMessage' &&
+    Array.isArray(call.payload.reply_markup?.keyboard) &&
+    call.payload.reply_markup.keyboard.flat().includes('Профиль')
+  );
 
   assert(sentTexts.some(text => text.includes('FunTalk')), 'start/menu should render');
+  assert(hasReplyKeyboard, 'start/menu should show Telegram reply keyboard buttons');
+  assert(sentTexts.some(text => text.includes('Профиль')), 'reply keyboard profile button should work');
   assert(sentTexts.some(text => text.includes('Ежедневный бонус')), 'daily should work');
   assert(sentTexts.some(text => text.includes('Баланс')), 'coins/profile economy should work');
   assert(sentTexts.some(text => text.includes('Магазин')), 'shop should render');

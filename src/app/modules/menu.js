@@ -2,7 +2,6 @@ const { Markup } = require('telegraf');
 const { safeEditOrReply, safeReply } = require('../safeTelegram');
 const { escapeHtml } = require('../format');
 const { botInviteUrl } = require('../botLinks');
-const { removeReplyKeyboard } = require('./uiCleanup');
 
 const CATEGORIES = {
   moderation: {
@@ -103,13 +102,39 @@ function mainKeyboard(app) {
   ]);
 }
 
+const REPLY_MENU = {
+  profile: 'Профиль',
+  shop: 'Магазин',
+  inventory: 'Инвентарь',
+  achievements: 'Ачивки',
+  leaderboard: 'Топ',
+  games: 'Игры',
+  downloader: 'Скачать',
+  ai: 'ИИ',
+  settings: 'Настройки',
+  support: 'Поддержка',
+  commands: 'Команды',
+  addToChat: 'Добавить в чат',
+  hide: 'Скрыть кнопки',
+};
+
+function replyMenuKeyboard() {
+  return Markup.keyboard([
+    [REPLY_MENU.profile, REPLY_MENU.shop, REPLY_MENU.inventory],
+    [REPLY_MENU.achievements, REPLY_MENU.leaderboard, REPLY_MENU.games],
+    [REPLY_MENU.downloader, REPLY_MENU.ai, REPLY_MENU.support],
+    [REPLY_MENU.settings, REPLY_MENU.commands],
+    [REPLY_MENU.addToChat, REPLY_MENU.hide],
+  ]).resize();
+}
+
 function menuText() {
   return [
     '<b>FunTalk</b>',
     '',
-    'Новое меню: быстрые действия сверху, остальные функции внутри разделов.',
+    'Меню обновлено: основные разделы доступны кнопками возле поля ввода.',
     '',
-    'Старые нижние Telegram-кнопки автоматически убираются. Пользуйся кнопками под этим сообщением.',
+    'Inline-кнопки под сообщениями тоже остаются: они нужны для магазина, игр, настроек и быстрых действий.',
   ].join('\n');
 }
 
@@ -184,18 +209,50 @@ function registerMenu(app) {
   const { bot, callbackRouter } = app;
 
   bot.start(async ctx => {
-    await removeReplyKeyboard(ctx, { force: true });
-    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard(app) });
+    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...replyMenuKeyboard() });
+    await safeReply(ctx, 'Быстрое inline-меню:', { parse_mode: 'HTML', ...mainKeyboard(app) });
   });
 
   bot.command(['menu', 'help'], async ctx => {
-    await removeReplyKeyboard(ctx, { force: true });
-    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard(app) });
+    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...replyMenuKeyboard() });
+    await safeReply(ctx, 'Быстрое inline-меню:', { parse_mode: 'HTML', ...mainKeyboard(app) });
   });
 
-  bot.command(['buttons', 'newmenu'], async ctx => {
-    await removeReplyKeyboard(ctx, { force: true });
-    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard(app) });
+  bot.command(['buttons', 'newmenu', 'keyboard'], async ctx => {
+    await safeReply(ctx, 'Кнопки включены. Они будут открываться возле поля ввода.', replyMenuKeyboard());
+  });
+
+  bot.command(['hidebuttons', 'oldbuttons'], async ctx => {
+    await safeReply(ctx, 'Кнопки скрыты. Вернуть их можно командой /buttons.', {
+      reply_markup: { remove_keyboard: true },
+    });
+  });
+
+  bot.hears(REPLY_MENU.profile, async ctx => app.renderers.profile(ctx));
+  bot.hears(REPLY_MENU.shop, async ctx => app.renderers.shop(ctx, 0));
+  bot.hears(REPLY_MENU.inventory, async ctx => {
+    if (app.renderers.inventory) return app.renderers.inventory(ctx);
+    return safeReply(ctx, 'Инвентарь открывается командой /inventory.');
+  });
+  bot.hears(REPLY_MENU.achievements, async ctx => app.renderers.achievements(ctx));
+  bot.hears(REPLY_MENU.leaderboard, async ctx => app.renderers.leaderboard(ctx));
+  bot.hears(REPLY_MENU.games, async ctx => app.renderers.games(ctx));
+  bot.hears(REPLY_MENU.downloader, async ctx => app.renderers.downloader(ctx));
+  bot.hears(REPLY_MENU.ai, async ctx => app.renderers.ai(ctx));
+  bot.hears(REPLY_MENU.settings, async ctx => app.renderers.settings(ctx));
+  bot.hears(REPLY_MENU.support, async ctx => app.renderers.support(ctx));
+  bot.hears(REPLY_MENU.commands, async ctx => {
+    await safeReply(ctx, commandsText(), { parse_mode: 'HTML', ...commandsKeyboard() });
+  });
+  bot.hears(REPLY_MENU.addToChat, async ctx => {
+    await safeReply(ctx, 'Добавить бота в чат можно по кнопке ниже.', Markup.inlineKeyboard([
+      [Markup.button.url('Добавить в свой чат', botInviteUrl(app))],
+    ]));
+  });
+  bot.hears(REPLY_MENU.hide, async ctx => {
+    await safeReply(ctx, 'Кнопки скрыты. Вернуть их можно командой /buttons.', {
+      reply_markup: { remove_keyboard: true },
+    });
   });
 
   callbackRouter.on('menu', async (ctx, route) => {
@@ -225,4 +282,6 @@ function registerMenu(app) {
 module.exports = {
   registerMenu,
   mainKeyboard,
+  replyMenuKeyboard,
+  REPLY_MENU,
 };

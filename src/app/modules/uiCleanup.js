@@ -25,15 +25,6 @@ async function removeReplyKeyboard(ctx, options = {}) {
 
 function registerUiCleanup(app) {
   app.bot.use(async (ctx, next) => {
-    if (ctx.message && ctx.chat && ctx.from && !ctx.from.is_bot) {
-      const text = ctx.message.text || '';
-      // Убираем клавиатуру при любой команде, а не только при определённых
-      const isCommand = /^\/\w/.test(text);
-      const force = /^\/(start|menu|help|profile|shop|games|ai|buttons)(@\w+)?(?:\s|$)/i.test(text);
-      if (isCommand) {
-        await removeReplyKeyboard(ctx, { force: force || false });
-      }
-    }
     return next();
   });
 }

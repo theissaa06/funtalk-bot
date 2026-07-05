@@ -82,6 +82,10 @@ function registerShop(app) {
     await safeEditOrReply(ctx, shopText(app, ctx, page), { parse_mode: 'HTML', ...shopKeyboard(page) });
   };
 
+  app.renderers.inventory = async ctx => {
+    await safeEditOrReply(ctx, inventoryText(app, ctx.from.id), { parse_mode: 'HTML', ...inventoryKeyboard(app, ctx.from.id) });
+  };
+
   bot.command('shop', async ctx => {
     await safeReply(ctx, shopText(app, ctx, 0), { parse_mode: 'HTML', ...shopKeyboard(0) });
   });

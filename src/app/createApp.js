@@ -85,7 +85,8 @@ function registerCommands(bot) {
   return bot.telegram.setMyCommands([
     { command: 'start', description: 'Главное меню' },
     { command: 'menu', description: 'Открыть меню' },
-    { command: 'buttons', description: 'Убрать старые кнопки' },
+    { command: 'buttons', description: 'Показать кнопки меню' },
+    { command: 'hidebuttons', description: 'Скрыть кнопки меню' },
     { command: 'profile', description: 'Мой профиль' },
     { command: 'coins', description: 'Баланс FunMoney' },
     { command: 'daily', description: 'Ежедневный бонус' },
