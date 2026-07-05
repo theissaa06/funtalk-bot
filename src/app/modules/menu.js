@@ -108,6 +108,9 @@ function mainKeyboard(app) {
       Markup.button.callback('Поддержка', 'menu:support'),
     ],
     [
+      Markup.button.callback('Обновить нижние кнопки', 'menu:refresh_keyboard'),
+    ],
+    [
       Markup.button.url('Добавить в свой чат', botInviteUrl(app)),
     ],
   ]);
@@ -235,6 +238,10 @@ function commandsText(app) {
   return `<b>Команды ${escapeHtml(brandName(app))}</b>\n\nВыбери категорию. Owner-команды выдачи монет не показываются в общем меню.`;
 }
 
+function replyMenuRefreshText() {
+  return 'Нижние кнопки обновлены. В клавиатуре возле поля ввода есть «Мемы».';
+}
+
 function registerMenu(app) {
   const { bot, callbackRouter } = app;
 
@@ -249,7 +256,7 @@ function registerMenu(app) {
   });
 
   bot.command(['buttons', 'newmenu', 'keyboard'], async ctx => {
-    await safeReply(ctx, 'Кнопки включены. Они будут открываться возле поля ввода.', replyMenuKeyboard());
+    await safeReply(ctx, replyMenuRefreshText(), replyMenuKeyboard());
   });
 
   bot.command(['hidebuttons', 'oldbuttons'], async ctx => {
@@ -289,6 +296,9 @@ function registerMenu(app) {
   callbackRouter.on('menu', async (ctx, route) => {
     if (route.action === 'home') {
       return safeEditOrReply(ctx, menuText(app), { parse_mode: 'HTML', ...mainKeyboard(app) });
+    }
+    if (route.action === 'refresh_keyboard') {
+      return safeReply(ctx, replyMenuRefreshText(), replyMenuKeyboard());
     }
     if (route.action === 'commands') {
       return safeEditOrReply(ctx, commandsText(app), { parse_mode: 'HTML', ...commandsKeyboard() });

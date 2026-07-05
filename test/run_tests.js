@@ -123,6 +123,7 @@ async function press(data, options = {}) {
 
 (async () => {
   await sendText('/start');
+  await press('menu:refresh_keyboard');
   await sendText('Профиль');
   await sendText('Мемы');
   await press('meme:next');
@@ -169,14 +170,18 @@ async function press(data, options = {}) {
     Array.isArray(call.payload.reply_markup?.keyboard) &&
     call.payload.reply_markup.keyboard.flat().includes('Профиль')
   );
+  const replyKeyboardCalls = calls.filter(call =>
+    call.method === 'sendMessage' &&
+    Array.isArray(call.payload.reply_markup?.keyboard)
+  );
 
   assert(sentTexts.some(text => text.includes('Somnia')), 'start/menu should render Somnia brand');
   assert(hasReplyKeyboard, 'start/menu should show Telegram reply keyboard buttons');
-  assert(calls.some(call =>
-    call.method === 'sendMessage' &&
-    Array.isArray(call.payload.reply_markup?.keyboard) &&
+  assert(replyKeyboardCalls.length >= 2, 'start and refresh should send Telegram reply keyboard buttons');
+  assert(replyKeyboardCalls.every(call =>
     call.payload.reply_markup.keyboard.flat().includes('Мемы')
-  ), 'reply keyboard should include Memes button');
+  ), 'every reply keyboard should include Memes button');
+  assert(sentTexts.some(text => text.includes('Нижние кнопки обновлены')), 'inline menu should refresh Telegram reply keyboard');
   assert(sentTexts.some(text => text.includes('Профиль')), 'reply keyboard profile button should work');
   assert(sentTexts.some(text => text.includes('Ежедневный бонус')), 'daily should work');
   assert(sentTexts.some(text => text.includes('Баланс')), 'coins/profile economy should work');
