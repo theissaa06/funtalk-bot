@@ -99,6 +99,7 @@ function registerCommands(bot) {
     { command: 'games', description: 'Мини-игры' },
     { command: 'support', description: 'Обращения' },
     { command: 'mysupport', description: 'Мои обращения' },
+    { command: 'chatid', description: 'Показать ID этого чата' },
     { command: 'ai', description: 'ИИ-помощник' },
     { command: 'dl', description: 'Скачать TikTok/YouTube' },
     { command: 'settings', description: 'Настройки чата' },

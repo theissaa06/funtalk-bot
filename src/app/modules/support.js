@@ -116,6 +116,19 @@ function registerSupport(app) {
     await safeReply(ctx, mySupportText(app, ctx.from.id), { parse_mode: 'HTML', ...supportKeyboard(app) });
   });
 
+  bot.command(['chatid', 'id'], async ctx => {
+    const chatId = ctx.chat?.id;
+    const chatType = ctx.chat?.type || 'unknown';
+    await safeReply(ctx, [
+      '<b>ID этого чата</b>',
+      '',
+      `<code>${chatId}</code>`,
+      '',
+      `Тип: <code>${escapeHtml(chatType)}</code>`,
+      'Для Railway переменной SUPPORT_CHAT_ID используй значение выше.',
+    ].join('\n'), { parse_mode: 'HTML' });
+  });
+
   bot.command('cancel', async ctx => {
     const user = app.repos.users.getByTelegramId(ctx.from.id);
     if (!user?.supportMode) return;
