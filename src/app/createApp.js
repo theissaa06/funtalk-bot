@@ -21,6 +21,7 @@ const { registerEconomy } = require('./modules/economy');
 const { registerGames } = require('./modules/games');
 const { registerLeaderboard } = require('./modules/leaderboard');
 const { registerMenu } = require('./modules/menu');
+const { registerMemes } = require('./modules/memes');
 const { registerModeration } = require('./modules/moderation');
 const { registerProfile } = require('./modules/profile');
 const { registerSettings } = require('./modules/settings');
@@ -103,12 +104,16 @@ function registerCommands(bot) {
     { command: 'settings', description: 'Настройки чата' },
     { command: 'warn', description: 'Выдать варн' },
     { command: 'warnings', description: 'Показать варны' },
+    { command: 'unwarn', description: 'Снять последний варн' },
     { command: 'mute', description: 'Замутить участника' },
+    { command: 'tmute', description: 'Временный мут кнопками' },
     { command: 'ban', description: 'Забанить участника' },
+    { command: 'tban', description: 'Временный бан кнопками' },
+    { command: 'slowmode', description: 'Настроить slowmode' },
     { command: 'ping', description: 'Проверить бота' },
     { command: 'id', description: 'Показать ID' },
     { command: 'info', description: 'Информация о чате' },
-    { command: 'meme', description: 'Мемная фраза' },
+    { command: 'meme', description: 'Мем по запросу' },
     { command: 'topic', description: 'Тема для разговора' },
     { command: 'dice', description: 'Кубик' },
   ]);
@@ -164,6 +169,7 @@ function createApp(options = {}) {
   registerEconomy(app);
   registerLeaderboard(app);
   registerGames(app);
+  registerMemes(app);
   registerChatTools(app);
   registerDownloader(app);
   registerSupport(app);

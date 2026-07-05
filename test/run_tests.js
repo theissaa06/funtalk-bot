@@ -89,7 +89,7 @@ async function sendTextWith(targetBot, text, options = {}) {
       text,
       entities: text.startsWith('/') ? [{ offset: 0, length: text.split(/\s+/)[0].length, type: 'bot_command' }] : undefined,
       reply_to_message: options.replyTo ? {
-        message_id: updateId - 1,
+        message_id: options.replyMessageId || updateId - 1,
         date: Math.floor(Date.now() / 1000),
         chat: options.chat || chat(),
         from: options.replyTo,
@@ -124,6 +124,8 @@ async function press(data, options = {}) {
 (async () => {
   await sendText('/start');
   await sendText('Профиль');
+  await sendText('Мемы');
+  await press('meme:next');
   await sendText('/daily');
   await sendText('/coins');
   await sendText('/shop');
@@ -133,12 +135,34 @@ async function press(data, options = {}) {
   const target = from({ id: 77, first_name: 'Target', username: 'target' });
   await sendText('/warn spam', { replyTo: target });
   await sendText('/warnings', { replyTo: target });
+  await sendText('/tmute', { replyTo: target });
+  await press('mod:time:tmute:77:600');
+  await sendText('/unwarn', { replyTo: target });
+
+  const supportUser = from({ id: 55, first_name: 'SupportUser', username: 'support_user' });
+  await press('support:write', { from: supportUser, chat: { id: 55, type: 'private' } });
+  await sendText('Нужна помощь с ботом', { from: supportUser, chat: { id: 55, type: 'private' } });
+  const supportCallIndex = calls.findIndex(call =>
+    call.method === 'sendMessage' &&
+    Number(call.payload.chat_id) === 42 &&
+    String(call.payload.text || '').includes('Новое обращение')
+  );
+  assert(supportCallIndex >= 0, 'support ticket should be forwarded to owner');
+  await sendTextWith(bot, 'Ответ разработчика', {
+    from: from({ id: 42 }),
+    chat: { id: 42, type: 'private' },
+    replyTo: supportUser,
+    replyMessageId: supportCallIndex + 1,
+  });
 
   await sendText('/ai');
   await sendText('Привет, помоги придумать текст');
 
   const sentTexts = calls
     .filter(call => call.method === 'sendMessage')
+    .map(call => String(call.payload.text || ''));
+  const allTexts = calls
+    .filter(call => call.method === 'sendMessage' || call.method === 'editMessageText')
     .map(call => String(call.payload.text || ''));
   const hasReplyKeyboard = calls.some(call =>
     call.method === 'sendMessage' &&
@@ -153,6 +177,10 @@ async function press(data, options = {}) {
   assert(sentTexts.some(text => text.includes('Баланс')), 'coins/profile economy should work');
   assert(sentTexts.some(text => text.includes('Магазин')), 'shop should render');
   assert(sentTexts.some(text => text.includes('Инвентарь')), 'inventory should render');
+  assert(sentTexts.some(text => text.includes('Мем:')), 'meme request should render');
+  assert(sentTexts.some(text => text.includes('Обращение #')), 'support flow should create a ticket');
+  assert(sentTexts.some(text => text.includes('Ответ по обращению')), 'support owner reply should reach user');
+  assert(allTexts.some(text => text.includes('замучен')), 'moderation time picker should apply tmute');
   assert(sentTexts.some(text => text.includes('предупреждение') || text.includes('варнов')), 'moderation warning should work');
   assert(sentTexts.some(text => text.includes('GEMINI_API_KEY')), 'AI should explain missing Gemini key without crashing');
 

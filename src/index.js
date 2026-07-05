@@ -6,6 +6,16 @@ const { safeReply } = require('./app/safeTelegram');
 const app = createApp();
 const { bot } = app;
 
+if (!global.__funtalkProcessErrorHandlersRegistered) {
+  global.__funtalkProcessErrorHandlersRegistered = true;
+  process.on('uncaughtException', error => {
+    app.logger?.error?.('uncaughtException:', error?.stack || error?.message || error);
+  });
+  process.on('unhandledRejection', reason => {
+    app.logger?.error?.('unhandledRejection:', reason?.stack || reason?.message || reason);
+  });
+}
+
 async function launchBotWithRetry(retries = 0) {
   try {
     await app.launch();

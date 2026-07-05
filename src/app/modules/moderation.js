@@ -1,10 +1,18 @@
-const { safeReply } = require('../safeTelegram');
+const { Markup } = require('telegraf');
+const { safeEditOrReply, safeReply } = require('../safeTelegram');
 const { requireChatAdmin, isOwner, isChatAdmin } = require('../access');
 const { displayName, formatDuration, parseArgs } = require('../format');
 const { resolveTarget, stripTargetArgs } = require('../target');
 
 const MAX_WARNINGS = 3;
 const floodMap = new Map();
+const DURATION_PRESETS = [
+  { label: '5м', seconds: 5 * 60 },
+  { label: '10м', seconds: 10 * 60 },
+  { label: '1ч', seconds: 60 * 60 },
+  { label: '1д', seconds: 24 * 60 * 60 },
+  { label: '1н', seconds: 7 * 24 * 60 * 60 },
+];
 
 function parseDuration(input, fallback = 600) {
   const match = String(input || '').match(/^(\d+)([smhd])?$/i);
@@ -40,8 +48,77 @@ function reasonFromArgs(ctx) {
   return args.join(' ').trim() || 'нарушение правил';
 }
 
+function moderationCommand(ctx) {
+  return String(ctx.message?.text || '').match(/^\/([a-z_]+)/i)?.[1]?.toLowerCase() || '';
+}
+
+function durationArg(ctx) {
+  return parseArgs(ctx).find(arg => /^\d+[smhd]?$/i.test(arg));
+}
+
+function durationKeyboard(kind, targetId) {
+  return Markup.inlineKeyboard([
+    DURATION_PRESETS.slice(0, 3).map(item => Markup.button.callback(item.label, `mod:time:${kind}:${targetId}:${item.seconds}`)),
+    DURATION_PRESETS.slice(3).map(item => Markup.button.callback(item.label, `mod:time:${kind}:${targetId}:${item.seconds}`)),
+    [Markup.button.callback('Отмена', 'menu:home')],
+  ]);
+}
+
+function slowmodeKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('0с', 'mod:slowmode:0'),
+      Markup.button.callback('10с', 'mod:slowmode:10'),
+      Markup.button.callback('30с', 'mod:slowmode:30'),
+    ],
+    [
+      Markup.button.callback('1м', 'mod:slowmode:60'),
+      Markup.button.callback('5м', 'mod:slowmode:300'),
+    ],
+    [Markup.button.callback('Меню', 'menu:home')],
+  ]);
+}
+
+function targetFromMember(app, chatId, telegramId) {
+  const member = app.repos.moderation.getMember(chatId, telegramId);
+  return {
+    id: Number(telegramId),
+    username: member?.username || null,
+    first_name: member?.firstName || `ID ${telegramId}`,
+    last_name: member?.lastName || null,
+    is_bot: false,
+  };
+}
+
+async function applyMute(ctx, target, duration) {
+  try {
+    await ctx.telegram.restrictChatMember(ctx.chat.id, target.id, {
+      permissions: { can_send_messages: false },
+      until_date: Math.floor(Date.now() / 1000) + duration,
+    });
+    ctx.app.repos.moderation.markAction(ctx.chat.id, target.id, 'mute', formatDuration(duration), ctx.from.id);
+    return safeEditOrReply(ctx, `${displayName(target)} замучен на ${formatDuration(duration)}.`);
+  } catch (error) {
+    ctx.app.logger.warn('mute failed:', error.message);
+    return safeEditOrReply(ctx, 'Не удалось замутить. Проверь права бота.');
+  }
+}
+
+async function applyTempBan(ctx, target, duration) {
+  try {
+    await ctx.telegram.banChatMember(ctx.chat.id, target.id, {
+      until_date: Math.floor(Date.now() / 1000) + duration,
+    });
+    ctx.app.repos.moderation.markAction(ctx.chat.id, target.id, 'tban', formatDuration(duration), ctx.from.id);
+    return safeEditOrReply(ctx, `${displayName(target)} временно забанен на ${formatDuration(duration)}.`);
+  } catch (error) {
+    ctx.app.logger.warn('temp ban failed:', error.message);
+    return safeEditOrReply(ctx, 'Не удалось временно забанить. Проверь права бота.');
+  }
+}
+
 function registerModeration(app) {
-  const { bot, repos } = app;
+  const { bot, repos, callbackRouter } = app;
 
   bot.command('warn', async ctx => {
     if (ctx.chat?.type === 'private') return;
@@ -74,7 +151,23 @@ function registerModeration(app) {
     if (ctx.chat?.type === 'private') return;
     const target = await resolveTarget(ctx, { allowSelf: true }) || ctx.from;
     const count = repos.moderation.countWarnings(ctx.chat.id, target.id);
-    return safeReply(ctx, `${displayName(target)}: ${count}/${MAX_WARNINGS} варнов.`);
+    const warnings = repos.moderation.listWarnings(ctx.chat.id, target.id, 10);
+    if (!warnings.length) return safeReply(ctx, `${displayName(target)}: 0/${MAX_WARNINGS} варнов.`);
+    const lines = warnings.map(warning => {
+      const date = String(warning.createdAt || '').slice(0, 16);
+      return `${date} — ${warning.reason || 'нарушение правил'}`;
+    });
+    return safeReply(ctx, `<b>${displayName(target)}: ${count}/${MAX_WARNINGS} варнов</b>\n\n${lines.join('\n')}`, { parse_mode: 'HTML' });
+  });
+
+  bot.command('unwarn', async ctx => {
+    if (ctx.chat?.type === 'private') return;
+    if (!(await requireChatAdmin(ctx))) return;
+    const target = await resolveTarget(ctx);
+    if (!target) return safeReply(ctx, 'Ответь на сообщение участника или укажи его ID/username.');
+    const result = repos.moderation.removeWarning(ctx.chat.id, target.id, 1, ctx.from.id);
+    if (!result.removed) return safeReply(ctx, `У ${displayName(target)} нет активных варнов.`);
+    return safeReply(ctx, `Снят последний варн с ${displayName(target)}. Осталось: ${result.warnings}/${MAX_WARNINGS}.`);
   });
 
   bot.command('clearwarns', async ctx => {
@@ -86,7 +179,7 @@ function registerModeration(app) {
     return safeReply(ctx, `Варны ${displayName(target)} сброшены. Снято: ${result.removed}.`);
   });
 
-  bot.command('mute', async ctx => {
+  bot.command(['mute', 'tmute'], async ctx => {
     if (ctx.chat?.type === 'private') return;
     if (!(await requireChatAdmin(ctx))) return;
     const target = await resolveTarget(ctx);
@@ -101,19 +194,25 @@ function registerModeration(app) {
       return safeReply(ctx, `${displayName(target)} защищён анти-мутом. Мут не применён.`);
     }
 
-    const durationArg = parseArgs(ctx).find(arg => /^\d+[smhd]?$/i.test(arg));
-    const duration = parseDuration(durationArg, 600);
-    try {
-      await ctx.telegram.restrictChatMember(ctx.chat.id, target.id, {
-        permissions: { can_send_messages: false },
-        until_date: Math.floor(Date.now() / 1000) + duration,
-      });
-      repos.moderation.markAction(ctx.chat.id, target.id, 'mute', formatDuration(duration), ctx.from.id);
-      return safeReply(ctx, `${displayName(target)} замучен на ${formatDuration(duration)}.`);
-    } catch (error) {
-      app.logger.warn('mute failed:', error.message);
-      return safeReply(ctx, 'Не удалось замутить. Проверь права бота.');
+    const rawDuration = durationArg(ctx);
+    if (!rawDuration && moderationCommand(ctx) === 'tmute') {
+      return safeReply(ctx, `Выбери длительность мута для ${displayName(target)}:`, durationKeyboard('tmute', target.id));
     }
+    return applyMute(ctx, target, parseDuration(rawDuration, 600));
+  });
+
+  bot.command('tban', async ctx => {
+    if (ctx.chat?.type === 'private') return;
+    if (!(await requireChatAdmin(ctx))) return;
+    const target = await resolveTarget(ctx);
+    if (!target) return safeReply(ctx, 'Ответь на сообщение участника или укажи его ID/username.');
+    if (await isProtectedTarget(ctx, target)) return;
+    repos.moderation.upsertMember(ctx.chat.id, target);
+    const rawDuration = durationArg(ctx);
+    if (!rawDuration) {
+      return safeReply(ctx, `Выбери длительность бана для ${displayName(target)}:`, durationKeyboard('tban', target.id));
+    }
+    return applyTempBan(ctx, target, parseDuration(rawDuration, 600));
   });
 
   bot.command('unmute', async ctx => {
@@ -208,6 +307,55 @@ function registerModeration(app) {
     if (!rows.length) return safeReply(ctx, 'Лог модерации пуст.');
     const lines = rows.map(row => `${row.createdAt.slice(0, 16)} · ${row.action} · ${row.telegramId || '-'}${row.reason ? ` · ${row.reason}` : ''}`);
     return safeReply(ctx, `<b>Последние действия</b>\n\n${lines.join('\n')}`, { parse_mode: 'HTML' });
+  });
+
+  bot.command('slowmode', async ctx => {
+    if (ctx.chat?.type === 'private') return;
+    if (!(await requireChatAdmin(ctx))) return;
+    const seconds = Number(parseArgs(ctx)[0]);
+    if (!Number.isInteger(seconds) || seconds < 0 || seconds > 3600) {
+      return safeReply(ctx, 'Выбери задержку slowmode:', slowmodeKeyboard());
+    }
+    try {
+      await ctx.telegram.setChatSlowModeDelay(ctx.chat.id, seconds);
+      repos.moderation.markAction(ctx.chat.id, null, 'slowmode', `${seconds} сек.`, ctx.from.id);
+      return safeReply(ctx, `Slowmode установлен: ${seconds} сек.`);
+    } catch (error) {
+      app.logger.warn('slowmode failed:', error.message);
+      return safeReply(ctx, 'Не удалось изменить slowmode. Проверь права бота.');
+    }
+  });
+
+  callbackRouter.on('mod', async (ctx, route) => {
+    if (ctx.chat?.type === 'private') return;
+    if (!(await requireChatAdmin(ctx))) return;
+    if (route.action === 'time') {
+      const [kind, targetIdRaw, secondsRaw] = route.args;
+      const targetId = Number(targetIdRaw);
+      const seconds = Number(secondsRaw);
+      if (!Number.isInteger(targetId) || !Number.isInteger(seconds) || seconds <= 0) {
+        return safeEditOrReply(ctx, 'Некорректный выбор времени.');
+      }
+      const target = targetFromMember(app, ctx.chat.id, targetId);
+      if (await isProtectedTarget(ctx, target)) return;
+      if (kind === 'tmute') return applyMute(ctx, target, seconds);
+      if (kind === 'tban') return applyTempBan(ctx, target, seconds);
+      return safeEditOrReply(ctx, 'Неизвестное действие модерации.');
+    }
+    if (route.action === 'slowmode') {
+      const seconds = Number(route.args[0]);
+      if (!Number.isInteger(seconds) || seconds < 0 || seconds > 3600) {
+        return safeEditOrReply(ctx, 'Некорректный slowmode.');
+      }
+      try {
+        await ctx.telegram.setChatSlowModeDelay(ctx.chat.id, seconds);
+        repos.moderation.markAction(ctx.chat.id, null, 'slowmode', `${seconds} сек.`, ctx.from.id);
+        return safeEditOrReply(ctx, `Slowmode установлен: ${seconds} сек.`);
+      } catch (error) {
+        app.logger.warn('slowmode failed:', error.message);
+        return safeEditOrReply(ctx, 'Не удалось изменить slowmode. Проверь права бота.');
+      }
+    }
   });
 
   bot.on('message', async (ctx, next) => {

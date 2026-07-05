@@ -925,6 +925,14 @@ class ModerationRepository {
     return this.countWarningsRaw(data, chatId, telegramId);
   }
 
+  listWarnings(chatId, telegramId, limit = 10) {
+    const data = this.store.read();
+    return clone([...data.warnings]
+      .filter(item => item.active && sameId(item.chatId, chatId) && sameId(item.telegramId, telegramId))
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+      .slice(0, limit));
+  }
+
   setShield(chatId, telegramId, shieldType, enabled = true) {
     return this.store.mutate(data => {
       let member = data.members.find(item => sameId(item.chatId, chatId) && sameId(item.telegramId, telegramId));

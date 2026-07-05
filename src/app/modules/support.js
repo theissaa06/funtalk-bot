@@ -3,19 +3,20 @@ const { safeEditOrReply, safeReply } = require('../safeTelegram');
 const { escapeHtml } = require('../format');
 
 function supportText(app) {
-  if (!app.config.supportInboxBotUsername) {
-    return '<b>Поддержка</b>\n\nВыбери действие:';
-  }
-  return '<b>Поддержка</b>\n\nВыбери действие:';
+  const destination = supportDestination(app);
+  const hint = destination
+    ? 'Нажми «Написать обращение», затем отправь одним сообщением вопрос или описание проблемы.'
+    : 'Поддержка пока принимает обращения в историю бота, но SUPPORT_CHAT_ID/OWNER_ID для пересылки не настроен.';
+  return `<b>Поддержка</b>\n\n${hint}`;
 }
 
 function supportKeyboard(app) {
   const rows = [];
-  const actions = [];
+  rows.push([Markup.button.callback('Написать обращение', 'support:write')]);
+  const actions = [Markup.button.callback('Мои обращения', 'support:mine')];
   if (app.config.supportInboxBotUsername) {
-    actions.push(Markup.button.url('Обращения', `https://t.me/${app.config.supportInboxBotUsername}`));
+    actions.push(Markup.button.url('Внешний inbox', `https://t.me/${app.config.supportInboxBotUsername}`));
   }
-  actions.push(Markup.button.callback('Мои обращения', 'support:mine'));
   rows.push(actions);
   rows.push([Markup.button.callback('Меню', 'menu:home')]);
   return Markup.inlineKeyboard(rows);
@@ -29,6 +30,58 @@ function mySupportText(app, telegramId) {
     return `#${ticket.id} · ${status} · ${ticket.createdAt.slice(0, 16)}\n${escapeHtml(ticket.text).slice(0, 180)}`;
   });
   return `<b>Мои обращения</b>\n\n${lines.join('\n\n')}`;
+}
+
+function supportDestination(app) {
+  if (app.config.supportChatId) return app.config.supportChatId;
+  return app.config.ownerIds[0] || null;
+}
+
+async function forwardTicketToSupport(app, ticket) {
+  const destination = supportDestination(app);
+  if (!destination) return null;
+
+  const from = ticket.username ? `@${ticket.username}` : `ID ${ticket.telegramId}`;
+  const text = [
+    `<b>Новое обращение #${ticket.id}</b>`,
+    '',
+    `От: ${escapeHtml(from)}`,
+    `User ID: <code>${ticket.telegramId}</code>`,
+    ticket.sourceChatId ? `Источник: <code>${ticket.sourceChatId}</code>` : null,
+    '',
+    escapeHtml(ticket.text),
+    '',
+    'Ответь реплаем на это сообщение, и бот отправит ответ пользователю.',
+  ].filter(Boolean).join('\n');
+
+  try {
+    const sent = await app.bot.telegram.sendMessage(destination, text, { parse_mode: 'HTML' });
+    app.repos.support.bindForwardedMessage(ticket.id, destination, sent.message_id);
+    return sent;
+  } catch (error) {
+    app.logger.warn('support forward failed:', error.message);
+    return null;
+  }
+}
+
+async function createSupportTicket(ctx, text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) {
+    await safeReply(ctx, 'Сообщение пустое. Напиши вопрос одним текстом или отправь /cancel.');
+    return;
+  }
+  if (trimmed.length > 3000) {
+    await safeReply(ctx, 'Сообщение слишком длинное. Сократи его до 3000 символов и отправь ещё раз.');
+    return;
+  }
+
+  const ticket = ctx.app.repos.support.createTicket(ctx.from, ctx.chat?.id, trimmed);
+  ctx.app.repos.users.setSupportMode(ctx.from.id, false);
+  const forwarded = await forwardTicketToSupport(ctx.app, ticket);
+  const suffix = forwarded
+    ? 'Я передал его разработчику. Ответ придёт сюда.'
+    : 'Я сохранил его, но сейчас не смог переслать разработчику. Он останется в истории обращений.';
+  await safeReply(ctx, `Обращение #${ticket.id} создано. ${suffix}`);
 }
 
 function registerSupport(app) {
@@ -46,7 +99,42 @@ function registerSupport(app) {
     await safeReply(ctx, mySupportText(app, ctx.from.id), { parse_mode: 'HTML', ...supportKeyboard(app) });
   });
 
+  bot.command('cancel', async ctx => {
+    const user = app.repos.users.getByTelegramId(ctx.from.id);
+    if (!user?.supportMode) return;
+    app.repos.users.setSupportMode(ctx.from.id, false);
+    await safeReply(ctx, 'Ок, обращение отменено.');
+  });
+
+  bot.on('text', async (ctx, next) => {
+    const replyMessageId = ctx.message?.reply_to_message?.message_id;
+    if (replyMessageId && app.config.ownerIds.includes(Number(ctx.from?.id))) {
+      const ticket = app.repos.support.findBySupportReply(ctx.chat?.id, replyMessageId);
+      if (ticket) {
+        try {
+          await ctx.telegram.sendMessage(ticket.telegramId, `<b>Ответ по обращению #${ticket.id}</b>\n\n${escapeHtml(ctx.message.text)}`, { parse_mode: 'HTML' });
+          app.repos.support.close(ticket.id);
+          await safeReply(ctx, `Ответ по обращению #${ticket.id} отправлен.`);
+        } catch (error) {
+          app.logger.warn('support reply delivery failed:', error.message);
+          await safeReply(ctx, 'Не удалось доставить ответ пользователю. Проверь, что он запускал бота в личке.');
+        }
+        return;
+      }
+    }
+
+    const text = ctx.message?.text || '';
+    if (text.startsWith('/')) return next();
+    const user = app.repos.users.getByTelegramId(ctx.from.id);
+    if (!user?.supportMode) return next();
+    await createSupportTicket(ctx, text);
+  });
+
   callbackRouter.on('support', async (ctx, route) => {
+    if (route.action === 'write') {
+      app.repos.users.setSupportMode(ctx.from.id, true);
+      return safeEditOrReply(ctx, 'Напиши ваше сообщение одним текстом. Я передам его разработчику.\n\nЧтобы отменить, отправь /cancel.', { parse_mode: 'HTML' });
+    }
     if (route.action === 'mine') {
       return safeEditOrReply(ctx, mySupportText(app, ctx.from.id), { parse_mode: 'HTML', ...supportKeyboard(app) });
     }
@@ -56,4 +144,5 @@ function registerSupport(app) {
 
 module.exports = {
   registerSupport,
+  supportDestination,
 };

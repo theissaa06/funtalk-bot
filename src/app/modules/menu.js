@@ -9,9 +9,12 @@ const CATEGORIES = {
     lines: [
       '/warn — выдать предупреждение',
       '/warnings — посмотреть варны',
+      '/warns — история варнов с датами и причинами',
+      '/unwarn — снять последний варн',
       '/clearwarns — сбросить варны',
-      '/mute, /unmute — муты',
-      '/ban, /unban, /kick — жёсткие действия',
+      '/mute, /tmute, /unmute — муты и выбор времени кнопками',
+      '/ban, /tban, /unban, /kick — жёсткие действия',
+      '/slowmode — задержка сообщений кнопками',
       '/modlog — последние действия',
     ],
   },
@@ -43,6 +46,14 @@ const CATEGORIES = {
       '/casino 50 — слоты',
       '/roulette 50 red — рулетка',
       '/dice — кубик',
+    ],
+  },
+  memes: {
+    title: 'Мемы',
+    lines: [
+      '/meme — случайный мем по запросу',
+      'Кнопка «Ещё мем» присылает следующий вариант без выхода из меню.',
+      'Бот использует локальную базу фраз и не тянет случайный контент из интернета.',
     ],
   },
   settings: {
@@ -82,7 +93,7 @@ function mainKeyboard(app) {
     ],
     [
       Markup.button.callback('Игры', 'menu:games'),
-      Markup.button.callback('ИИ', 'menu:ai'),
+      Markup.button.callback('Мемы', 'menu:memes'),
     ],
     [
       Markup.button.callback('Топы', 'menu:leaderboard'),
@@ -109,6 +120,7 @@ const REPLY_MENU = {
   achievements: 'Ачивки',
   leaderboard: 'Топ',
   games: 'Игры',
+  memes: 'Мемы',
   downloader: 'Скачать',
   ai: 'ИИ',
   settings: 'Настройки',
@@ -122,10 +134,20 @@ function replyMenuKeyboard() {
   return Markup.keyboard([
     [REPLY_MENU.profile, REPLY_MENU.shop, REPLY_MENU.inventory],
     [REPLY_MENU.achievements, REPLY_MENU.leaderboard, REPLY_MENU.games],
-    [REPLY_MENU.downloader, REPLY_MENU.ai, REPLY_MENU.support],
-    [REPLY_MENU.settings, REPLY_MENU.commands],
+    [REPLY_MENU.memes, REPLY_MENU.downloader, REPLY_MENU.ai],
+    [REPLY_MENU.support, REPLY_MENU.settings, REPLY_MENU.commands],
     [REPLY_MENU.addToChat, REPLY_MENU.hide],
   ]).resize();
+}
+
+function startText() {
+  return [
+    '<b>🌙 Где-то между сном и делом просыпается Funtalchik...</b>',
+    '',
+    'Привет! Я здесь, чтобы твой чат жил своей жизнью — без лишней суеты. Слежу за порядком, считаю монетки, выдаю достижения и устраиваю игры, пока вы просто общаетесь и веселитесь.',
+    '',
+    'Загляни в меню — покажу, что умею ✨👇',
+  ].join('\n');
 }
 
 function menuText() {
@@ -151,14 +173,14 @@ function categoryText(key) {
 function categoryKeyboard(key, app) {
   const supportInboxUsername = String(app?.config?.supportInboxBotUsername || '').replace(/^@/, '');
   const supportDirect = [
-    supportInboxUsername
-      ? Markup.button.url('Обращения', `https://t.me/${supportInboxUsername}`)
-      : Markup.button.callback('Обращения', 'menu:support'),
+    Markup.button.callback('Написать обращение', 'support:write'),
     Markup.button.callback('Мои обращения', 'support:mine'),
   ];
+  if (supportInboxUsername) supportDirect.push(Markup.button.url('Внешний inbox', `https://t.me/${supportInboxUsername}`));
   const direct = {
     shop: [Markup.button.callback('Открыть магазин', 'shop:page:0')],
     games: [Markup.button.callback('Открыть игры', 'games:main')],
+    memes: [Markup.button.callback('Случайный мем', 'meme:next')],
     settings: [Markup.button.callback('Открыть настройки', 'settings:panel')],
     support: supportDirect,
     ai: [Markup.button.callback('Открыть ИИ', 'ai:main')],
@@ -188,11 +210,14 @@ function commandsKeyboard() {
       Markup.button.callback('Игры', 'menu:category:games'),
     ],
     [
+      Markup.button.callback('Мемы', 'menu:category:memes'),
       Markup.button.callback('Настройки', 'menu:category:settings'),
-      Markup.button.callback('Поддержка', 'menu:category:support'),
     ],
     [
+      Markup.button.callback('Поддержка', 'menu:category:support'),
       Markup.button.callback('ИИ', 'menu:category:ai'),
+    ],
+    [
       Markup.button.callback('Скачать', 'menu:category:downloader'),
     ],
     [
@@ -209,7 +234,7 @@ function registerMenu(app) {
   const { bot, callbackRouter } = app;
 
   bot.start(async ctx => {
-    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...replyMenuKeyboard() });
+    await safeReply(ctx, startText(), { parse_mode: 'HTML', ...replyMenuKeyboard() });
     await safeReply(ctx, 'Быстрое inline-меню:', { parse_mode: 'HTML', ...mainKeyboard(app) });
   });
 
@@ -237,6 +262,7 @@ function registerMenu(app) {
   bot.hears(REPLY_MENU.achievements, async ctx => app.renderers.achievements(ctx));
   bot.hears(REPLY_MENU.leaderboard, async ctx => app.renderers.leaderboard(ctx));
   bot.hears(REPLY_MENU.games, async ctx => app.renderers.games(ctx));
+  bot.hears(REPLY_MENU.memes, async ctx => app.renderers.memes(ctx));
   bot.hears(REPLY_MENU.downloader, async ctx => app.renderers.downloader(ctx));
   bot.hears(REPLY_MENU.ai, async ctx => app.renderers.ai(ctx));
   bot.hears(REPLY_MENU.settings, async ctx => app.renderers.settings(ctx));
@@ -271,6 +297,7 @@ function registerMenu(app) {
     if (route.action === 'shop') return app.renderers.shop(ctx, 0);
     if (route.action === 'leaderboard') return app.renderers.leaderboard(ctx);
     if (route.action === 'games') return app.renderers.games(ctx);
+    if (route.action === 'memes') return app.renderers.memes(ctx);
     if (route.action === 'achievements') return app.renderers.achievements(ctx);
     if (route.action === 'settings') return app.renderers.settings(ctx);
     if (route.action === 'support') return app.renderers.support(ctx);
@@ -284,4 +311,5 @@ module.exports = {
   mainKeyboard,
   replyMenuKeyboard,
   REPLY_MENU,
+  startText,
 };
