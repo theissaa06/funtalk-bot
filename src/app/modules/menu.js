@@ -92,7 +92,7 @@ function mainKeyboard() {
     ],
     [
       Markup.button.callback('Админ', 'menu:category:settings'),
-      Markup.button.callback('Скачать', 'menu:category:downloader'),
+      Markup.button.callback('Скачать', 'downloader:main'),
     ],
     [
       Markup.button.callback('Все разделы', 'menu:commands'),
@@ -128,6 +128,7 @@ function categoryKeyboard(key) {
     settings: [Markup.button.callback('Открыть настройки', 'settings:panel')],
     support: [Markup.button.callback('Написать в поддержку', 'support:start')],
     ai: [Markup.button.callback('Открыть ИИ', 'ai:main')],
+    downloader: [Markup.button.callback('Жду ссылку', 'downloader:wait')],
     economy: [Markup.button.callback('Профиль', 'profile:main'), Markup.button.callback('Ачивки', 'achievements:main')],
   }[key];
 
