@@ -8,22 +8,22 @@ const updateDebounce = new Map();
 function activityText(app, ctx) {
   if (!ctx.chat || ctx.chat.type === 'private') return 'Топ активности доступен в группе.';
   const top = app.repos.moderation.topActivity(ctx.chat.id, 10);
-  if (!top.length) return 'Пока нет данных по активности.';
+  if (!top.length) return '<b>Топ активности чата</b>\n\nИсточник: БД\n\nПока нет данных по активности.';
   const lines = top.map((member, index) => {
     const name = member.username ? `@${member.username}` : (member.firstName || `ID ${member.telegramId}`);
     return `${index + 1}. ${name} — ${member.messageCount} сообщений`;
   });
-  return `<b>Топ активности чата</b>\n\n${lines.join('\n')}`;
+  return `<b>Топ активности чата</b>\nИсточник: БД\n\n${lines.join('\n')}`;
 }
 
 function coinsText(app) {
   const top = app.repos.economy.topByCoins(10);
-  if (!top.length) return 'Пока нет данных по монетам.';
+  if (!top.length) return '<b>Топ по FunMoney</b>\n\nИсточник: БД\n\nПока нет данных по монетам.';
   const lines = top.map((user, index) => {
     const name = user.username ? `@${user.username}` : `ID ${user.telegramId}`;
     return `${index + 1}. ${name} — ${formatMoney(user.coins)}`;
   });
-  return `<b>Топ по FunMoney</b>\n\n${lines.join('\n')}`;
+  return `<b>Топ по FunMoney</b>\nИсточник: БД\n\n${lines.join('\n')}`;
 }
 
 function keyboard() {
@@ -32,6 +32,7 @@ function keyboard() {
       Markup.button.callback('Активность', 'leaderboard:activity'),
       Markup.button.callback('Монеты', 'leaderboard:coins'),
     ],
+    [Markup.button.callback('Обновить', 'leaderboard:refresh')],
     [Markup.button.callback('Меню', 'menu:home')],
   ]);
 }

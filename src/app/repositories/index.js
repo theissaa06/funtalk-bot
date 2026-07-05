@@ -22,6 +22,94 @@ function compactUser(user = {}) {
   };
 }
 
+function readJsonFile(filePath) {
+  try {
+    const fullPath = path.resolve(filePath);
+    if (!fs.existsSync(fullPath)) return null;
+    return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function legacyUserFromChatUser(chatId, user = {}) {
+  const telegramId = Number(user.id || user.telegramId || user.telegram_id);
+  if (!telegramId) return null;
+  const warnings = Array.isArray(user.warns)
+    ? user.warns.length
+    : Array.isArray(user.warnings)
+      ? user.warnings.length
+      : Number(user.warnings || 0);
+  return {
+    chatId: Number(chatId),
+    telegramId,
+    username: user.username || null,
+    firstName: user.firstName || user.first_name || null,
+    lastName: user.lastName || user.last_name || null,
+    coins: Number(user.coins ?? user.balance ?? 0),
+    xp: Number(user.xp || 0),
+    level: Number(user.level || 1),
+    inventory: user.inventory,
+    achievements: user.achievements,
+    messageCount: Number(user.messages ?? user.messages_count ?? user.messageCount ?? 0),
+    warnings,
+    status: user.status || 'active',
+    joinedAt: user.joined_at || user.firstSeenAt ? new Date(user.joined_at || user.firstSeenAt).toISOString() : nowIso(),
+    lastActive: user.last_active || user.lastSeenAt ? new Date(user.last_active || user.lastSeenAt).toISOString() : nowIso(),
+  };
+}
+
+function collectLegacyRows(legacyPaths = []) {
+  const chats = [];
+  const users = [];
+
+  for (const legacyPath of legacyPaths) {
+    const data = readJsonFile(legacyPath);
+    if (!data) continue;
+
+    if (data.chats && !Array.isArray(data.chats)) {
+      for (const [chatId, chat] of Object.entries(data.chats)) {
+        chats.push({
+          chatId: Number(chatId),
+          title: chat.title || null,
+          type: chat.type || 'group',
+        });
+        for (const user of Object.values(chat.users || {})) {
+          const row = legacyUserFromChatUser(chatId, user);
+          if (row) users.push(row);
+        }
+      }
+    }
+
+    if (Array.isArray(data.chats)) {
+      for (const chat of data.chats) {
+        if (!chat.chatId && !chat.id) continue;
+        chats.push({
+          chatId: Number(chat.chatId || chat.id),
+          title: chat.title || chat.name || null,
+          type: chat.type || 'group',
+        });
+      }
+    }
+
+    if (Array.isArray(data.users)) {
+      for (const user of data.users) {
+        const chatId = user.chat_id || user.chatId || null;
+        const row = legacyUserFromChatUser(chatId, {
+          ...user,
+          id: user.id || user.telegram_id || user.telegramId,
+          firstName: user.first_name || user.firstName,
+          lastName: user.last_name || user.lastName,
+          messages_count: user.messages_count || user.messageCount,
+        });
+        if (row) users.push(row);
+      }
+    }
+  }
+
+  return { chats, users };
+}
+
 function normalizeInventory(inventory) {
   if (!Array.isArray(inventory)) return [];
   const map = new Map();
@@ -130,6 +218,36 @@ class UsersRepository {
       return user;
     });
   }
+
+  migrateLegacyUsers(legacyUsers = []) {
+    return this.store.mutate(data => {
+      let migrated = 0;
+      for (const legacy of legacyUsers) {
+        if (!legacy.telegramId) continue;
+        let user = data.users.find(item => sameId(item.telegramId, legacy.telegramId));
+        if (!user) {
+          user = {
+            id: nextId(data, 'users'),
+            telegramId: Number(legacy.telegramId),
+            username: legacy.username || null,
+            firstName: legacy.firstName || null,
+            lastName: legacy.lastName || null,
+            isBot: false,
+            supportMode: false,
+            createdAt: nowIso(),
+            updatedAt: nowIso(),
+          };
+          data.users.push(user);
+          migrated += 1;
+        } else {
+          user.username = user.username || legacy.username || null;
+          user.firstName = user.firstName || legacy.firstName || null;
+          user.lastName = user.lastName || legacy.lastName || null;
+        }
+      }
+      return migrated;
+    });
+  }
 }
 
 class UiRepository {
@@ -166,8 +284,9 @@ class UiRepository {
 }
 
 class ChatsRepository {
-  constructor(store) {
+  constructor(store, legacyPaths = []) {
     this.store = store;
+    this.legacyPaths = legacyPaths;
   }
 
   upsertChat(chat) {
@@ -219,6 +338,32 @@ class ChatsRepository {
       chat.settings[key] = value;
       chat.updatedAt = nowIso();
       return chat.settings;
+    });
+  }
+
+  migrateLegacyChats(legacyChats = []) {
+    return this.store.mutate(data => {
+      let migrated = 0;
+      for (const legacy of legacyChats) {
+        if (!legacy.chatId || data.chats.some(item => sameId(item.chatId, legacy.chatId))) continue;
+        data.chats.push({
+          id: nextId(data, 'chats'),
+          chatId: Number(legacy.chatId),
+          type: legacy.type || 'group',
+          title: legacy.title || null,
+          settings: {
+            greetingsEnabled: true,
+            captchaEnabled: false,
+            fridayMemesEnabled: false,
+            autoDownloaderEnabled: false,
+            activityRewardsEnabled: true,
+          },
+          createdAt: nowIso(),
+          updatedAt: nowIso(),
+        });
+        migrated += 1;
+      }
+      return migrated;
     });
   }
 }
@@ -438,6 +583,32 @@ class EconomyRepository {
       .slice(0, limit));
   }
 
+  migrateLegacyUsers(legacyUsers = []) {
+    return this.store.mutate(data => {
+      let migrated = 0;
+      for (const legacy of legacyUsers) {
+        if (!legacy.telegramId) continue;
+        let user = data.users.find(item => sameId(item.telegramId, legacy.telegramId));
+        if (!user) {
+          user = defaultEconomyUser(legacy.telegramId, legacy, legacy);
+          data.users.push(user);
+          migrated += 1;
+        } else {
+          user.username = user.username || legacy.username || null;
+          user.firstName = user.firstName || legacy.firstName || null;
+          user.lastName = user.lastName || legacy.lastName || null;
+          user.inventory = normalizeInventory(user.inventory?.length ? user.inventory : legacy.inventory);
+          user.achievements = normalizeAchievements(user.achievements?.length ? user.achievements : legacy.achievements);
+          user.xp = Math.max(Number(user.xp) || 0, Number(legacy.xp) || 0);
+          user.level = Math.max(Number(user.level) || 1, Number(legacy.level) || 1);
+          if ((Number(user.coins) || 0) === 0 && Number(legacy.coins) > 0) user.coins = Number(legacy.coins);
+          user.updatedAt = nowIso();
+        }
+      }
+      return migrated;
+    });
+  }
+
   readLegacyEconomy(telegramId) {
     for (const legacyPath of this.legacyPaths) {
       try {
@@ -464,8 +635,9 @@ class EconomyRepository {
 }
 
 class ModerationRepository {
-  constructor(store) {
+  constructor(store, legacyPaths = []) {
     this.store = store;
+    this.legacyPaths = legacyPaths;
   }
 
   upsertMember(chatId, user) {
@@ -674,6 +846,46 @@ class ModerationRepository {
       .slice(0, limit));
   }
 
+  migrateLegacyMembers(legacyUsers = []) {
+    return this.store.mutate(data => {
+      let migrated = 0;
+      for (const legacy of legacyUsers) {
+        if (!legacy.chatId || !legacy.telegramId) continue;
+        let member = data.members.find(item => sameId(item.chatId, legacy.chatId) && sameId(item.telegramId, legacy.telegramId));
+        if (!member) {
+          member = {
+            id: nextId(data, 'members'),
+            chatId: Number(legacy.chatId),
+            telegramId: Number(legacy.telegramId),
+            username: legacy.username || null,
+            firstName: legacy.firstName || null,
+            lastName: legacy.lastName || null,
+            messageCount: Number(legacy.messageCount || 0),
+            xp: Number(legacy.xp || 0),
+            level: Number(legacy.level || 1),
+            warnings: Number(legacy.warnings || 0),
+            status: legacy.status || 'active',
+            shields: {},
+            joinedAt: legacy.joinedAt || nowIso(),
+            lastActive: legacy.lastActive || nowIso(),
+          };
+          data.members.push(member);
+          migrated += 1;
+        } else {
+          member.username = member.username || legacy.username || null;
+          member.firstName = member.firstName || legacy.firstName || null;
+          member.lastName = member.lastName || legacy.lastName || null;
+          member.messageCount = Math.max(Number(member.messageCount) || 0, Number(legacy.messageCount) || 0);
+          member.xp = Math.max(Number(member.xp) || 0, Number(legacy.xp) || 0);
+          member.level = Math.max(Number(member.level) || 1, Number(legacy.level) || 1);
+          member.warnings = Math.max(Number(member.warnings) || 0, Number(legacy.warnings) || 0);
+          member.lastActive = nowIso();
+        }
+      }
+      return migrated;
+    });
+  }
+
   setPinnedLeaderboard(chatId, messageId, type = 'activity') {
     return this.store.mutate(data => {
       data.pinnedLeaderboards = data.pinnedLeaderboards || [];
@@ -772,21 +984,30 @@ class SupportRepository {
 }
 
 function createRepositories(stores, config) {
-  return {
+  const legacyPaths = [
+    path.join(config.dataDir, 'database.json'),
+    path.join(config.dataDir, 'bot_data.json'),
+    path.join(config.dataDir, '..', 'database.json'),
+  ];
+  const legacy = config.isTest ? { chats: [], users: [] } : collectLegacyRows(legacyPaths);
+  const repos = {
     ui: new UiRepository(stores.app),
     users: new UsersRepository(stores.app),
-    chats: new ChatsRepository(stores.app),
-    economy: new EconomyRepository(stores.economy, [
-      path.join(config.dataDir, 'database.json'),
-      path.join(config.dataDir, 'bot_data.json'),
-    ]),
-    moderation: new ModerationRepository(stores.moderation),
+    chats: new ChatsRepository(stores.app, legacyPaths),
+    economy: new EconomyRepository(stores.economy, legacyPaths),
+    moderation: new ModerationRepository(stores.moderation, legacyPaths),
     support: new SupportRepository(stores.app),
   };
+  repos.chats.migrateLegacyChats(legacy.chats);
+  repos.users.migrateLegacyUsers(legacy.users);
+  repos.economy.migrateLegacyUsers(legacy.users);
+  repos.moderation.migrateLegacyMembers(legacy.users);
+  return repos;
 }
 
 module.exports = {
   createRepositories,
   normalizeInventory,
   normalizeAchievements,
+  collectLegacyRows,
 };
