@@ -163,6 +163,8 @@ async function press(data, options = {}) {
 
   await sendText('/ai');
   await sendText('Привет, помоги придумать текст');
+  await sendText('/setsupport');
+  await sendText('/supportstatus');
 
   const sentTexts = calls
     .filter(call => call.method === 'sendMessage')
@@ -199,6 +201,8 @@ async function press(data, options = {}) {
   assert(!sentTexts.some(text => text.includes('Обычное сообщение без режима')), 'ordinary messages should not be forwarded to support');
   assert(!sentTexts.some(text => text.includes('Обычный текст после обращения')), 'support mode should turn off after one message');
   assert(sentTexts.some(text => text.includes('Ответ по обращению')), 'support owner reply should reach user');
+  assert(sentTexts.some(text => text.includes('Support-чат сохранён') && text.includes('-1001')), 'owner should set support chat from Telegram');
+  assert(sentTexts.some(text => text.includes('Источник:') && text.includes('stored')), 'support status should prefer stored support chat');
   assert(allTexts.some(text => text.includes('замучен')), 'moderation time picker should apply tmute');
   assert(sentTexts.some(text => text.includes('предупреждение') || text.includes('варнов')), 'moderation warning should work');
   assert(sentTexts.some(text => text.includes('GEMINI_API_KEY')), 'AI should explain missing Gemini key without crashing');

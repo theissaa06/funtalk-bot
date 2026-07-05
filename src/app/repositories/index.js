@@ -32,6 +32,37 @@ function readJsonFile(filePath) {
   }
 }
 
+class AppSettingsRepository {
+  constructor(store) {
+    this.store = store;
+  }
+
+  getSupportChat() {
+    const data = this.store.read();
+    return clone(data.appSettings?.supportChat || null);
+  }
+
+  getSupportChatId() {
+    const supportChat = this.getSupportChat();
+    return supportChat?.chatId ? Number(supportChat.chatId) : null;
+  }
+
+  setSupportChat(chat, configuredByTelegramId = null) {
+    return this.store.mutate(data => {
+      data.appSettings = data.appSettings || {};
+      data.appSettings.supportChat = {
+        chatId: Number(chat.id),
+        type: chat.type || null,
+        title: chat.title || chat.username || null,
+        username: chat.username || null,
+        configuredByTelegramId: configuredByTelegramId ? Number(configuredByTelegramId) : null,
+        updatedAt: nowIso(),
+      };
+      return data.appSettings.supportChat;
+    });
+  }
+}
+
 function legacyUserFromChatUser(chatId, user = {}) {
   const telegramId = Number(user.id || user.telegramId || user.telegram_id);
   if (!telegramId) return null;
@@ -1152,6 +1183,7 @@ function createRepositories(stores, config) {
   ];
   const legacy = config.isTest ? { chats: [], users: [] } : collectLegacyRows(legacyPaths);
   const repos = {
+    settings: new AppSettingsRepository(stores.app),
     ui: new UiRepository(stores.app),
     users: new UsersRepository(stores.app),
     chats: new ChatsRepository(stores.app, legacyPaths),

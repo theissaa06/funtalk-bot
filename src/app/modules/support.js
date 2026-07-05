@@ -1,6 +1,7 @@
 const { Markup } = require('telegraf');
 const { safeEditOrReply, safeReply } = require('../safeTelegram');
 const { escapeHtml } = require('../format');
+const { requireOwner } = require('../access');
 
 const SUPPORT_RATE_LIMIT_COUNT = 3;
 const SUPPORT_RATE_LIMIT_WINDOW_MS = 30 * 60 * 1000;
@@ -36,8 +37,18 @@ function mySupportText(app, telegramId) {
 }
 
 function supportDestination(app) {
+  const storedChatId = app.repos.settings.getSupportChatId();
+  if (storedChatId) return storedChatId;
   if (app.config.supportChatId) return app.config.supportChatId;
   return app.config.ownerIds[0] || null;
+}
+
+function supportDestinationSource(app) {
+  const stored = app.repos.settings.getSupportChat();
+  if (stored?.chatId) return { source: 'stored', chatId: stored.chatId, title: stored.title };
+  if (app.config.supportChatId) return { source: 'env', chatId: app.config.supportChatId, title: null };
+  const ownerId = app.config.ownerIds[0] || null;
+  return ownerId ? { source: 'owner', chatId: ownerId, title: null } : null;
 }
 
 async function forwardTicketToSupport(app, ticket) {
@@ -116,6 +127,40 @@ function registerSupport(app) {
     await safeReply(ctx, mySupportText(app, ctx.from.id), { parse_mode: 'HTML', ...supportKeyboard(app) });
   });
 
+  bot.command('setsupport', async ctx => {
+    if (!(await requireOwner(ctx))) return;
+    if (!ctx.chat || ctx.chat.type === 'private') {
+      await safeReply(ctx, 'Добавь бота в нужную Support-группу и напиши /setsupport там.');
+      return;
+    }
+
+    const saved = app.repos.settings.setSupportChat(ctx.chat, ctx.from.id);
+    await safeReply(ctx, [
+      '<b>Support-чат сохранён</b>',
+      '',
+      `Теперь обращения будут уходить сюда: <code>${saved.chatId}</code>`,
+      saved.title ? `Название: ${escapeHtml(saved.title)}` : null,
+      '',
+      'Railway менять не нужно. Если захочешь сменить чат, напиши /setsupport в новой группе.',
+    ].filter(Boolean).join('\n'), { parse_mode: 'HTML' });
+  });
+
+  bot.command('supportstatus', async ctx => {
+    if (!(await requireOwner(ctx))) return;
+    const destination = supportDestinationSource(app);
+    if (!destination) {
+      await safeReply(ctx, 'Support-чат не настроен.');
+      return;
+    }
+    await safeReply(ctx, [
+      '<b>Текущий Support destination</b>',
+      '',
+      `ID: <code>${destination.chatId}</code>`,
+      destination.title ? `Название: ${escapeHtml(destination.title)}` : null,
+      `Источник: <code>${destination.source}</code>`,
+    ].filter(Boolean).join('\n'), { parse_mode: 'HTML' });
+  });
+
   bot.command('cancel', async ctx => {
     const user = app.repos.users.getByTelegramId(ctx.from.id);
     if (!user?.supportMode) return;
@@ -161,4 +206,5 @@ function registerSupport(app) {
 module.exports = {
   registerSupport,
   supportDestination,
+  supportDestinationSource,
 };
