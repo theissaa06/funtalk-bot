@@ -34,16 +34,17 @@ function createSupportInboxBot(app) {
 
   const inboxBot = new Telegraf(token);
   const destinationChatId = ownerDestination(app);
+  const brandName = app.config.brandName || 'Somnia';
 
   inboxBot.start(async ctx => {
     if (isOwner(app, ctx.from?.id)) {
       return replySafe(ctx, 'Поддержка подключена. Новые обращения будут приходить сюда. Отвечай реплаем на обращение.');
     }
-    return replySafe(ctx, 'Поддержка FunTalk\n\nОпиши обращение одним сообщением.');
+    return replySafe(ctx, `Поддержка ${brandName}\n\nОпиши обращение одним сообщением.`);
   });
 
   inboxBot.command('help', async ctx => {
-    await replySafe(ctx, 'Поддержка FunTalk\n\nНапиши обращение одним сообщением.');
+    await replySafe(ctx, `Поддержка ${brandName}\n\nНапиши обращение одним сообщением.`);
   });
 
   inboxBot.on('message', async ctx => {
@@ -100,14 +101,15 @@ function createSupportInboxBot(app) {
   return inboxBot;
 }
 
-async function registerSupportInboxProfile(inboxBot) {
+async function registerSupportInboxProfile(inboxBot, config = {}) {
+  const brandName = config.brandName || 'Somnia';
   await Promise.all([
     inboxBot.telegram.setMyCommands([
       { command: 'start', description: 'Обращения' },
       { command: 'help', description: 'Поддержка' },
     ]),
-    inboxBot.telegram.setMyDescription('Поддержка FunTalk. Напиши обращение одним сообщением.'),
-    inboxBot.telegram.setMyShortDescription('Поддержка FunTalk.'),
+    inboxBot.telegram.setMyDescription(`Поддержка ${brandName}. Напиши обращение одним сообщением.`),
+    inboxBot.telegram.setMyShortDescription(`Поддержка ${brandName}.`),
   ]);
 }
 

@@ -1,6 +1,6 @@
 const { Markup } = require('telegraf');
 const { safeEditOrReply, safeReply } = require('../safeTelegram');
-const { formatMoney } = require('../format');
+const { escapeHtml, formatMoney } = require('../format');
 
 const RARITY = {
   common: { label: 'обычная', reward: 25 },
@@ -126,7 +126,7 @@ function achievementLines(app, telegramId) {
 function achievementsText(app, telegramId) {
   const earned = app.repos.economy.listAchievements(telegramId).length;
   return [
-    '<b>Ачивки FunTalk</b>',
+    `<b>Ачивки ${escapeHtml(app.config.brandName || 'Somnia')}</b>`,
     `Получено: <b>${earned}/${ACHIEVEMENTS.length}</b>`,
     '',
     ...achievementLines(app, telegramId),

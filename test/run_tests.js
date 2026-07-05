@@ -43,7 +43,7 @@ Telegram.prototype.callApi = async (method, payload) => {
   }
   if (method === 'editMessageText') return true;
   if (method === 'answerCallbackQuery') return true;
-  if (method === 'getMe') return { id: 12345, is_bot: true, username: 'FunTalkTestBot', first_name: 'FunTalk Test' };
+  if (method === 'getMe') return { id: 12345, is_bot: true, username: 'SomniaTestBot', first_name: 'Somnia Test' };
   if (method === 'getChatMember') {
     const userId = Number(payload.user_id);
     return {
@@ -170,8 +170,13 @@ async function press(data, options = {}) {
     call.payload.reply_markup.keyboard.flat().includes('Профиль')
   );
 
-  assert(sentTexts.some(text => text.includes('FunTalk')), 'start/menu should render');
+  assert(sentTexts.some(text => text.includes('Somnia')), 'start/menu should render Somnia brand');
   assert(hasReplyKeyboard, 'start/menu should show Telegram reply keyboard buttons');
+  assert(calls.some(call =>
+    call.method === 'sendMessage' &&
+    Array.isArray(call.payload.reply_markup?.keyboard) &&
+    call.payload.reply_markup.keyboard.flat().includes('Мемы')
+  ), 'reply keyboard should include Memes button');
   assert(sentTexts.some(text => text.includes('Профиль')), 'reply keyboard profile button should work');
   assert(sentTexts.some(text => text.includes('Ежедневный бонус')), 'daily should work');
   assert(sentTexts.some(text => text.includes('Баланс')), 'coins/profile economy should work');

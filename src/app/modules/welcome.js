@@ -1,6 +1,6 @@
 const { Markup } = require('telegraf');
 const { safeReply } = require('../safeTelegram');
-const { displayName, randomInt } = require('../format');
+const { displayName, escapeHtml, randomInt } = require('../format');
 
 const captchaAnswers = new Map();
 
@@ -30,8 +30,9 @@ function registerWelcome(app) {
 
     for (const member of ctx.message.new_chat_members || []) {
       if (member.is_bot && botInfo && member.id === botInfo.id) {
+        const brandName = escapeHtml(app.config.brandName || 'Somnia');
         await safeReply(ctx, [
-          '<b>FunTalk подключён</b>',
+          `<b>${brandName} подключена</b>`,
           '',
           'Я умею модерировать чат, вести экономику, магазин, ачивки, мини-игры, поддержку и ИИ-помощника.',
           'Открой меню кнопкой ниже.',

@@ -5,7 +5,7 @@ const { Telegraf } = require('telegraf');
 const chatId = process.argv[2] || process.env.ANNOUNCE_CHAT_ID;
 
 const text = [
-  '<b>Funtalchik обновляется!</b>',
+  '<b>Somnia обновляется!</b>',
   '',
   'Привет! Спешим поделиться: бот скоро станет намного интереснее. Вот что уже готовится:',
   '',

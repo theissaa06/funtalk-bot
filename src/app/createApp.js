@@ -119,11 +119,16 @@ function registerCommands(bot) {
   ]);
 }
 
-async function registerBotProfile(bot) {
-  await Promise.all([
-    bot.telegram.setMyDescription('FunTalk — бот для чата, обращений и быстрых инструментов.'),
-    bot.telegram.setMyShortDescription('FunTalk: чат, обращения и инструменты.'),
-  ]);
+async function registerBotProfile(bot, config = {}) {
+  const brandName = config.brandName || 'Somnia';
+  const tasks = [
+    bot.telegram.setMyDescription(`${brandName} — бот для чата, модерации, мемов, обращений и быстрых инструментов.`),
+    bot.telegram.setMyShortDescription(`${brandName}: чат, поддержка и инструменты.`),
+  ];
+  if (typeof bot.telegram.setMyName === 'function') {
+    tasks.push(bot.telegram.setMyName(brandName));
+  }
+  await Promise.all(tasks);
 }
 
 function createApp(options = {}) {
@@ -187,17 +192,17 @@ function createApp(options = {}) {
       if (!app.healthServer) app.healthServer = startHealthServer(config, logger, bot.webhookCallback(config.webhookPath));
       const webhookEndpoint = `${config.webhookUrl}${config.webhookPath}`;
       await bot.telegram.setWebhook(webhookEndpoint, { drop_pending_updates: true });
-      logger.info(`FunTalk bot launched in webhook mode at ${config.webhookPath}`);
+      logger.info(`${config.brandName} bot launched in webhook mode at ${config.webhookPath}`);
     } else {
       if (!app.healthServer) app.healthServer = startHealthServer(config, logger);
       await bot.telegram.deleteWebhook({ drop_pending_updates: true });
       await bot.launch({ dropPendingUpdates: true });
-      logger.info('FunTalk bot launched in polling mode');
+      logger.info(`${config.brandName} bot launched in polling mode`);
     }
     if (app.supportInboxBot) {
       await app.supportInboxBot.launch({ dropPendingUpdates: true });
       try {
-        await registerSupportInboxProfile(app.supportInboxBot);
+        await registerSupportInboxProfile(app.supportInboxBot, config);
       } catch (error) {
         logger.warn('failed to register support inbox profile:', error.message);
       }
@@ -205,7 +210,7 @@ function createApp(options = {}) {
     }
     try {
       await registerCommands(bot);
-      await registerBotProfile(bot);
+      await registerBotProfile(bot, config);
       logger.info('Telegram commands registered');
     } catch (error) {
       logger.warn('failed to register commands:', error.message);

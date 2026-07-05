@@ -140,9 +140,14 @@ function replyMenuKeyboard() {
   ]).resize();
 }
 
-function startText() {
+function brandName(app) {
+  return app?.config?.brandName || 'Somnia';
+}
+
+function startText(app) {
+  const name = brandName(app);
   return [
-    '<b>🌙 Где-то между сном и делом просыпается Funtalchik...</b>',
+    `<b>🌙 Где-то между сном и делом просыпается ${escapeHtml(name)}...</b>`,
     '',
     'Привет! Я здесь, чтобы твой чат жил своей жизнью — без лишней суеты. Слежу за порядком, считаю монетки, выдаю достижения и устраиваю игры, пока вы просто общаетесь и веселитесь.',
     '',
@@ -150,9 +155,9 @@ function startText() {
   ].join('\n');
 }
 
-function menuText() {
+function menuText(app) {
   return [
-    '<b>FunTalk</b>',
+    `<b>${escapeHtml(brandName(app))}</b>`,
     '',
     'Меню обновлено: основные разделы доступны кнопками возле поля ввода.',
     '',
@@ -160,9 +165,9 @@ function menuText() {
   ].join('\n');
 }
 
-function categoryText(key) {
+function categoryText(key, app) {
   const category = CATEGORIES[key];
-  if (!category) return menuText();
+  if (!category) return menuText(app);
   return [
     `<b>${escapeHtml(category.title)}</b>`,
     '',
@@ -226,20 +231,20 @@ function commandsKeyboard() {
   ]);
 }
 
-function commandsText() {
-  return '<b>Команды FunTalk</b>\n\nВыбери категорию. Owner-команды выдачи монет не показываются в общем меню.';
+function commandsText(app) {
+  return `<b>Команды ${escapeHtml(brandName(app))}</b>\n\nВыбери категорию. Owner-команды выдачи монет не показываются в общем меню.`;
 }
 
 function registerMenu(app) {
   const { bot, callbackRouter } = app;
 
   bot.start(async ctx => {
-    await safeReply(ctx, startText(), { parse_mode: 'HTML', ...replyMenuKeyboard() });
+    await safeReply(ctx, startText(app), { parse_mode: 'HTML', ...replyMenuKeyboard() });
     await safeReply(ctx, 'Быстрое inline-меню:', { parse_mode: 'HTML', ...mainKeyboard(app) });
   });
 
   bot.command(['menu', 'help'], async ctx => {
-    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...replyMenuKeyboard() });
+    await safeReply(ctx, menuText(app), { parse_mode: 'HTML', ...replyMenuKeyboard() });
     await safeReply(ctx, 'Быстрое inline-меню:', { parse_mode: 'HTML', ...mainKeyboard(app) });
   });
 
@@ -268,7 +273,7 @@ function registerMenu(app) {
   bot.hears(REPLY_MENU.settings, async ctx => app.renderers.settings(ctx));
   bot.hears(REPLY_MENU.support, async ctx => app.renderers.support(ctx));
   bot.hears(REPLY_MENU.commands, async ctx => {
-    await safeReply(ctx, commandsText(), { parse_mode: 'HTML', ...commandsKeyboard() });
+    await safeReply(ctx, commandsText(app), { parse_mode: 'HTML', ...commandsKeyboard() });
   });
   bot.hears(REPLY_MENU.addToChat, async ctx => {
     await safeReply(ctx, 'Добавить бота в чат можно по кнопке ниже.', Markup.inlineKeyboard([
@@ -283,14 +288,14 @@ function registerMenu(app) {
 
   callbackRouter.on('menu', async (ctx, route) => {
     if (route.action === 'home') {
-      return safeEditOrReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard(app) });
+      return safeEditOrReply(ctx, menuText(app), { parse_mode: 'HTML', ...mainKeyboard(app) });
     }
     if (route.action === 'commands') {
-      return safeEditOrReply(ctx, commandsText(), { parse_mode: 'HTML', ...commandsKeyboard() });
+      return safeEditOrReply(ctx, commandsText(app), { parse_mode: 'HTML', ...commandsKeyboard() });
     }
     if (route.action === 'category') {
       const key = route.args[0];
-      const text = key === 'support' ? supportCategoryText() : categoryText(key);
+      const text = key === 'support' ? supportCategoryText() : categoryText(key, app);
       return safeEditOrReply(ctx, text, { parse_mode: 'HTML', ...categoryKeyboard(key, app) });
     }
     if (route.action === 'profile') return app.renderers.profile(ctx);
@@ -302,7 +307,7 @@ function registerMenu(app) {
     if (route.action === 'settings') return app.renderers.settings(ctx);
     if (route.action === 'support') return app.renderers.support(ctx);
     if (route.action === 'ai') return app.renderers.ai(ctx);
-    return safeEditOrReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard(app) });
+    return safeEditOrReply(ctx, menuText(app), { parse_mode: 'HTML', ...mainKeyboard(app) });
   });
 }
 
@@ -312,4 +317,5 @@ module.exports = {
   replyMenuKeyboard,
   REPLY_MENU,
   startText,
+  brandName,
 };

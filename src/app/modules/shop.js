@@ -1,7 +1,7 @@
 const { Markup } = require('telegraf');
 const { SHOP_ITEMS, RARITY_LABELS, getDailyDeal, getShopItem, priceFor } = require('../catalog');
 const { safeEditOrReply, safeReply } = require('../safeTelegram');
-const { formatMoney, parseArgs } = require('../format');
+const { escapeHtml, formatMoney, parseArgs } = require('../format');
 const { resolveTarget } = require('../target');
 
 const PER_PAGE = 5;
@@ -18,7 +18,7 @@ function shopText(app, ctx, page = 0) {
   });
 
   return [
-    `<b>Магазин FunTalk</b> · стр. ${page + 1}/${total}`,
+    `<b>Магазин ${escapeHtml(app.config.brandName || 'Somnia')}</b> · стр. ${page + 1}/${total}`,
     `Баланс: <b>${formatMoney(user.coins)}</b>`,
     '',
     ...lines,

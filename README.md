@@ -1,4 +1,4 @@
-# FulTalchik_Botik v3.0.1
+# Somnia v3.0.1
 
 Обновлённый модульный бот для Telegram-бесед на Node.js + Telegraf.
 

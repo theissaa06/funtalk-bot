@@ -1,7 +1,7 @@
 {
   "name": "fultalchik-botik",
   "version": "3.0.1",
-  "description": "FulTalchik Botik merged update for Telegram groups",
+  "description": "Somnia Telegram bot for groups, moderation, economy, memes, and support",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",

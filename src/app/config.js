@@ -18,6 +18,7 @@ function readConfig(env = process.env) {
     env: env.NODE_ENV || 'development',
     isTest: env.NODE_ENV === 'test' || env.FUNTALK_TEST === '1',
     botToken: env.BOT_TOKEN || '',
+    brandName: env.BOT_DISPLAY_NAME || env.BRAND_NAME || 'Somnia',
     botUsername: env.BOT_USERNAME || 'FunTalchik_Botik',
     ownerIds: parseIdList(env.OWNER_IDS || env.OWNER_ID),
     supportChatId: env.SUPPORT_CHAT_ID ? Number(env.SUPPORT_CHAT_ID) : null,
