@@ -1,3 +1,5 @@
+const { safeReply } = require('./safeTelegram');
+
 function isOwner(config, userId) {
   return config.ownerIds.includes(Number(userId));
 }
@@ -15,14 +17,14 @@ async function isChatAdmin(ctx, userId) {
 
 async function requireOwner(ctx) {
   if (isOwner(ctx.app.config, ctx.from?.id)) return true;
-  await ctx.reply('Команда доступна только разработчику.');
+  await safeReply(ctx, 'Команда доступна только разработчику.');
   return false;
 }
 
 async function requireChatAdmin(ctx) {
   if (isOwner(ctx.app.config, ctx.from?.id)) return true;
   if (await isChatAdmin(ctx, ctx.from?.id)) return true;
-  await ctx.reply('Команда доступна только администраторам чата.');
+  await safeReply(ctx, 'Команда доступна только администраторам чата.');
   return false;
 }
 

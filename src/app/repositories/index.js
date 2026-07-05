@@ -123,21 +123,31 @@ function normalizeInventory(inventory) {
 }
 
 function normalizeAchievements(achievements) {
+  const byId = new Map();
   if (!achievements) return [];
   if (Array.isArray(achievements)) {
-    return achievements
+    for (const item of achievements
       .map(item => (typeof item === 'string' ? { id: item } : item))
       .filter(item => item?.id)
       .map(item => ({
         id: String(item.id),
         grantedAt: item.grantedAt || item.createdAt || nowIso(),
-      }));
+      }))) {
+      const existing = byId.get(item.id);
+      if (!existing || String(item.grantedAt).localeCompare(String(existing.grantedAt)) < 0) {
+        byId.set(item.id, item);
+      }
+    }
+    return [...byId.values()];
   }
   if (typeof achievements === 'object') {
-    return Object.keys(achievements).map(id => ({
-      id,
-      grantedAt: achievements[id]?.grantedAt || achievements[id]?.createdAt || nowIso(),
-    }));
+    for (const id of Object.keys(achievements)) {
+      byId.set(id, {
+        id,
+        grantedAt: achievements[id]?.grantedAt || achievements[id]?.createdAt || nowIso(),
+      });
+    }
+    return [...byId.values()];
   }
   return [];
 }
@@ -374,6 +384,34 @@ class EconomyRepository {
     this.legacyPaths = legacyPaths;
   }
 
+  ensureUserRaw(data, telegramId, seed = {}) {
+    let user = data.users.find(item => sameId(item.telegramId, telegramId));
+    if (!user) {
+      user = defaultEconomyUser(telegramId, seed);
+      data.users.push(user);
+    }
+    user.inventory = normalizeInventory(user.inventory);
+    user.achievements = normalizeAchievements(user.achievements);
+    user.achievementStats = user.achievementStats || {};
+    user.effects = user.effects || {};
+    user.daily = user.daily || { lastClaimAt: null, streak: 0 };
+    return user;
+  }
+
+  pushTransactionRaw(data, telegramId, amount, balanceAfter, meta = {}) {
+    data.transactions.push({
+      id: nextId(data, 'transactions'),
+      telegramId: Number(telegramId),
+      amount: Number(amount) || 0,
+      balanceAfter: Number(balanceAfter) || 0,
+      type: meta.type || 'manual',
+      reason: meta.reason || null,
+      byTelegramId: meta.byTelegramId || null,
+      chatId: meta.chatId || null,
+      createdAt: nowIso(),
+    });
+  }
+
   ensureUser(telegramId, seed = {}) {
     if (!telegramId) return null;
     return this.store.mutate(data => {
@@ -406,24 +444,10 @@ class EconomyRepository {
   addCoins(telegramId, amount, meta = {}) {
     const value = Number(amount) || 0;
     return this.store.mutate(data => {
-      let user = data.users.find(item => sameId(item.telegramId, telegramId));
-      if (!user) {
-        user = defaultEconomyUser(telegramId);
-        data.users.push(user);
-      }
+      const user = this.ensureUserRaw(data, telegramId);
       user.coins = Math.max(0, (Number(user.coins) || 0) + value);
       user.updatedAt = nowIso();
-      data.transactions.push({
-        id: nextId(data, 'transactions'),
-        telegramId: Number(telegramId),
-        amount: value,
-        balanceAfter: user.coins,
-        type: meta.type || 'manual',
-        reason: meta.reason || null,
-        byTelegramId: meta.byTelegramId || null,
-        chatId: meta.chatId || null,
-        createdAt: nowIso(),
-      });
+      this.pushTransactionRaw(data, telegramId, value, user.coins, meta);
       return user;
     });
   }
@@ -458,11 +482,7 @@ class EconomyRepository {
 
   grantAchievement(telegramId, achievementId) {
     return this.store.mutate(data => {
-      let user = data.users.find(item => sameId(item.telegramId, telegramId));
-      if (!user) {
-        user = defaultEconomyUser(telegramId);
-        data.users.push(user);
-      }
+      const user = this.ensureUserRaw(data, telegramId);
       user.achievements = normalizeAchievements(user.achievements);
       if (user.achievements.some(item => item.id === achievementId)) return null;
       const grant = { id: achievementId, grantedAt: nowIso() };
@@ -472,14 +492,134 @@ class EconomyRepository {
     });
   }
 
+  grantAchievementWithReward(telegramId, achievementId, reward = 0, meta = {}) {
+    const rewardValue = Math.max(0, Number(reward) || 0);
+    if (!telegramId || !achievementId) return { ok: false, granted: false, error: 'Invalid achievement grant.' };
+    return this.store.mutate(data => {
+      const user = this.ensureUserRaw(data, telegramId);
+      user.achievements = normalizeAchievements(user.achievements);
+      if (user.achievements.some(item => item.id === achievementId)) {
+        return { ok: true, granted: false, user };
+      }
+
+      const grant = { id: String(achievementId), grantedAt: nowIso() };
+      user.achievements.push(grant);
+      if (rewardValue) {
+        user.coins = Math.max(0, (Number(user.coins) || 0) + rewardValue);
+        this.pushTransactionRaw(data, telegramId, rewardValue, user.coins, {
+          ...meta,
+          type: 'achievement_reward',
+          reason: achievementId,
+        });
+      }
+      user.updatedAt = nowIso();
+      return { ok: true, granted: true, grant, balance: user.coins };
+    });
+  }
+
   transferCoins(fromTelegramId, toTelegramId, amount, meta = {}) {
     const value = Math.max(0, Number(amount) || 0);
     if (!value) return { ok: false, error: 'Сумма должна быть больше нуля.' };
-    const from = this.getUser(fromTelegramId);
-    if ((from?.coins || 0) < value) return { ok: false, error: 'Недостаточно FunMoney.' };
-    this.addCoins(fromTelegramId, -value, { ...meta, type: meta.type || 'transfer_out' });
-    this.addCoins(toTelegramId, value, { ...meta, type: meta.type || 'transfer_in' });
-    return { ok: true };
+    return this.store.mutate(data => {
+      const from = this.ensureUserRaw(data, fromTelegramId);
+      const to = this.ensureUserRaw(data, toTelegramId);
+      if ((Number(from.coins) || 0) < value) return { ok: false, error: 'Недостаточно FunMoney.' };
+      from.coins = Math.max(0, (Number(from.coins) || 0) - value);
+      to.coins = Math.max(0, (Number(to.coins) || 0) + value);
+      from.updatedAt = nowIso();
+      to.updatedAt = nowIso();
+      this.pushTransactionRaw(data, fromTelegramId, -value, from.coins, { ...meta, type: 'transfer_out' });
+      this.pushTransactionRaw(data, toTelegramId, value, to.coins, { ...meta, type: 'transfer_in' });
+      return { ok: true };
+    });
+  }
+
+  settleGame(telegramId, bet, win, meta = {}) {
+    const betValue = Math.max(0, Number(bet) || 0);
+    const winValue = Math.max(0, Number(win) || 0);
+    if (!betValue) return { ok: false, error: 'Ставка должна быть больше нуля.' };
+    return this.store.mutate(data => {
+      const user = this.ensureUserRaw(data, telegramId);
+      if ((Number(user.coins) || 0) < betValue) return { ok: false, error: 'Недостаточно FunMoney.' };
+      const balanceAfterBet = Math.max(0, (Number(user.coins) || 0) - betValue);
+      user.coins = Math.max(0, balanceAfterBet + winValue);
+      user.updatedAt = nowIso();
+      this.pushTransactionRaw(data, telegramId, -betValue, balanceAfterBet, { ...meta, type: 'game_bet' });
+      if (winValue) this.pushTransactionRaw(data, telegramId, winValue, user.coins, { ...meta, type: 'game_win' });
+      return { ok: true, balance: user.coins };
+    });
+  }
+
+  purchaseInventoryItem(telegramId, itemId, price, meta = {}, options = {}) {
+    const value = Math.max(0, Number(price) || 0);
+    if (!itemId || !value) return { ok: false, error: 'Некорректная покупка.' };
+    return this.store.mutate(data => {
+      const user = this.ensureUserRaw(data, telegramId);
+      if ((Number(user.coins) || 0) < value) return { ok: false, error: 'Недостаточно FunMoney.' };
+      if (options.unique && user.inventory.some(item => item.id === itemId && item.qty > 0)) {
+        return { ok: false, error: 'Этот предмет уже есть в инвентаре.' };
+      }
+      user.coins = Math.max(0, (Number(user.coins) || 0) - value);
+      const existing = user.inventory.find(item => item.id === itemId);
+      if (existing) existing.qty += 1;
+      else user.inventory.push({ id: itemId, qty: 1 });
+      user.updatedAt = nowIso();
+      this.pushTransactionRaw(data, telegramId, -value, user.coins, { ...meta, type: 'shop_purchase' });
+      return { ok: true, balance: user.coins, inventory: user.inventory };
+    });
+  }
+
+  sellInventoryItem(telegramId, itemId, refund, meta = {}) {
+    const value = Math.max(0, Number(refund) || 0);
+    if (!itemId || !value) return { ok: false, error: 'Некорректная продажа.' };
+    return this.store.mutate(data => {
+      const user = this.ensureUserRaw(data, telegramId);
+      const existing = user.inventory.find(item => item.id === itemId);
+      if (!existing || existing.qty < 1) return { ok: false, error: 'Этого предмета нет в инвентаре.' };
+      existing.qty -= 1;
+      user.inventory = user.inventory.filter(item => item.qty > 0);
+      user.coins = Math.max(0, (Number(user.coins) || 0) + value);
+      user.updatedAt = nowIso();
+      this.pushTransactionRaw(data, telegramId, value, user.coins, { ...meta, type: 'shop_sellback' });
+      return { ok: true, balance: user.coins };
+    });
+  }
+
+  giftInventoryItem(fromTelegramId, toTelegramId, itemId, options = {}) {
+    if (!itemId) return { ok: false, error: 'Предмет не указан.' };
+    return this.store.mutate(data => {
+      const from = this.ensureUserRaw(data, fromTelegramId);
+      const to = this.ensureUserRaw(data, toTelegramId);
+      const existing = from.inventory.find(item => item.id === itemId);
+      if (!existing || existing.qty < 1) return { ok: false, error: 'Этого предмета нет в инвентаре.' };
+      if (options.unique && to.inventory.some(item => item.id === itemId && item.qty > 0)) {
+        return { ok: false, error: 'У получателя уже есть этот предмет.' };
+      }
+      existing.qty -= 1;
+      from.inventory = from.inventory.filter(item => item.qty > 0);
+      const targetItem = to.inventory.find(item => item.id === itemId);
+      if (targetItem) targetItem.qty += 1;
+      else to.inventory.push({ id: itemId, qty: 1 });
+      from.updatedAt = nowIso();
+      to.updatedAt = nowIso();
+      return { ok: true };
+    });
+  }
+
+  replaceInventoryItem(telegramId, consumedItemId, rewardItemId) {
+    if (!consumedItemId || !rewardItemId) return { ok: false, error: 'Предмет не указан.' };
+    return this.store.mutate(data => {
+      const user = this.ensureUserRaw(data, telegramId);
+      const consumed = user.inventory.find(item => item.id === consumedItemId);
+      if (!consumed || consumed.qty < 1) return { ok: false, error: 'Этого предмета нет в инвентаре.' };
+      consumed.qty -= 1;
+      user.inventory = user.inventory.filter(item => item.qty > 0);
+      const reward = user.inventory.find(item => item.id === rewardItemId);
+      if (reward) reward.qty += 1;
+      else user.inventory.push({ id: rewardItemId, qty: 1 });
+      user.updatedAt = nowIso();
+      return { ok: true, inventory: user.inventory };
+    });
   }
 
   setDailyClaim(telegramId, bonus, claimedAt = new Date()) {
@@ -534,9 +674,7 @@ class EconomyRepository {
 
   addInventoryItem(telegramId, itemId, qty = 1) {
     return this.store.mutate(data => {
-      const user = data.users.find(item => sameId(item.telegramId, telegramId));
-      if (!user) return null;
-      user.inventory = normalizeInventory(user.inventory);
+      const user = this.ensureUserRaw(data, telegramId);
       const existing = user.inventory.find(item => item.id === itemId);
       if (existing) existing.qty += Math.max(1, Number(qty) || 1);
       else user.inventory.push({ id: itemId, qty: Math.max(1, Number(qty) || 1) });
@@ -547,9 +685,7 @@ class EconomyRepository {
 
   removeInventoryItem(telegramId, itemId, qty = 1) {
     return this.store.mutate(data => {
-      const user = data.users.find(item => sameId(item.telegramId, telegramId));
-      if (!user) return false;
-      user.inventory = normalizeInventory(user.inventory);
+      const user = this.ensureUserRaw(data, telegramId);
       const existing = user.inventory.find(item => item.id === itemId);
       if (!existing || existing.qty < qty) return false;
       existing.qty -= qty;

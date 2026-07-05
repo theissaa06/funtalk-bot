@@ -10,26 +10,24 @@ class ShopBridge {
     const item = getShopItem(itemId);
     if (!item) return { ok: false, error: 'Товар не найден.' };
 
-    const user = this.repos.economy.getUser(telegramId);
-    if ((user?.coins || 0) < price) return { ok: false, error: 'Недостаточно FunMoney.' };
-    if ((item.type === 'badge' || item.type === 'title') && this.repos.economy.hasInventoryItem(telegramId, itemId)) {
-      return { ok: false, error: 'Этот предмет уже есть в инвентаре.' };
-    }
-
-    this.repos.economy.addCoins(telegramId, -price, {
-      ...meta,
-      type: 'shop_purchase',
-      reason: itemId,
-    });
-
     if (item.type === 'lootbox') {
       const reward = pickLootboxReward();
-      this.repos.economy.addInventoryItem(telegramId, reward.id);
+      const purchase = this.repos.economy.purchaseInventoryItem(telegramId, reward.id, price, {
+        ...meta,
+        reason: itemId,
+      });
+      if (!purchase.ok) return purchase;
       this.eventBus.emit('shop.lootbox_opened', { telegramId, itemId, rewardId: reward.id, meta });
       return { ok: true, item, reward };
     }
 
-    this.repos.economy.addInventoryItem(telegramId, itemId);
+    const purchase = this.repos.economy.purchaseInventoryItem(telegramId, itemId, price, {
+      ...meta,
+      reason: itemId,
+    }, {
+      unique: item.type === 'badge' || item.type === 'title',
+    });
+    if (!purchase.ok) return purchase;
     this.eventBus.emit('shop.item_bought', { telegramId, itemId, meta });
     return { ok: true, item };
   }
@@ -37,21 +35,16 @@ class ShopBridge {
   sellItem(telegramId, itemId, meta = {}) {
     const item = getShopItem(itemId);
     if (!item) return { ok: false, error: 'Товар не найден.' };
-    if (!this.repos.economy.hasInventoryItem(telegramId, itemId)) {
-      return { ok: false, error: 'Этого предмета нет в инвентаре.' };
-    }
     if (item.type === 'consumable' || item.type === 'lootbox') {
       return { ok: false, error: 'Этот тип предмета нельзя продать обратно.' };
     }
 
-    const removed = this.repos.economy.removeInventoryItem(telegramId, itemId);
-    if (!removed) return { ok: false, error: 'Не удалось списать предмет.' };
     const refund = item.sellPrice || Math.floor(item.price * 0.4);
-    this.repos.economy.addCoins(telegramId, refund, {
+    const sold = this.repos.economy.sellInventoryItem(telegramId, itemId, refund, {
       ...meta,
-      type: 'shop_sellback',
       reason: itemId,
     });
+    if (!sold.ok) return sold;
     this.eventBus.emit('shop.item_sold', { telegramId, itemId, refund, meta });
     return { ok: true, item, refund };
   }
@@ -59,16 +52,10 @@ class ShopBridge {
   giftItem(fromTelegramId, toTelegramId, itemId, meta = {}) {
     const item = getShopItem(itemId);
     if (!item) return { ok: false, error: 'Товар не найден.' };
-    if (!this.repos.economy.hasInventoryItem(fromTelegramId, itemId)) {
-      return { ok: false, error: 'Этого предмета нет в инвентаре.' };
-    }
-    if ((item.type === 'badge' || item.type === 'title') && this.repos.economy.hasInventoryItem(toTelegramId, itemId)) {
-      return { ok: false, error: 'У получателя уже есть этот предмет.' };
-    }
-
-    const removed = this.repos.economy.removeInventoryItem(fromTelegramId, itemId);
-    if (!removed) return { ok: false, error: 'Не удалось списать предмет.' };
-    this.repos.economy.addInventoryItem(toTelegramId, itemId);
+    const gifted = this.repos.economy.giftInventoryItem(fromTelegramId, toTelegramId, itemId, {
+      unique: item.type === 'badge' || item.type === 'title',
+    });
+    if (!gifted.ok) return gifted;
     this.eventBus.emit('shop.item_gifted', { fromTelegramId, toTelegramId, itemId, meta });
     return { ok: true, item };
   }
@@ -86,8 +73,8 @@ class ShopBridge {
     let effectText = '';
     if (item.type === 'lootbox') {
       const reward = pickLootboxReward();
-      this.repos.economy.removeInventoryItem(telegramId, itemId);
-      this.repos.economy.addInventoryItem(telegramId, reward.id);
+      const replaced = this.repos.economy.replaceInventoryItem(telegramId, itemId, reward.id);
+      if (!replaced.ok) return replaced;
       effectText = `Внутри оказался предмет: ${reward.name}.`;
       this.eventBus.emit('shop.lootbox_opened', { telegramId, itemId, rewardId: reward.id });
       return { ok: true, item, effectText };

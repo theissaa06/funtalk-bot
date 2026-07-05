@@ -28,9 +28,7 @@ class JsonFileStore {
       return this.normalize(parsed);
     } catch (error) {
       this.logger?.error(`failed to read ${this.filePath}:`, error.message);
-      const fallback = this.createDefaultData();
-      this.write(fallback);
-      return fallback;
+      throw error;
     }
   }
 
@@ -41,15 +39,30 @@ class JsonFileStore {
     data.meta.updatedAt = new Date().toISOString();
 
     const tmpPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
-    fs.renameSync(tmpPath, this.filePath);
+    try {
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+      fs.renameSync(tmpPath, this.filePath);
+    } catch (error) {
+      this.logger?.error(`failed to write ${this.filePath}:`, error.message);
+      try {
+        if (fs.existsSync(tmpPath)) fs.rmSync(tmpPath);
+      } catch (cleanupError) {
+        this.logger?.warn(`failed to remove temp file ${tmpPath}:`, cleanupError.message);
+      }
+      throw error;
+    }
   }
 
   mutate(mutator) {
-    const data = this.read();
-    const result = mutator(data);
-    this.write(data);
-    return clone(result);
+    try {
+      const data = this.read();
+      const result = mutator(data);
+      this.write(data);
+      return clone(result);
+    } catch (error) {
+      this.logger?.error(`mutation failed for ${this.filePath}:`, error.message);
+      throw error;
+    }
   }
 
   normalize(data) {

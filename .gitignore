@@ -1,6 +1,11 @@
 .env
 node_modules/
 downloads/
+data/*.json
+data/*.sqlite
+data/*.db
+data/*.bak
+*.pid
 data/database.broken.*.json
 *.log
 .DS_Store

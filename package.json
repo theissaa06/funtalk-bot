@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "test": "node test/run_tests.js",
+    "audit-achievements": "node scripts/auditAchievementRewards.js",
+    "send-announcement": "node scripts/sendUpdateAnnouncement.js",
     "migrate-achievements": "node scripts/syncAchievements.js",
     "migrate-per-chat": "node scripts/migrateToPerChat.js"
   },

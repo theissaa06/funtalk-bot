@@ -45,16 +45,13 @@ function registerGames(app) {
     const key = `${ctx.chat?.id || ctx.from.id}:${ctx.from.id}`;
     const cd = cooldownLeft(casinoCooldown, key, 30000);
     if (cd) return safeReply(ctx, `Подожди ${cd} сек. перед следующей игрой.`);
-    const user = repos.economy.getUser(ctx.from.id);
-    if (user.coins < bet) return safeReply(ctx, `Недостаточно FunMoney. Баланс: ${formatMoney(user.coins)}.`);
-
-    casinoCooldown.set(key, Date.now());
-    repos.economy.addCoins(ctx.from.id, -bet, { type: 'game_bet', chatId: ctx.chat?.id, reason: 'casino' });
     const symbols = ['7', '★', '◆', '●', '■'];
     const roll = [0, 1, 2].map(() => symbols[randomInt(0, symbols.length - 1)]);
     const multiplier = roll[0] === roll[1] && roll[1] === roll[2] ? 5 : roll[0] === roll[1] || roll[1] === roll[2] || roll[0] === roll[2] ? 2 : 0;
     const win = bet * multiplier;
-    if (win) repos.economy.addCoins(ctx.from.id, win, { type: 'game_win', chatId: ctx.chat?.id, reason: 'casino' });
+    const settled = repos.economy.settleGame(ctx.from.id, bet, win, { chatId: ctx.chat?.id, reason: 'casino' });
+    if (!settled.ok) return safeReply(ctx, settled.error);
+    casinoCooldown.set(key, Date.now());
     await app.eventBus.emit('game.finished', { game: 'casino', telegramId: ctx.from.id, bet, win, chatId: ctx.chat?.id || null });
     return safeReply(ctx, `<b>Слоты</b>\n\n[ ${roll.join(' | ')} ]\n\nСтавка: ${formatMoney(bet)}\nВыигрыш: <b>${formatMoney(win)}</b>`, { parse_mode: 'HTML' });
   });
@@ -71,11 +68,6 @@ function registerGames(app) {
     const key = `${ctx.chat?.id || ctx.from.id}:${ctx.from.id}`;
     const cd = cooldownLeft(rouletteCooldown, key, 30000);
     if (cd) return safeReply(ctx, `Подожди ${cd} сек. перед следующей рулеткой.`);
-    const user = repos.economy.getUser(ctx.from.id);
-    if (user.coins < bet) return safeReply(ctx, `Недостаточно FunMoney. Баланс: ${formatMoney(user.coins)}.`);
-
-    rouletteCooldown.set(key, Date.now());
-    repos.economy.addCoins(ctx.from.id, -bet, { type: 'game_bet', chatId: ctx.chat?.id, reason: 'roulette' });
     const number = randomInt(0, 36);
     const color = number === 0 ? 'green' : number % 2 ? 'red' : 'black';
     const winMultiplier =
@@ -84,7 +76,9 @@ function registerGames(app) {
       pick === 'odd' && number % 2 === 1 ? 2 :
       Number(pick) === number ? 35 : 0;
     const win = bet * winMultiplier;
-    if (win) repos.economy.addCoins(ctx.from.id, win, { type: 'game_win', chatId: ctx.chat?.id, reason: 'roulette' });
+    const settled = repos.economy.settleGame(ctx.from.id, bet, win, { chatId: ctx.chat?.id, reason: 'roulette' });
+    if (!settled.ok) return safeReply(ctx, settled.error);
+    rouletteCooldown.set(key, Date.now());
     await app.eventBus.emit('game.finished', { game: 'roulette', telegramId: ctx.from.id, bet, win, chatId: ctx.chat?.id || null });
     return safeReply(ctx, `<b>Рулетка</b>\n\nВыпало: <b>${number}</b> (${color})\nСтавка: ${pick}\nВыигрыш: <b>${formatMoney(win)}</b>`, { parse_mode: 'HTML' });
   });
@@ -99,16 +93,14 @@ function registerGames(app) {
     if (route.action !== 'rps') return app.renderers.games(ctx);
     const [pick, betRaw] = route.args;
     const bet = toPositiveInt(betRaw, 50);
-    const user = repos.economy.getUser(ctx.from.id);
-    if (user.coins < bet) return safeEditOrReply(ctx, `Недостаточно FunMoney. Баланс: ${formatMoney(user.coins)}.`, { ...gamesKeyboard(bet) });
-
     const choices = ['rock', 'scissors', 'paper'];
+    if (!choices.includes(pick)) return safeEditOrReply(ctx, 'Некорректный ход.', { ...gamesKeyboard(bet) });
     const botPick = choices[randomInt(0, choices.length - 1)];
     const wins = (pick === 'rock' && botPick === 'scissors') || (pick === 'scissors' && botPick === 'paper') || (pick === 'paper' && botPick === 'rock');
     const draw = pick === botPick;
-    repos.economy.addCoins(ctx.from.id, -bet, { type: 'game_bet', chatId: ctx.chat?.id, reason: 'rps' });
     const win = draw ? bet : wins ? bet * 2 : 0;
-    if (win) repos.economy.addCoins(ctx.from.id, win, { type: 'game_win', chatId: ctx.chat?.id, reason: 'rps' });
+    const settled = repos.economy.settleGame(ctx.from.id, bet, win, { chatId: ctx.chat?.id, reason: 'rps' });
+    if (!settled.ok) return safeEditOrReply(ctx, settled.error, { ...gamesKeyboard(bet) });
     await app.eventBus.emit('game.finished', { game: 'rps', telegramId: ctx.from.id, bet, win, chatId: ctx.chat?.id || null });
     const labels = { rock: 'камень', scissors: 'ножницы', paper: 'бумага' };
     return safeEditOrReply(ctx, `<b>КНБ</b>\n\nТы: ${labels[pick]}\nБот: ${labels[botPick]}\n\n${draw ? 'Ничья.' : wins ? 'Победа!' : 'Поражение.'}\nВыигрыш: <b>${formatMoney(win)}</b>`, { parse_mode: 'HTML', ...gamesKeyboard(bet) });

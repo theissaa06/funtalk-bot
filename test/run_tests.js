@@ -56,6 +56,7 @@ Telegram.prototype.callApi = async (method, payload) => {
 };
 
 const { bot, app } = require('../src/index');
+const { createApp } = require('../src/app/createApp');
 let updateId = 0;
 
 function from(overrides = {}) {
@@ -77,8 +78,8 @@ function chat(overrides = {}) {
   };
 }
 
-async function sendText(text, options = {}) {
-  await bot.handleUpdate({
+async function sendTextWith(targetBot, text, options = {}) {
+  await targetBot.handleUpdate({
     update_id: ++updateId,
     message: {
       message_id: updateId,
@@ -96,6 +97,10 @@ async function sendText(text, options = {}) {
       } : undefined,
     },
   });
+}
+
+async function sendText(text, options = {}) {
+  return sendTextWith(bot, text, options);
 }
 
 async function press(data, options = {}) {
@@ -143,10 +148,39 @@ async function press(data, options = {}) {
   assert(sentTexts.some(text => text.includes('предупреждение') || text.includes('варнов')), 'moderation warning should work');
   assert(sentTexts.some(text => text.includes('GEMINI_API_KEY')), 'AI should explain missing Gemini key without crashing');
 
+  app.repos.economy.addCoins(9001, 500, { type: 'test_seed' });
+  const transferResult = app.repos.economy.transferCoins(9001, 9002, 125, { reason: 'test transfer' });
+  assert.strictEqual(transferResult.ok, true, 'transfer should be atomic and successful');
+  const gameResult = app.repos.economy.settleGame(9001, 100, 250, { reason: 'test game' });
+  assert.strictEqual(gameResult.ok, true, 'game settlement should be atomic and successful');
+  const purchaseResult = app.repos.economy.purchaseInventoryItem(9001, 'test_item', 50, { reason: 'test purchase' });
+  assert.strictEqual(purchaseResult.ok, true, 'shop purchase should be atomic and successful');
+  const giftResult = app.repos.economy.giftInventoryItem(9001, 9002, 'test_item');
+  assert.strictEqual(giftResult.ok, true, 'gift should move inventory atomically');
+
+  const beforeRestartData = JSON.parse(fs.readFileSync(path.resolve(rootDir, process.env.ECONOMY_STORE_PATH), 'utf8'));
+  const firstMessageRewardsBefore = beforeRestartData.transactions.filter(transaction =>
+    String(transaction.telegramId) === '42' &&
+    transaction.type === 'achievement_reward' &&
+    transaction.reason === 'first_message'
+  ).length;
+  assert.strictEqual(firstMessageRewardsBefore, 1, 'first_message reward should be granted once before restart');
+
+  const restartedApp = createApp();
+  await sendTextWith(restartedApp.bot, 'message after local restart');
+
   const economyData = JSON.parse(fs.readFileSync(path.resolve(rootDir, process.env.ECONOMY_STORE_PATH), 'utf8'));
   const moderationData = JSON.parse(fs.readFileSync(path.resolve(rootDir, process.env.MODERATION_STORE_PATH), 'utf8'));
   assert(economyData.users.some(user => String(user.telegramId) === '42'), 'economy user should be stored');
   assert(economyData.transactions.length >= 2, 'economy transactions should be logged');
+  const firstMessageRewardsAfter = economyData.transactions.filter(transaction =>
+    String(transaction.telegramId) === '42' &&
+    transaction.type === 'achievement_reward' &&
+    transaction.reason === 'first_message'
+  ).length;
+  assert.strictEqual(firstMessageRewardsAfter, 1, 'first_message reward should not be duplicated after restart');
+  assert.strictEqual(economyData.users.find(user => String(user.telegramId) === '9001').coins, 475, 'atomic economy operations should keep the expected balance');
+  assert(economyData.users.find(user => String(user.telegramId) === '9002').inventory.some(item => item.id === 'test_item' && item.qty === 1), 'gifted inventory item should be stored on recipient');
   assert(moderationData.warnings.some(warn => String(warn.telegramId) === '77'), 'warning should be stored per chat');
 
   console.log(`OK: ${calls.length} mocked Telegram API calls, ${economyData.transactions.length} economy transactions`);

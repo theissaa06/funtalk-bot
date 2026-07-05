@@ -11,7 +11,8 @@ function parseIdList(value) {
 }
 
 function readConfig(env = process.env) {
-  const dataDir = path.resolve(env.DATA_DIR || path.join(__dirname, '../../data'));
+  const railwayVolumePath = env.RAILWAY_VOLUME_MOUNT_PATH || env.RAILWAY_VOLUME_PATH;
+  const dataDir = path.resolve(env.DATA_DIR || railwayVolumePath || path.join(__dirname, '../../data'));
 
   return {
     env: env.NODE_ENV || 'development',
@@ -23,6 +24,11 @@ function readConfig(env = process.env) {
     supportInboxBotToken: env.SUPPORT_INBOX_BOT_TOKEN || '',
     supportInboxBotUsername: String(env.SUPPORT_INBOX_BOT_USERNAME || '').replace(/^@/, ''),
     dataDir,
+    railwayService: Boolean(env.RAILWAY_ENVIRONMENT || env.RAILWAY_PROJECT_ID || env.RAILWAY_SERVICE_ID),
+    allowEphemeralData: env.FUNTALK_ALLOW_EPHEMERAL_DATA === '1',
+    healthPort: env.HEALTH_PORT || env.PORT || '',
+    webhookUrl: String(env.WEBHOOK_URL || '').replace(/\/+$/, ''),
+    webhookPath: env.WEBHOOK_PATH || '/telegram-webhook',
     stores: {
       app: path.resolve(env.APP_STORE_PATH || path.join(dataDir, 'app_store.json')),
       economy: path.resolve(env.ECONOMY_STORE_PATH || path.join(dataDir, 'economy_store.json')),

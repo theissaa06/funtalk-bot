@@ -53,7 +53,8 @@ function registerLeaderboard(app) {
   app.bot.command('pinleaderboard', async ctx => {
     if (!ctx.chat || ctx.chat.type === 'private') return;
     if (!(await requireChatAdmin(ctx))) return;
-    const sent = await ctx.reply(activityText(app, ctx), { parse_mode: 'HTML', ...keyboard() });
+    const sent = await safeReply(ctx, activityText(app, ctx), { parse_mode: 'HTML', ...keyboard() });
+    if (!sent) return;
     try {
       await ctx.pinChatMessage(sent.message_id, { disable_notification: true });
       app.repos.moderation.setPinnedLeaderboard(ctx.chat.id, sent.message_id, 'activity');

@@ -138,16 +138,13 @@ function getStats(app, telegramId) {
 }
 
 async function grantAndToast(app, telegramId, achievement, payload = {}) {
-  const grant = app.repos.economy.grantAchievement(telegramId, achievement.id);
-  if (!grant) return;
-
   const rarity = RARITY[achievement.rarity] || RARITY.common;
-  app.repos.economy.addCoins(telegramId, rarity.reward, {
-    type: 'achievement_reward',
+  const result = app.repos.economy.grantAchievementWithReward(telegramId, achievement.id, rarity.reward, {
     byTelegramId: null,
     chatId: payload.chatId || payload.meta?.chatId || null,
     reason: achievement.id,
   });
+  if (!result.ok || !result.granted) return;
 
   const chatId = payload.chatId || payload.meta?.chatId || null;
   if (!chatId) return;

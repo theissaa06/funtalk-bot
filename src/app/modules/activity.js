@@ -18,7 +18,7 @@ function registerActivity(app) {
       app.repos.economy.addXp(ctx.from.id, 2);
     }
 
-    app.eventBus.emit('chat.message', {
+    await app.eventBus.emit('chat.message', {
       chatId: ctx.chat.id,
       telegramId: ctx.from.id,
       messageCount: member?.messageCount || 0,

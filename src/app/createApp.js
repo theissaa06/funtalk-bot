@@ -1,4 +1,6 @@
 const { Telegraf } = require('telegraf');
+const path = require('path');
+const http = require('http');
 const { readConfig } = require('./config');
 const { createLogger } = require('./logger');
 const { JsonFileStore } = require('./storage/jsonFileStore');
@@ -33,6 +35,50 @@ function createStores(config, logger) {
     economy: new JsonFileStore(config.stores.economy, createEconomyData, logger.child('store:economy')),
     moderation: new JsonFileStore(config.stores.moderation, createModerationData, logger.child('store:moderation')),
   };
+}
+
+function validateRuntimeConfig(config) {
+  const warnings = [];
+  const errors = [];
+  const defaultDataDir = path.resolve(__dirname, '../../data');
+
+  if (config.railwayService && path.resolve(config.dataDir) === defaultDataDir && !config.allowEphemeralData) {
+    errors.push(
+      'Railway persistent storage is not configured: set DATA_DIR to the mounted Volume path, or set FUNTALK_ALLOW_EPHEMERAL_DATA=1 only for disposable test deploys.'
+    );
+  }
+
+  return { warnings, errors };
+}
+
+function startHealthServer(config, logger, webhookHandler = null) {
+  const port = Number(config.healthPort);
+  if (!Number.isInteger(port) || port <= 0) return null;
+
+  const server = http.createServer((req, res) => {
+    const pathname = new URL(req.url || '/', 'http://localhost').pathname;
+    if (webhookHandler && pathname === config.webhookPath) {
+      webhookHandler(req, res);
+      return;
+    }
+    if (pathname === '/health' || pathname === '/') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, service: 'funtalk-bot' }));
+      return;
+    }
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'not_found' }));
+  });
+
+  server.on('error', error => {
+    logger.warn('health server failed:', error.message);
+  });
+
+  server.listen(port, () => {
+    logger.info(`health server listening on port ${port}`);
+  });
+
+  return server;
 }
 
 function registerCommands(bot) {
@@ -80,6 +126,11 @@ function createApp(options = {}) {
   if (!config.botToken && !config.isTest) {
     throw new Error('BOT_TOKEN is required');
   }
+  const runtimeCheck = validateRuntimeConfig(config);
+  for (const warning of runtimeCheck.warnings) logger.warn(warning);
+  if (runtimeCheck.errors.length && !config.isTest) {
+    throw new Error(runtimeCheck.errors.join(' '));
+  }
 
   const bot = options.bot || new Telegraf(config.botToken || 'TEST_TOKEN');
   const stores = createStores(config, logger);
@@ -95,6 +146,7 @@ function createApp(options = {}) {
     eventBus,
     callbackRouter,
     renderers: {},
+    healthServer: null,
   };
   app.shopBridge = new ShopBridge(repos, eventBus);
   app.supportInboxBot = createSupportInboxBot(app);
@@ -124,8 +176,17 @@ function createApp(options = {}) {
   });
 
   app.launch = async function launch() {
-    await bot.launch({ dropPendingUpdates: true });
-    logger.info('FunTalk bot launched');
+    if (config.webhookUrl) {
+      if (!app.healthServer) app.healthServer = startHealthServer(config, logger, bot.webhookCallback(config.webhookPath));
+      const webhookEndpoint = `${config.webhookUrl}${config.webhookPath}`;
+      await bot.telegram.setWebhook(webhookEndpoint, { drop_pending_updates: true });
+      logger.info(`FunTalk bot launched in webhook mode at ${config.webhookPath}`);
+    } else {
+      if (!app.healthServer) app.healthServer = startHealthServer(config, logger);
+      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      await bot.launch({ dropPendingUpdates: true });
+      logger.info('FunTalk bot launched in polling mode');
+    }
     if (app.supportInboxBot) {
       await app.supportInboxBot.launch({ dropPendingUpdates: true });
       try {
@@ -147,6 +208,7 @@ function createApp(options = {}) {
   app.stop = function stop(reason = 'SIGTERM') {
     bot.stop(reason);
     if (app.supportInboxBot) app.supportInboxBot.stop(reason);
+    if (app.healthServer) app.healthServer.close();
   };
 
   return app;
@@ -155,6 +217,8 @@ function createApp(options = {}) {
 module.exports = {
   createApp,
   createStores,
+  validateRuntimeConfig,
+  startHealthServer,
   registerCommands,
   registerBotProfile,
 };
