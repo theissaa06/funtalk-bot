@@ -32,6 +32,7 @@ CLAUDE_API_KEY=...
 CLAUDE_MODEL=claude-3-5-sonnet-20241022
 SUPPORT_CHAT_ID=...
 SUPPORT_INBOX_BOT_TOKEN=...
+SUPPORT_INBOX_BOT_USERNAME=funtulsupport_bot
 YTDLP_PATH=yt-dlp
 ```
 
@@ -46,6 +47,7 @@ YTDLP_PATH=yt-dlp
 3. Задай имя и username support-бота.
 4. Скопируй токен.
 5. Добавь токен в Railway Variables как `SUPPORT_INBOX_BOT_TOKEN`.
+6. Добавь username без `@` как `SUPPORT_INBOX_BOT_USERNAME`.
 
 Пользователь пишет этому support-боту, бот пересылает обращение владельцу (`OWNER_ID`) или в `SUPPORT_CHAT_ID`. Владелец отвечает реплаем на обращение, и ответ уходит пользователю.
 

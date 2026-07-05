@@ -21,6 +21,7 @@ function readConfig(env = process.env) {
     ownerIds: parseIdList(env.OWNER_IDS || env.OWNER_ID),
     supportChatId: env.SUPPORT_CHAT_ID ? Number(env.SUPPORT_CHAT_ID) : null,
     supportInboxBotToken: env.SUPPORT_INBOX_BOT_TOKEN || '',
+    supportInboxBotUsername: String(env.SUPPORT_INBOX_BOT_USERNAME || '').replace(/^@/, ''),
     dataDir,
     stores: {
       app: path.resolve(env.APP_STORE_PATH || path.join(dataDir, 'app_store.json')),

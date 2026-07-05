@@ -13,15 +13,21 @@ function supportText(app) {
   if (!supportDestinationChatId(app)) {
     return '<b>Поддержка</b>\n\nПоддержка пока не настроена: добавь SUPPORT_CHAT_ID или OWNER_ID.';
   }
-  return '<b>Поддержка</b>\n\nНажми кнопку ниже и следующим сообщением опиши проблему. Бот передаст обращение разработчику.';
+  const inbox = app.config.supportInboxBotUsername
+    ? `\n\nБыстрее всего написать в отдельного support-бота: @${app.config.supportInboxBotUsername}.`
+    : '';
+  return `<b>Поддержка</b>\n\nНажми кнопку ниже и следующим сообщением опиши проблему. Бот передаст обращение разработчику.${inbox}`;
 }
 
-function supportKeyboard() {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback('Написать в поддержку', 'support:start')],
-    [Markup.button.callback('Мои обращения', 'support:mine')],
-    [Markup.button.callback('Меню', 'menu:home')],
-  ]);
+function supportKeyboard(app) {
+  const rows = [];
+  if (app.config.supportInboxBotUsername) {
+    rows.push([Markup.button.url('Открыть support-бота', `https://t.me/${app.config.supportInboxBotUsername}`)]);
+  }
+  rows.push([Markup.button.callback('Написать тут', 'support:start')]);
+  rows.push([Markup.button.callback('Мои обращения', 'support:mine')]);
+  rows.push([Markup.button.callback('Меню', 'menu:home')]);
+  return Markup.inlineKeyboard(rows);
 }
 
 function mySupportText(app, telegramId) {
@@ -38,27 +44,27 @@ function registerSupport(app) {
   const { bot, repos, callbackRouter } = app;
 
   app.renderers.support = async ctx => {
-    await safeEditOrReply(ctx, supportText(app), { parse_mode: 'HTML', ...supportKeyboard() });
+    await safeEditOrReply(ctx, supportText(app), { parse_mode: 'HTML', ...supportKeyboard(app) });
   };
 
   bot.command('support', async ctx => {
-    await safeReply(ctx, supportText(app), { parse_mode: 'HTML', ...supportKeyboard() });
+    await safeReply(ctx, supportText(app), { parse_mode: 'HTML', ...supportKeyboard(app) });
   });
 
   bot.command('mysupport', async ctx => {
-    await safeReply(ctx, mySupportText(app, ctx.from.id), { parse_mode: 'HTML', ...supportKeyboard() });
+    await safeReply(ctx, mySupportText(app, ctx.from.id), { parse_mode: 'HTML', ...supportKeyboard(app) });
   });
 
   callbackRouter.on('support', async (ctx, route) => {
     if (route.action === 'mine') {
-      return safeEditOrReply(ctx, mySupportText(app, ctx.from.id), { parse_mode: 'HTML', ...supportKeyboard() });
+      return safeEditOrReply(ctx, mySupportText(app, ctx.from.id), { parse_mode: 'HTML', ...supportKeyboard(app) });
     }
     if (route.action === 'start') {
       if (!supportDestinationChatId(app)) {
-        return safeEditOrReply(ctx, supportText(app), { parse_mode: 'HTML', ...supportKeyboard() });
+        return safeEditOrReply(ctx, supportText(app), { parse_mode: 'HTML', ...supportKeyboard(app) });
       }
       repos.users.setSupportMode(ctx.from.id, true);
-      return safeEditOrReply(ctx, 'Напиши следующим сообщением, что случилось. Я передам это разработчику.', { ...supportKeyboard() });
+      return safeEditOrReply(ctx, 'Напиши следующим сообщением, что случилось. Я передам это разработчику.', { ...supportKeyboard(app) });
     }
     return app.renderers.support(ctx);
   });
