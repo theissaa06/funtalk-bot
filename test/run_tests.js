@@ -155,6 +155,11 @@ async function press(data, options = {}) {
     replyTo: supportUser,
     replyMessageId: supportCallIndex + 1,
   });
+  const commandSupportUser = from({ id: 56, first_name: 'CommandSupport', username: 'command_support' });
+  await sendText('Обычное сообщение без режима', { from: commandSupportUser, chat: { id: 56, type: 'private' } });
+  await sendText('/support', { from: commandSupportUser, chat: { id: 56, type: 'private' } });
+  await sendText('Обращение через команду support', { from: commandSupportUser, chat: { id: 56, type: 'private' } });
+  await sendText('Обычный текст после обращения', { from: commandSupportUser, chat: { id: 56, type: 'private' } });
 
   await sendText('/ai');
   await sendText('Привет, помоги придумать текст');
@@ -189,6 +194,10 @@ async function press(data, options = {}) {
   assert(sentTexts.some(text => text.includes('Инвентарь')), 'inventory should render');
   assert(sentTexts.some(text => text.includes('Мем:')), 'meme request should render');
   assert(sentTexts.some(text => text.includes('Обращение #')), 'support flow should create a ticket');
+  assert(sentTexts.some(text => text.includes('Напишите ваше сообщение')), '/support command should enter support write mode');
+  assert(sentTexts.some(text => text.includes('Обращение через команду support')), '/support command should forward the next message');
+  assert(!sentTexts.some(text => text.includes('Обычное сообщение без режима')), 'ordinary messages should not be forwarded to support');
+  assert(!sentTexts.some(text => text.includes('Обычный текст после обращения')), 'support mode should turn off after one message');
   assert(sentTexts.some(text => text.includes('Ответ по обращению')), 'support owner reply should reach user');
   assert(allTexts.some(text => text.includes('замучен')), 'moderation time picker should apply tmute');
   assert(sentTexts.some(text => text.includes('предупреждение') || text.includes('варнов')), 'moderation warning should work');

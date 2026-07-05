@@ -1124,6 +1124,15 @@ class SupportRepository {
       .slice(0, limit));
   }
 
+  countRecentByTelegramId(telegramId, windowMs) {
+    const since = Date.now() - Number(windowMs || 0);
+    const data = this.store.read();
+    return data.supportTickets.filter(ticket =>
+      sameId(ticket.telegramId, telegramId) &&
+      Date.parse(ticket.createdAt) >= since
+    ).length;
+  }
+
   close(ticketId) {
     return this.store.mutate(data => {
       const ticket = data.supportTickets.find(item => item.id === ticketId);

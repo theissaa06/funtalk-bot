@@ -2,6 +2,9 @@ const { Markup } = require('telegraf');
 const { safeEditOrReply, safeReply } = require('../safeTelegram');
 const { escapeHtml } = require('../format');
 
+const SUPPORT_RATE_LIMIT_COUNT = 3;
+const SUPPORT_RATE_LIMIT_WINDOW_MS = 30 * 60 * 1000;
+
 function supportText(app) {
   const destination = supportDestination(app);
   const hint = destination
@@ -75,6 +78,13 @@ async function createSupportTicket(ctx, text) {
     return;
   }
 
+  const recentTickets = ctx.app.repos.support.countRecentByTelegramId(ctx.from.id, SUPPORT_RATE_LIMIT_WINDOW_MS);
+  if (recentTickets >= SUPPORT_RATE_LIMIT_COUNT) {
+    ctx.app.repos.users.setSupportMode(ctx.from.id, false);
+    await safeReply(ctx, 'Слишком много обращений за короткое время. Попробуй ещё раз позже.');
+    return;
+  }
+
   const ticket = ctx.app.repos.support.createTicket(ctx.from, ctx.chat?.id, trimmed);
   ctx.app.repos.users.setSupportMode(ctx.from.id, false);
   const forwarded = await forwardTicketToSupport(ctx.app, ticket);
@@ -82,6 +92,13 @@ async function createSupportTicket(ctx, text) {
     ? 'Я передал его разработчику. Ответ придёт сюда.'
     : 'Я сохранил его, но сейчас не смог переслать разработчику. Он останется в истории обращений.';
   await safeReply(ctx, `Обращение #${ticket.id} создано. ${suffix}`);
+}
+
+async function beginSupportFlow(ctx, useEdit = false) {
+  ctx.app.repos.users.setSupportMode(ctx.from.id, true);
+  const text = 'Напишите ваше сообщение, я передам его разработчику.\n\nЧтобы отменить, отправьте /cancel.';
+  const sender = useEdit ? safeEditOrReply : safeReply;
+  return sender(ctx, text, { parse_mode: 'HTML' });
 }
 
 function registerSupport(app) {
@@ -92,7 +109,7 @@ function registerSupport(app) {
   };
 
   bot.command('support', async ctx => {
-    await safeReply(ctx, supportText(app), { parse_mode: 'HTML', ...supportKeyboard(app) });
+    await beginSupportFlow(ctx);
   });
 
   bot.command('mysupport', async ctx => {
@@ -132,8 +149,7 @@ function registerSupport(app) {
 
   callbackRouter.on('support', async (ctx, route) => {
     if (route.action === 'write') {
-      app.repos.users.setSupportMode(ctx.from.id, true);
-      return safeEditOrReply(ctx, 'Напиши ваше сообщение одним текстом. Я передам его разработчику.\n\nЧтобы отменить, отправь /cancel.', { parse_mode: 'HTML' });
+      return beginSupportFlow(ctx, true);
     }
     if (route.action === 'mine') {
       return safeEditOrReply(ctx, mySupportText(app, ctx.from.id), { parse_mode: 'HTML', ...supportKeyboard(app) });
