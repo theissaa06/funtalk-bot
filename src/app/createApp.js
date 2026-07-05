@@ -23,6 +23,7 @@ const { registerProfile } = require('./modules/profile');
 const { registerSettings } = require('./modules/settings');
 const { registerShop } = require('./modules/shop');
 const { registerSupport } = require('./modules/support');
+const { registerUiCleanup } = require('./modules/uiCleanup');
 const { registerWelcome } = require('./modules/welcome');
 
 function createStores(config, logger) {
@@ -37,6 +38,7 @@ function registerCommands(bot) {
   return bot.telegram.setMyCommands([
     { command: 'start', description: 'Главное меню' },
     { command: 'menu', description: 'Открыть меню' },
+    { command: 'buttons', description: 'Убрать старые кнопки' },
     { command: 'profile', description: 'Мой профиль' },
     { command: 'coins', description: 'Баланс FunMoney' },
     { command: 'daily', description: 'Ежедневный бонус' },
@@ -89,6 +91,7 @@ function createApp(options = {}) {
 
   bot.use(createContextMiddleware(app));
   bot.use(callbackRouter.middleware());
+  registerUiCleanup(app);
 
   registerActivity(app);
   registerAchievements(app);

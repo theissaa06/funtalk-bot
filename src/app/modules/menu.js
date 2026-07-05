@@ -1,5 +1,6 @@
 const { Markup } = require('telegraf');
 const { safeEditOrReply, safeReply } = require('../safeTelegram');
+const { removeReplyKeyboard } = require('./uiCleanup');
 
 const CATEGORIES = {
   moderation: {
@@ -75,17 +76,6 @@ const CATEGORIES = {
   },
 };
 
-async function clearOldReplyKeyboard(ctx) {
-  if (ctx.callbackQuery) return;
-  try {
-    await ctx.reply('Старые кнопки Telegram убраны. Новое меню ниже.', {
-      reply_markup: { remove_keyboard: true },
-    });
-  } catch (error) {
-    ctx.app?.logger?.warn('remove old keyboard failed:', error.message);
-  }
-}
-
 function mainKeyboard() {
   return Markup.inlineKeyboard([
     [
@@ -93,22 +83,20 @@ function mainKeyboard() {
       Markup.button.callback('Магазин', 'menu:shop'),
     ],
     [
-      Markup.button.callback('Топы', 'menu:leaderboard'),
       Markup.button.callback('Игры', 'menu:games'),
-    ],
-    [
-      Markup.button.callback('Ачивки', 'menu:achievements'),
-      Markup.button.callback('Настройки', 'menu:settings'),
-    ],
-    [
-      Markup.button.callback('Поддержка', 'menu:support'),
       Markup.button.callback('ИИ', 'menu:ai'),
     ],
     [
+      Markup.button.callback('Топы', 'menu:leaderboard'),
+      Markup.button.callback('Ачивки', 'menu:achievements'),
+    ],
+    [
+      Markup.button.callback('Админ', 'menu:category:settings'),
       Markup.button.callback('Скачать', 'menu:category:downloader'),
     ],
     [
-      Markup.button.callback('Команды', 'menu:commands'),
+      Markup.button.callback('Все разделы', 'menu:commands'),
+      Markup.button.callback('Поддержка', 'menu:support'),
     ],
   ]);
 }
@@ -117,9 +105,9 @@ function menuText() {
   return [
     '<b>FunTalk</b>',
     '',
-    'Я помогу с модерацией, активностью, магазином, мини-играми, топами, поддержкой и ИИ-помощником.',
+    'Новое меню: быстрые действия сверху, остальные функции внутри разделов.',
     '',
-    'Выбери раздел кнопками ниже. Меню работает через inline-кнопки и не засоряет чат старой Telegram-клавиатурой.',
+    'Старые нижние Telegram-кнопки автоматически убираются. Пользуйся кнопками под этим сообщением.',
   ].join('\n');
 }
 
@@ -181,12 +169,15 @@ function registerMenu(app) {
   const { bot, callbackRouter } = app;
 
   bot.start(async ctx => {
-    await clearOldReplyKeyboard(ctx);
     await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard() });
   });
 
   bot.command(['menu', 'help'], async ctx => {
-    await clearOldReplyKeyboard(ctx);
+    await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard() });
+  });
+
+  bot.command(['buttons', 'newmenu'], async ctx => {
+    await removeReplyKeyboard(ctx, { force: true });
     await safeReply(ctx, menuText(), { parse_mode: 'HTML', ...mainKeyboard() });
   });
 
@@ -216,5 +207,4 @@ function registerMenu(app) {
 module.exports = {
   registerMenu,
   mainKeyboard,
-  clearOldReplyKeyboard,
 };

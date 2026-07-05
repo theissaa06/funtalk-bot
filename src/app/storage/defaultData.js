@@ -18,6 +18,7 @@ function createAppData() {
     },
     users: [],
     chats: [],
+    uiCleanup: [],
     supportTickets: [],
     supportMessages: [],
   };

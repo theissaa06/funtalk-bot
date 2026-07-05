@@ -132,6 +132,39 @@ class UsersRepository {
   }
 }
 
+class UiRepository {
+  constructor(store) {
+    this.store = store;
+  }
+
+  isReplyKeyboardClean(chatId, telegramId = null) {
+    const data = this.store.read();
+    return (data.uiCleanup || []).some(row =>
+      sameId(row.chatId, chatId) && sameId(row.telegramId || 0, telegramId || 0)
+    );
+  }
+
+  markReplyKeyboardClean(chatId, telegramId = null) {
+    return this.store.mutate(data => {
+      data.uiCleanup = data.uiCleanup || [];
+      let row = data.uiCleanup.find(item =>
+        sameId(item.chatId, chatId) && sameId(item.telegramId || 0, telegramId || 0)
+      );
+      if (!row) {
+        row = {
+          chatId,
+          telegramId: telegramId || null,
+          cleanedAt: nowIso(),
+        };
+        data.uiCleanup.push(row);
+      } else {
+        row.cleanedAt = nowIso();
+      }
+      return row;
+    });
+  }
+}
+
 class ChatsRepository {
   constructor(store) {
     this.store = store;
@@ -740,6 +773,7 @@ class SupportRepository {
 
 function createRepositories(stores, config) {
   return {
+    ui: new UiRepository(stores.app),
     users: new UsersRepository(stores.app),
     chats: new ChatsRepository(stores.app),
     economy: new EconomyRepository(stores.economy, [
