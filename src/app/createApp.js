@@ -49,6 +49,7 @@ function registerCommands(bot) {
     { command: 'topmoney', description: 'Топ по FunMoney' },
     { command: 'games', description: 'Мини-игры' },
     { command: 'support', description: 'Связь с поддержкой' },
+    { command: 'mysupport', description: 'Мои обращения' },
     { command: 'ai', description: 'ИИ-помощник' },
     { command: 'dl', description: 'Скачать TikTok/YouTube' },
     { command: 'settings', description: 'Настройки чата' },

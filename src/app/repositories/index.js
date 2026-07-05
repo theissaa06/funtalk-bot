@@ -972,6 +972,14 @@ class SupportRepository {
     ) || null);
   }
 
+  listByTelegramId(telegramId, limit = 5) {
+    const data = this.store.read();
+    return clone([...data.supportTickets]
+      .filter(ticket => sameId(ticket.telegramId, telegramId))
+      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+      .slice(0, limit));
+  }
+
   close(ticketId) {
     return this.store.mutate(data => {
       const ticket = data.supportTickets.find(item => item.id === ticketId);
