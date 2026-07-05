@@ -68,13 +68,22 @@ async function forwardTicketToSupport(app, ticket) {
     'Ответь реплаем на это сообщение, и Somnia отправит ответ пользователю.',
   ].filter(Boolean).join('\n');
 
+  const relayBot = app.supportInboxBot || app.bot;
   try {
-    const relayBot = app.supportInboxBot || app.bot;
     const sent = await relayBot.telegram.sendMessage(destination, text, { parse_mode: 'HTML' });
     app.repos.support.bindForwardedMessage(ticket.id, destination, sent.message_id);
     return sent;
   } catch (error) {
     app.logger.warn('support forward failed:', error.message);
+    if (relayBot !== app.bot) {
+      try {
+        const sent = await app.bot.telegram.sendMessage(destination, text, { parse_mode: 'HTML' });
+        app.repos.support.bindForwardedMessage(ticket.id, destination, sent.message_id);
+        return sent;
+      } catch (fallbackError) {
+        app.logger.warn('support forward fallback failed:', fallbackError.message);
+      }
+    }
     return null;
   }
 }

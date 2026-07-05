@@ -6,6 +6,7 @@ process.env.GEMINI_API_KEY = '';
 process.env.OPENAI_API_KEY = '';
 process.env.CLAUDE_API_KEY = '';
 process.env.OWNER_ID = '42';
+process.env.SUPPORT_CHAT_ID = '';
 process.env.SUPPORT_INBOX_BOT_TOKEN = 'TEST_SUPPORT_TOKEN';
 process.env.APP_STORE_PATH = 'data/test-app_store.json';
 process.env.ECONOMY_STORE_PATH = 'data/test-economy_store.json';
