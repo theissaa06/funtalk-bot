@@ -59,9 +59,17 @@ Telegram.prototype.callApi = async function callApi(method, payload) {
   return true;
 };
 
-const { bot, app } = require('../src/index');
+const { bot, app, tryAcquireBotLock, releaseBotLock, getBotLockState } = require('../src/index');
 const { createApp } = require('../src/app/createApp');
 let updateId = 0;
+
+const lockFile = path.resolve(rootDir, '.bot.lock');
+if (fs.existsSync(lockFile)) fs.rmSync(lockFile);
+assert.strictEqual(tryAcquireBotLock(), true, 'first bot lock acquisition should succeed');
+assert.strictEqual(tryAcquireBotLock(), false, 'second bot lock acquisition should fail');
+assert.strictEqual(getBotLockState()?.pid, String(process.pid), 'lock should point to the current process');
+releaseBotLock();
+assert.strictEqual(fs.existsSync(lockFile), false, 'bot lock should be released');
 
 function from(overrides = {}) {
   return {
